@@ -1,0 +1,21 @@
+# Synonym terms discovered from disagreement analysis
+# Format: key -> list of synonymous terms/phrases
+
+sun:
+  - bright
+  - shining
+  - brilliant
+
+sky:
+  - blue
+  - clear
+  - bright
+
+fox:
+  - mammal
+  - animal
+
+weather:
+  - clear
+  - sunny
+  - bright

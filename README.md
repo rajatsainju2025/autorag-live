@@ -4,7 +4,7 @@ Disagreement-driven, self-optimizing RAG system.
 
 ![CI](https://img.shields.io/github/actions/workflow/status/rajatsainju2025/autorag-live/ci.yml?branch=main)
 ![License](https://img.shields.io/badge/license-MIT-green)
-![Coverage](https://img.shields.io/badge/coverage-80%25+-brightgreen)
+![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/rajatsainju2025/autorag-live-coverage/raw/coverage.json)
 
 ## Concept
 Tri-view retrieval (BM25, dense, hybrid) + disagreement metrics drive data augmentation and a small reranker. A simple policy only accepts changes that improve eval metrics.
@@ -46,6 +46,7 @@ conda run -n autorag-live poetry run streamlit run app/streamlit_app.py
 ## CLI Cheatsheet
 - `autorag disagree --query "..." --k 10 --report reports/run_YYYYMMDD.html`
 - `autorag eval --suite small`
+- `autorag optimize --queries "sun" "sky"` (auto-tune hybrid weights with acceptance policy)
 
 ## Roadmap
 - FAISS/Qdrant adapters, bandit hybrid tuning, LLM judges, PyPI release.

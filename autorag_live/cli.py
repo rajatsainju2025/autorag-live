@@ -6,6 +6,16 @@ import os
 from autorag_live.retrievers import bm25, dense, hybrid
 from autorag_live.disagreement import metrics, report
 from autorag_live.evals.small import run_small_suite
+from autorag_live.augment.synonym_miner import (
+    mine_synonyms_from_disagreements, 
+    update_terms_from_mining
+)
+from autorag_live.pipeline.hybrid_optimizer import (
+    grid_search_hybrid_weights, 
+    save_hybrid_config,
+    load_hybrid_config
+)
+from autorag_live.pipeline.acceptance_policy import AcceptancePolicy, safe_config_update
 
 app = typer.Typer()
 
@@ -58,6 +68,12 @@ def disagree(
     # 3. Generate report
     report.generate_disagreement_report(query, results, disagreement_metrics, report_path)
 
+    # 4. Mine synonyms and update terms.yaml
+    mined = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
+    if mined:
+        update_terms_from_mining(mined)
+        print(f"Updated terms.yaml with {len(mined)} synonym groups")
+
     print(f"Disagreement report saved to {report_path}")
 
 
@@ -72,6 +88,27 @@ def eval(
         print(f"Wrote runs/{summary['run_id']}.json")
     else:
         raise typer.BadParameter(f"Unknown suite: {suite}")
+
+
+@app.command() 
+def optimize(
+    queries: Annotated[List[str], typer.Option(help="Queries for optimization")] = ["bright sun", "blue sky", "fox mammal"],
+):
+    """Optimize hybrid retriever weights with acceptance policy."""
+    
+    def update_func():
+        weights, score = grid_search_hybrid_weights(queries, CORPUS, k=5, grid_size=4)
+        save_hybrid_config(weights)
+        print(f"New weights: BM25={weights.bm25_weight:.3f}, Dense={weights.dense_weight:.3f}")
+        print(f"Diversity score: {score:.3f}")
+    
+    policy = AcceptancePolicy(threshold=0.01)
+    accepted = safe_config_update(update_func, ["hybrid_config.json"], policy)
+    
+    if accepted:
+        print("✅ Optimization accepted!")
+    else:
+        print("❌ Optimization reverted.")
 
 
 if __name__ == "__main__":

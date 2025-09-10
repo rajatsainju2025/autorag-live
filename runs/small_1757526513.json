@@ -1,0 +1,26 @@
+{
+  "run_id": "small_1757526513",
+  "seed": 1337,
+  "metrics": {
+    "em": 1.0,
+    "f1": 1.0
+  },
+  "results": [
+    {
+      "id": "q1",
+      "question": "What color is the sky?",
+      "pred": "blue",
+      "gold": "blue",
+      "em": 1.0,
+      "f1": 1.0
+    },
+    {
+      "id": "q2",
+      "question": "What animal is a fox?",
+      "pred": "mammal",
+      "gold": "mammal",
+      "em": 1.0,
+      "f1": 1.0
+    }
+  ]
+}

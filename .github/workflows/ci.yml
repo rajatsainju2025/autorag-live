@@ -33,7 +33,20 @@ jobs:
         poetry run mypy .
     - name: Test with pytest
       run: |
-        poetry run pytest --maxfail=1 --disable-warnings -q --cov=autorag_live --cov-report=xml
+        poetry run pytest --maxfail=1 --disable-warnings -q --cov=autorag_live --cov-report=xml --cov-report=html
+    - name: Generate coverage badge
+      run: |
+        python - <<'PY'
+        import xml.etree.ElementTree as ET
+        tree = ET.parse('coverage.xml')
+        cov = float(tree.getroot().attrib['line-rate']) * 100
+        color = "brightgreen" if cov >= 80 else "yellow" if cov >= 60 else "red"
+        badge_url = f"https://img.shields.io/badge/coverage-{cov:.0f}%25-{color}"
+        print(f"Coverage: {cov:.2f}%")
+        print(f"Badge URL: {badge_url}")
+        with open('coverage_badge.txt', 'w') as f:
+            f.write(badge_url)
+        PY
     - name: Enforce coverage >= 80%
       run: |
         python - <<'PY'
