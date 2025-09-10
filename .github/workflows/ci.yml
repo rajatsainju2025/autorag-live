@@ -33,4 +33,13 @@ jobs:
         poetry run mypy .
     - name: Test with pytest
       run: |
-        poetry run pytest
+        poetry run pytest --maxfail=1 --disable-warnings -q --cov=autorag_live --cov-report=xml
+    - name: Enforce coverage >= 80%
+      run: |
+        python - <<'PY'
+        import xml.etree.ElementTree as ET
+        tree = ET.parse('coverage.xml')
+        cov = float(tree.getroot().attrib['line-rate']) * 100
+        print(f"Coverage: {cov:.2f}%")
+        assert cov >= 80, f"Coverage below threshold: {cov:.2f}% < 80%"
+        PY

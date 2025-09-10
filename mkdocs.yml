@@ -1,0 +1,6 @@
+site_name: AutoRAG-Live
+theme:
+  name: material
+nav:
+  - Home: index.md
+docs_dir: docs
