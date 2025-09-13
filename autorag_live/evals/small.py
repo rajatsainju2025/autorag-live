@@ -6,6 +6,8 @@ import json
 import random
 import time
 
+from autorag_live.evals.llm_judge import get_judge
+
 SEED = 1337
 random.seed(SEED)
 
@@ -75,20 +77,33 @@ def simple_qa_answer(q: str, docs: List[str]) -> str:
     return "unknown"
 
 
-def run_small_suite(runs_dir: str = "runs") -> Dict[str, Any]:
+def run_small_suite(runs_dir: str = "runs", judge_type: str = "deterministic") -> Dict[str, Any]:
     os.makedirs(runs_dir, exist_ok=True)
     ts = int(time.time())
     run_id = f"small_{ts}"
 
+    judge = get_judge(judge_type)
+    
     results: List[Dict[str, Any]] = []
     ems: List[float] = []
     f1s: List[float] = []
+    relevances: List[float] = []
+    faithfulnesses: List[float] = []
+    
     for item in SMALL_QA:
         pred = simple_qa_answer(item.question, item.context_docs)
+        context = " ".join(item.context_docs)
+        
         em = exact_match(pred, item.answer)
         f1 = token_f1(pred, item.answer)
+        relevance = judge.judge_answer_relevance(item.question, pred, context)
+        faithfulness = judge.judge_faithfulness(pred, context)
+        
         ems.append(em)
         f1s.append(f1)
+        relevances.append(relevance)
+        faithfulnesses.append(faithfulness)
+        
         results.append({
             "id": item.id,
             "question": item.question,
@@ -96,14 +111,19 @@ def run_small_suite(runs_dir: str = "runs") -> Dict[str, Any]:
             "gold": item.answer,
             "em": em,
             "f1": f1,
+            "relevance": relevance,
+            "faithfulness": faithfulness,
         })
 
     summary = {
         "run_id": run_id,
         "seed": SEED,
+        "judge_type": judge_type,
         "metrics": {
             "em": sum(ems) / len(ems),
             "f1": sum(f1s) / len(f1s),
+            "relevance": sum(relevances) / len(relevances),
+            "faithfulness": sum(faithfulnesses) / len(faithfulnesses),
         },
         "results": results,
     }

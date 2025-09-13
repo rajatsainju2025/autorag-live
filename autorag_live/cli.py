@@ -80,11 +80,13 @@ def disagree(
 @app.command()
 def eval(
     suite: Annotated[str, typer.Option(help="Evaluation suite to run")] = "small",
+    judge: Annotated[str, typer.Option(help="Judge type: deterministic or openai")] = "deterministic",
 ):
     """Run evaluation suites (e.g., small)."""
     if suite == "small":
-        summary = run_small_suite()
+        summary = run_small_suite(judge_type=judge)
         print(f"EM={summary['metrics']['em']:.3f} F1={summary['metrics']['f1']:.3f}")
+        print(f"Relevance={summary['metrics']['relevance']:.3f} Faithfulness={summary['metrics']['faithfulness']:.3f}")
         print(f"Wrote runs/{summary['run_id']}.json")
     else:
         raise typer.BadParameter(f"Unknown suite: {suite}")
