@@ -413,5 +413,66 @@ def self_improve(
     print(f"\nSelf-improvement complete! Results saved to {output_file}")
 
 
+@app.command()
+def benchmark(
+    components: Annotated[Optional[List[str]], typer.Option(help="Components to benchmark")] = None,
+    output_file: Annotated[Optional[str], typer.Option(help="Output file for results")] = None,
+    iterations: Annotated[int, typer.Option(help="Number of iterations per benchmark")] = 10,
+):
+    """Run performance benchmarks for system components."""
+    from autorag_live.evals.performance_benchmarks import (
+        run_full_benchmark_suite,
+        PerformanceBenchmark,
+        benchmark_retrievers,
+        benchmark_evaluation,
+        benchmark_optimization,
+        benchmark_augmentation,
+        benchmark_reranking,
+        benchmark_time_series,
+        benchmark_disagreement_analysis
+    )
+
+    if components is None:
+        # Run full suite
+        print("Running full benchmark suite...")
+        results = run_full_benchmark_suite(output_file)
+        print(f"Completed {len(results)} benchmarks.")
+        return
+
+    # Run specific components
+    print(f"Running benchmarks for: {', '.join(components)}")
+
+    benchmark = PerformanceBenchmark()
+
+    # Sample data
+    corpus = CORPUS
+    queries = ["bright sun", "blue sky", "fox mammal", "machine learning"]
+
+    for component in components:
+        if component.lower() == "retrievers":
+            benchmark_retrievers(corpus, queries, benchmark)
+        elif component.lower() == "evaluation":
+            benchmark_evaluation(corpus, queries, benchmark)
+        elif component.lower() == "optimization":
+            benchmark_optimization(corpus, queries, benchmark)
+        elif component.lower() == "augmentation":
+            benchmark_augmentation(corpus, queries, benchmark)
+        elif component.lower() == "reranking":
+            benchmark_reranking(corpus, queries, benchmark)
+        elif component.lower() == "time_series":
+            benchmark_time_series(corpus, benchmark)
+        elif component.lower() == "disagreement":
+            benchmark_disagreement_analysis(corpus, queries, benchmark)
+        else:
+            print(f"Unknown component: {component}")
+
+    benchmark.print_summary()
+
+    if output_file:
+        benchmark.save_results(output_file)
+    else:
+        benchmark.save_results()
+
+
 if __name__ == "__main__":
     app()
