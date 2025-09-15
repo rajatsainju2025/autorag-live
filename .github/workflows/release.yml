@@ -1,52 +1,16 @@
-name: CI
+name: Release to PyPI
 
 on:
-  push:
-    branches: [ main, develop ]
-  pull_request:
-    branches: [ main, develop ]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version to release'
+        required: true
+        default: 'test'
 
 jobs:
-  lint:
-    runs-on: ubuntu-latest
-
-    steps:
-    - uses: actions/checkout@v4
-
-    - name: Set up Python
-      uses: actions/setup-python@v4
-      with:
-        python-version: "3.10"
-
-    - name: Install Poetry
-      uses: snok/install-poetry@v1
-      with:
-        virtualenvs-create: true
-        virtualenvs-in-project: true
-        installer-parallel: true
-
-    - name: Load cached venv
-      id: cached-poetry-dependencies
-      uses: actions/cache@v3
-      with:
-        path: .venv
-        key: venv-${{ runner.os }}-lint-${{ hashFiles('**/poetry.lock') }}
-
-    - name: Install dependencies
-      run: poetry install --no-interaction --no-root
-
-    - name: Install package
-      run: poetry install --no-interaction
-
-    - name: Run ruff linter
-      run: poetry run ruff check .
-
-    - name: Run mypy type checker
-      run: poetry run mypy autorag_live
-
-    - name: Check formatting
-      run: poetry run ruff format --check .
-
   test:
     runs-on: ubuntu-latest
     strategy:
@@ -83,7 +47,7 @@ jobs:
 
     - name: Run tests
       run: |
-        poetry run pytest --cov=autorag_live --cov-report=xml --cov-report=term-missing
+        poetry run pytest --cov=autorag_live --cov-report=xml
 
     - name: Upload coverage to Codecov
       uses: codecov/codecov-action@v3
@@ -93,8 +57,10 @@ jobs:
         name: codecov-umbrella
         fail_ci_if_error: false
 
-  docs:
+  build-and-publish:
+    needs: test
     runs-on: ubuntu-latest
+    if: github.event_name == 'release' || github.event.inputs.version != 'test'
 
     steps:
     - uses: actions/checkout@v4
@@ -111,12 +77,43 @@ jobs:
         virtualenvs-in-project: true
         installer-parallel: true
 
-    - name: Load cached venv
-      id: cached-poetry-dependencies
-      uses: actions/cache@v3
+    - name: Install dependencies
+      run: poetry install --no-interaction
+
+    - name: Build package
+      run: poetry build
+
+    - name: Publish to PyPI
+      if: github.event_name == 'release'
+      env:
+        POETRY_PYPI_TOKEN_PYPI: ${{ secrets.PYPI_API_TOKEN }}
+      run: poetry publish
+
+    - name: Publish to TestPyPI
+      if: github.event_name == 'workflow_dispatch'
+      env:
+        POETRY_PYPI_TOKEN_TESTPYPI: ${{ secrets.TEST_PYPI_API_TOKEN }}
+      run: poetry publish --repository testpypi
+
+  deploy-docs:
+    needs: build-and-publish
+    runs-on: ubuntu-latest
+    if: github.event_name == 'release'
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v4
       with:
-        path: .venv
-        key: venv-${{ runner.os }}-docs-${{ hashFiles('**/poetry.lock') }}
+        python-version: "3.10"
+
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
 
     - name: Install dependencies
       run: poetry install --no-interaction
@@ -124,5 +121,9 @@ jobs:
     - name: Build documentation
       run: poetry run mkdocs build
 
-    - name: Check documentation links
-      run: poetry run mkdocs build --strict
+    - name: Deploy to GitHub Pages
+      uses: peaceiris/actions-gh-pages@v3
+      if: github.ref == 'refs/heads/main'
+      with:
+        github_token: ${{ secrets.GITHUB_TOKEN }}
+        publish_dir: ./site

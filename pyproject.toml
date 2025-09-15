@@ -2,7 +2,26 @@
 name = "autorag-live"
 version = "0.1.0"
 description = "A disagreement-driven, self-optimizing RAG system."
-authors = ["Your Name <you@example.com>"]
+authors = ["Raj Atul Sainju <rajatsainju2025@gmail.com>"]
+license = "MIT"
+readme = "README.md"
+homepage = "https://github.com/rajatsainju2025/autorag-live"
+repository = "https://github.com/rajatsainju2025/autorag-live"
+documentation = "https://rajatsainju2025.github.io/autorag-live"
+keywords = ["rag", "retrieval-augmented-generation", "nlp", "machine-learning", "search", "optimization"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -37,3 +56,91 @@ build-backend = "poetry.core.masonry.api"
 
 [tool.poetry.scripts]
 autorag = "autorag_live.cli:app"
+
+[tool.poetry.include]
+"autorag_live" = "autorag_live/**/*"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "--cov=autorag_live",
+    "--cov-report=term-missing",
+    "--cov-report=html:htmlcov",
+    "--cov-report=xml",
+    "--cov-fail-under=80"
+]
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+select = [
+    "E",  # pycodestyle errors
+    "W",  # pycodestyle warnings
+    "F",  # pyflakes
+    "I",  # isort
+    "B",  # flake8-bugbear
+    "C4", # flake8-comprehensions
+    "UP", # pyupgrade
+]
+ignore = [
+    "E501", # line too long, handled by black
+    "B008", # do not perform function calls in argument defaults
+    "C901", # too complex
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+"tests/**/*" = ["B011"]
+
+[tool.mypy]
+python_version = "3.10"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "sentence_transformers.*",
+    "faiss.*",
+    "qdrant_client.*",
+    "elasticsearch.*",
+    "streamlit.*",
+    "typer.*"
+]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source = ["autorag_live"]
+omit = [
+    "*/tests/*",
+    "*/test_*.py",
+    "autorag_live/__init__.py"
+]
+
+[tool.coverage.report]
+exclude_lines = [
+    "pragma: no cover",
+    "def __repr__",
+    "if self.debug:",
+    "if settings.DEBUG",
+    "raise AssertionError",
+    "raise NotImplementedError",
+    "if 0:",
+    "if __name__ == .__main__.:",
+    "class .*\\bProtocol\\):",
+    "@(abc\\.)?abstractmethod"
+]

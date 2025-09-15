@@ -1,0 +1,26 @@
+include README.md
+include LICENSE
+include CONTRIBUTING.md
+include SECURITY.md
+include CODE_OF_CONDUCT.md
+include terms.yaml
+include Dockerfile
+
+recursive-include autorag_live *.py
+recursive-include tests *.py
+
+exclude .github
+exclude docs
+exclude notebooks
+exclude runs
+exclude reports
+exclude .venv
+exclude __pycache__
+exclude *.pyc
+exclude .pytest_cache
+exclude .mypy_cache
+exclude .ruff_cache
+exclude htmlcov
+exclude .coverage
+exclude coverage.xml
+exclude poetry.lock
