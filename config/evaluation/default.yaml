@@ -1,0 +1,24 @@
+# @package _group_
+default:
+  metrics:
+    - name: exact_match
+      enabled: true
+    - name: token_f1
+      enabled: true
+    - name: relevance
+      enabled: true
+      judge_type: deterministic
+    - name: faithfulness
+      enabled: true
+      judge_type: deterministic
+      
+  llm_judge:
+    type: deterministic  # or openai
+    temperature: 0.7
+    max_tokens: 100
+    
+  benchmarks:
+    warmup_iterations: 2
+    test_iterations: 10
+    memory_tracking: true
+    detailed_metrics: true

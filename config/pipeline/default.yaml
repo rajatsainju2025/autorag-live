@@ -1,0 +1,19 @@
+# @package _group_
+default:
+  optimization:
+    grid_search:
+      bm25_weights: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+      dense_weights: [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
+      parallel: true
+      max_workers: 4
+      
+    bandit:
+      algorithm: ucb1
+      exploration_weight: 2.0
+      iterations: 100
+      reward_window: 10
+      
+  acceptance:
+    min_improvement: 0.05
+    confidence_threshold: 0.95
+    rollback_enabled: true

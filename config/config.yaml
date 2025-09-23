@@ -1,0 +1,28 @@
+defaults:
+  - retrieval: default
+  - evaluation: default
+  - pipeline: default
+  - augmentation: default
+  - _self_
+
+name: autorag-live
+version: ${version}
+
+paths:
+  data_dir: ${hydra:runtime.cwd}/data
+  cache_dir: ${hydra:runtime.cwd}/.cache
+  runs_dir: ${hydra:runtime.cwd}/runs
+  
+logging:
+  level: INFO
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  
+cache:
+  embeddings:
+    enabled: true
+    max_size: 10000
+    ttl: 3600  # 1 hour
+  retrieval:
+    enabled: true
+    max_size: 1000
+    ttl: 1800  # 30 minutes
