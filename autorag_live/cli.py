@@ -24,6 +24,10 @@ from autorag_live.pipeline.acceptance_policy import AcceptancePolicy, safe_confi
 from autorag_live.pipeline.bandit_optimizer import BanditHybridOptimizer
 from autorag_live.rerank.simple import SimpleReranker
 from autorag_live.data.time_series import TimeSeriesRetriever, TimeSeriesNote, FFTEmbedder
+from autorag_live.utils import setup_logging
+
+# Setup logging
+setup_logging()
 
 app = typer.Typer()
 

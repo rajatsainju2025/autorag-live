@@ -7,6 +7,9 @@ import random
 import time
 
 from autorag_live.evals.llm_judge import get_judge
+from autorag_live.utils import get_logger
+
+logger = get_logger(__name__)
 
 SEED = 1337
 random.seed(SEED)
@@ -78,11 +81,13 @@ def simple_qa_answer(q: str, docs: List[str]) -> str:
 
 
 def run_small_suite(runs_dir: str = "runs", judge_type: str = "deterministic") -> Dict[str, Any]:
+    logger.info(f"Starting small evaluation suite with judge_type: {judge_type}")
     os.makedirs(runs_dir, exist_ok=True)
     ts = int(time.time())
     run_id = f"small_{ts}"
 
     judge = get_judge(judge_type)
+    logger.debug(f"Using judge: {judge_type}")
     
     results: List[Dict[str, Any]] = []
     ems: List[float] = []
@@ -90,7 +95,8 @@ def run_small_suite(runs_dir: str = "runs", judge_type: str = "deterministic") -
     relevances: List[float] = []
     faithfulnesses: List[float] = []
     
-    for item in SMALL_QA:
+    for i, item in enumerate(SMALL_QA):
+        logger.debug(f"Processing QA item {i+1}/{len(SMALL_QA)}: {item.id}")
         pred = simple_qa_answer(item.question, item.context_docs)
         context = " ".join(item.context_docs)
         
@@ -129,4 +135,8 @@ def run_small_suite(runs_dir: str = "runs", judge_type: str = "deterministic") -
     }
     with open(os.path.join(runs_dir, f"{run_id}.json"), "w") as f:
         json.dump(summary, f, indent=2)
+    
+    logger.info(f"Completed small evaluation suite. Run ID: {run_id}, Avg EM: {summary['metrics']['em']:.3f}, Avg F1: {summary['metrics']['f1']:.3f}, Avg Relevance: {summary['metrics']['relevance']:.3f}, Avg Faithfulness: {summary['metrics']['faithfulness']:.3f}")
+    logger.info(f"Results saved to: {os.path.join(runs_dir, f'{run_id}.json')}")
+    
     return summary

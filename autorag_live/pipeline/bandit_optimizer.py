@@ -1,11 +1,12 @@
 """Bandit algorithm for online hybrid weight optimization."""
 
-import logging
 from typing import Dict, List, Optional, Tuple, Any
 import numpy as np
 from dataclasses import dataclass
 
-logger = logging.getLogger(__name__)
+from autorag_live.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass

@@ -1,7 +1,6 @@
 """Elasticsearch adapter for hybrid search with vector and text capabilities."""
 
 import json
-import logging
 from typing import Any, Dict, List, Optional, Union, Tuple
 
 import numpy as np
@@ -15,8 +14,9 @@ except ImportError:
     ELASTICSEARCH_AVAILABLE = False
 
 from autorag_live.retrievers.faiss_adapter import DenseRetriever
+from autorag_live.utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class ElasticsearchRetriever(DenseRetriever):

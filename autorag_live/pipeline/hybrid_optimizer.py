@@ -6,6 +6,9 @@ from dataclasses import dataclass
 
 from autorag_live.retrievers import bm25, dense, hybrid
 from autorag_live.disagreement.metrics import jaccard_at_k, kendall_tau_at_k
+from autorag_live.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass 
@@ -60,6 +63,8 @@ def grid_search_hybrid_weights(
     Simple grid search for optimal hybrid weights.
     Evaluates based on diversity (disagreement) between methods.
     """
+    logger.info(f"Starting grid search for hybrid weights with {len(queries)} queries, grid_size={grid_size}")
+    
     best_weights = HybridWeights()
     best_score = -1.0
     
@@ -67,6 +72,7 @@ def grid_search_hybrid_weights(
         bm25_w = i / grid_size
         dense_w = 1.0 - bm25_w
         weights = HybridWeights(bm25_w, dense_w)
+        logger.debug(f"Evaluating weights: BM25={bm25_w:.2f}, Dense={dense_w:.2f}")
         
         total_diversity = 0.0
         for query in queries:
@@ -81,11 +87,14 @@ def grid_search_hybrid_weights(
             total_diversity += diversity
             
         avg_diversity = total_diversity / len(queries)
+        logger.debug(f"Weights BM25={bm25_w:.2f}, Dense={dense_w:.2f}: avg_diversity={avg_diversity:.4f}")
         
         if avg_diversity > best_score:
             best_score = avg_diversity
             best_weights = weights
+            logger.debug(f"New best weights found: diversity={best_score:.4f}")
             
+    logger.info(f"Grid search completed. Best weights: BM25={best_weights.bm25_weight:.2f}, Dense={best_weights.dense_weight:.2f}, diversity={best_score:.4f}")
     return best_weights, best_score
 
 
@@ -98,17 +107,21 @@ def save_hybrid_config(weights: HybridWeights, path: str = "hybrid_config.json")
     }
     with open(path, 'w') as f:
         json.dump(config, f, indent=2)
+    logger.info(f"Saved hybrid config to {path}: BM25={weights.bm25_weight:.2f}, Dense={weights.dense_weight:.2f}")
 
 
 def load_hybrid_config(path: str = "hybrid_config.json") -> HybridWeights:
     """Load hybrid weights from config file."""
     if not os.path.exists(path):
+        logger.warning(f"Hybrid config file not found: {path}, using default weights")
         return HybridWeights()  # Default weights
         
     with open(path, 'r') as f:
         config = json.load(f)
     
-    return HybridWeights(
+    weights = HybridWeights(
         bm25_weight=config.get("bm25_weight", 0.5),
         dense_weight=config.get("dense_weight", 0.5)
     )
+    logger.info(f"Loaded hybrid config from {path}: BM25={weights.bm25_weight:.2f}, Dense={weights.dense_weight:.2f}")
+    return weights

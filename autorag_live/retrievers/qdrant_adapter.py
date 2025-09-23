@@ -1,7 +1,4 @@
-"""Qdrant adapter for dense retrieval with vector database support."""
-
 import json
-import logging
 from typing import Any, Dict, List, Literal, Optional, Union, Tuple
 
 import numpy as np
@@ -18,8 +15,9 @@ except ImportError:
 
 from autorag_live.retrievers.faiss_adapter import DenseRetriever
 from autorag_live.types.types import RetrieverError
+from autorag_live.utils import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class QdrantRetriever(DenseRetriever):

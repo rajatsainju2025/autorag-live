@@ -1,13 +1,14 @@
 """Time-series note support with FFT-based embeddings."""
 
-import logging
 from typing import Dict, List, Optional, Tuple, Any, Union
 from datetime import datetime, timedelta
 import numpy as np
 from dataclasses import dataclass
 import json
 
-logger = logging.getLogger(__name__)
+from autorag_live.utils import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass
