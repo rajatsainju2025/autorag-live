@@ -23,7 +23,6 @@ classifiers = [
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
-packages = [{ include = "autorag_live" }]
 
 [tool.poetry.dependencies]
 python = "^3.10"
@@ -36,44 +35,9 @@ pandas = "^2.2.0"
 pyyaml = "^6.0"
 omegaconf = "^2.3.0"
 hydra-core = "^1.3.2"
-
-[build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
-
-[tool.poetry.scripts]
-autorag = "autorag_live.cli:app"
-include = [
-    "autorag_live/**/*"
-]
-classifiers = [
-    "Development Status :: 4 - Beta",
-    "Intended Audience :: Developers",
-    "Intended Audience :: Science/Research",
-    "License :: OSI Approved :: MIT License",
-    "Operating System :: OS Independent",
-    "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
-    "Programming Language :: Python :: 3.11",
-    "Programming Language :: Python :: 3.12",
-    "Topic :: Scientific/Engineering :: Artificial Intelligence",
-    "Topic :: Software Development :: Libraries :: Python Modules",
-]
-
-[tool.poetry.dependencies]
-python = "^3.10"
-rank-bm25 = "^0.2.2"
-sentence-transformers = "^2.2.2"
-scipy = "^1.10.1"
-typer = {extras = ["all"], version = "^0.9.0"}
-streamlit = "^1.38.0"
-pandas = "^2.2.0"
-pyyaml = "^6.0"
-omegaconf = "^2.3.0"
-hydra-core = "^1.3.2"
-faiss-cpu = {version = "^1.7.0", optional = true}
 qdrant-client = {version = "^1.6.0", optional = true}
 elasticsearch = {version = "^8.11.0", optional = true}
+psutil = "^5.9.0"
 
 [tool.poetry.extras]
 faiss = ["faiss-cpu"]
@@ -96,9 +60,6 @@ build-backend = "poetry.core.masonry.api"
 [tool.poetry.scripts]
 autorag = "autorag_live.cli:app"
 
-[tool.poetry.include]
-"autorag_live" = "autorag_live/**/*"
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
@@ -113,28 +74,6 @@ addopts = [
     "--cov-report=xml",
     "--cov-fail-under=80"
 ]
-
-[tool.ruff]
-line-length = 88
-target-version = "py310"
-select = [
-    "E",  # pycodestyle errors
-    "W",  # pycodestyle warnings
-    "F",  # pyflakes
-    "I",  # isort
-    "B",  # flake8-bugbear
-    "C4", # flake8-comprehensions
-    "UP", # pyupgrade
-]
-ignore = [
-    "E501", # line too long, handled by black
-    "B008", # do not perform function calls in argument defaults
-    "C901", # too complex
-]
-
-[tool.ruff.per-file-ignores]
-"__init__.py" = ["F401"]
-"tests/**/*" = ["B011"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -154,32 +93,9 @@ strict_equality = true
 [[tool.mypy.overrides]]
 module = [
     "sentence_transformers.*",
-    "faiss.*",
     "qdrant_client.*",
     "elasticsearch.*",
     "streamlit.*",
     "typer.*"
 ]
 ignore_missing_imports = true
-
-[tool.coverage.run]
-source = ["autorag_live"]
-omit = [
-    "*/tests/*",
-    "*/test_*.py",
-    "autorag_live/__init__.py"
-]
-
-[tool.coverage.report]
-exclude_lines = [
-    "pragma: no cover",
-    "def __repr__",
-    "if self.debug:",
-    "if settings.DEBUG",
-    "raise AssertionError",
-    "raise NotImplementedError",
-    "if 0:",
-    "if __name__ == .__main__.:",
-    "class .*\\bProtocol\\):",
-    "@(abc\\.)?abstractmethod"
-]

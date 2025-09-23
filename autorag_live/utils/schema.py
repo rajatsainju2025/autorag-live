@@ -1,7 +1,7 @@
 """
 Configuration schemas for validation.
 """
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import List, Optional, Union
 from omegaconf import MISSING
 
@@ -56,11 +56,11 @@ class ElasticsearchConfig:
 
 @dataclass
 class RetrievalConfig:
-    bm25: BM25Config = BM25Config()
-    dense: DenseConfig = DenseConfig()
-    hybrid: HybridConfig = HybridConfig()
-    qdrant: QdrantConfig = QdrantConfig()
-    elasticsearch: ElasticsearchConfig = ElasticsearchConfig()
+    bm25: BM25Config = field(default_factory=BM25Config)
+    dense: DenseConfig = field(default_factory=DenseConfig)
+    hybrid: HybridConfig = field(default_factory=HybridConfig)
+    qdrant: QdrantConfig = field(default_factory=QdrantConfig)
+    elasticsearch: ElasticsearchConfig = field(default_factory=ElasticsearchConfig)
 
 
 @dataclass
@@ -88,8 +88,8 @@ class BenchmarkConfig:
 @dataclass
 class EvaluationConfig:
     metrics: List[MetricConfig] = MISSING
-    llm_judge: LLMJudgeConfig = LLMJudgeConfig()
-    benchmarks: BenchmarkConfig = BenchmarkConfig()
+    llm_judge: LLMJudgeConfig = field(default_factory=LLMJudgeConfig)
+    benchmarks: BenchmarkConfig = field(default_factory=BenchmarkConfig)
 
 
 @dataclass
@@ -97,7 +97,7 @@ class AutoRAGConfig:
     name: str = "autorag-live"
     version: str = MISSING
     paths: dict = MISSING
-    logging: LoggingConfig = LoggingConfig()
+    logging: LoggingConfig = field(default_factory=LoggingConfig)
     cache: dict = MISSING
-    retrieval: RetrievalConfig = RetrievalConfig()
-    evaluation: EvaluationConfig = EvaluationConfig()
+    retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)

@@ -2,7 +2,7 @@
 
 import json
 import logging
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Literal, Optional, Union, Tuple
 
 import numpy as np
 
@@ -12,6 +12,8 @@ try:
     QDRANT_AVAILABLE = True
 except ImportError:
     QdrantClient = None
+    Distance = None
+    VectorParams = None
     QDRANT_AVAILABLE = False
 
 from autorag_live.retrievers.faiss_adapter import DenseRetriever
@@ -30,8 +32,8 @@ class QdrantRetriever(DenseRetriever):
         port: int = 6333,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
-        distance_metric: str = "cosine"
-    ):
+        distance_metric: Literal["cosine", "euclid", "dot"] = "cosine"
+    ) -> None:
         """Initialize Qdrant retriever.
 
         Args:
