@@ -108,9 +108,15 @@ class TestQdrantRetriever:
         assert len(call_args["points"]) == len(sample_docs)
 
     @patch('autorag_live.retrievers.qdrant_adapter.QDRANT_AVAILABLE', True)
+    @patch('autorag_live.retrievers.qdrant_adapter.Distance')
     @patch('autorag_live.retrievers.qdrant_adapter.QdrantClient')
-    def test_search(self, mock_qdrant_client, mock_sentence_transformer):
+    def test_search(self, mock_qdrant_client, mock_distance, mock_sentence_transformer):
         """Test document search."""
+        # Mock Distance enum
+        mock_distance.COSINE = "cosine"
+        mock_distance.EUCLID = "euclid"
+        mock_distance.DOT = "dot"
+        
         mock_client = Mock()
         mock_qdrant_client.return_value = mock_client
         
@@ -129,9 +135,15 @@ class TestQdrantRetriever:
         assert mock_client.search.called
 
     @patch('autorag_live.retrievers.qdrant_adapter.QDRANT_AVAILABLE', True)
+    @patch('autorag_live.retrievers.qdrant_adapter.Distance')
     @patch('autorag_live.retrievers.qdrant_adapter.QdrantClient')
-    def test_error_handling(self, mock_qdrant_client, mock_sentence_transformer):
+    def test_error_handling(self, mock_qdrant_client, mock_distance, mock_sentence_transformer):
         """Test error handling during search."""
+        # Mock Distance enum
+        mock_distance.COSINE = "cosine"
+        mock_distance.EUCLID = "euclid"
+        mock_distance.DOT = "dot"
+        
         mock_client = Mock()
         mock_qdrant_client.return_value = mock_client
         
@@ -143,11 +155,23 @@ class TestQdrantRetriever:
             retriever.search("test query")
 
     @patch('autorag_live.retrievers.qdrant_adapter.QDRANT_AVAILABLE', True)
+    @patch('autorag_live.retrievers.qdrant_adapter.Distance')
     @patch('autorag_live.retrievers.qdrant_adapter.QdrantClient')
-    def test_save_and_load(self, mock_qdrant_client, tmp_path):
+    def test_save_and_load(self, mock_qdrant_client, mock_distance, tmp_path):
         """Test saving and loading retriever state."""
+        # Mock Distance enum
+        mock_distance.COSINE = "cosine"
+        mock_distance.EUCLID = "euclid"
+        mock_distance.DOT = "dot"
+        
         mock_client = Mock()
         mock_qdrant_client.return_value = mock_client
+        
+        # Set client attributes for save/load test
+        mock_client._host = "test.host"
+        mock_client._port = 6333
+        mock_client._url = None
+        mock_client._api_key = None
 
         retriever = QdrantRetriever(
             collection_name="test_collection",
@@ -165,10 +189,16 @@ class TestQdrantRetriever:
         assert loaded.model_name == retriever.model_name
 
     @patch('autorag_live.retrievers.qdrant_adapter.QDRANT_AVAILABLE', True)
+    @patch('autorag_live.retrievers.qdrant_adapter.Distance')
     @patch('autorag_live.retrievers.qdrant_adapter.QdrantClient')
     @pytest.mark.parametrize("distance_metric", ["cosine", "euclid", "dot"])
-    def test_different_distance_metrics(self, mock_qdrant_client, distance_metric):
+    def test_different_distance_metrics(self, mock_qdrant_client, mock_distance, distance_metric):
         """Test different distance metrics."""
+        # Mock Distance enum
+        mock_distance.COSINE = "cosine"
+        mock_distance.EUCLID = "euclid"
+        mock_distance.DOT = "dot"
+        
         mock_client = Mock()
         mock_qdrant_client.return_value = mock_client
 
@@ -176,9 +206,19 @@ class TestQdrantRetriever:
         assert retriever.distance_metric == distance_metric
 
     @patch('autorag_live.retrievers.qdrant_adapter.QDRANT_AVAILABLE', True)
+    @patch('autorag_live.retrievers.qdrant_adapter.VectorParams')
+    @patch('autorag_live.retrievers.qdrant_adapter.Distance')
     @patch('autorag_live.retrievers.qdrant_adapter.QdrantClient')
-    def test_build_index_creates_collection(self, mock_qdrant_client):
+    def test_build_index_creates_collection(self, mock_qdrant_client, mock_distance, mock_vector_params):
         """Test building index creates Qdrant collection."""
+        # Mock Distance enum
+        mock_distance.COSINE = "cosine"
+        mock_distance.EUCLID = "euclid"
+        mock_distance.DOT = "dot"
+        
+        # Mock VectorParams
+        mock_vector_params.return_value = Mock()
+        
         mock_client = Mock()
         mock_qdrant_client.return_value = mock_client
 
@@ -188,7 +228,7 @@ class TestQdrantRetriever:
         mock_client.get_collections.return_value = mock_collections
 
         retriever = QdrantRetriever()
-        retriever.encode = Mock(return_value=[[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]])
+        retriever.encode = Mock(return_value=np.array([[0.1, 0.2, 0.3], [0.4, 0.5, 0.6]]))
 
         documents = ["doc1", "doc2"]
         retriever.build_index(documents)
@@ -198,9 +238,15 @@ class TestQdrantRetriever:
         mock_client.upsert.assert_called_once()
 
     @patch('autorag_live.retrievers.qdrant_adapter.QDRANT_AVAILABLE', True)
+    @patch('autorag_live.retrievers.qdrant_adapter.Distance')
     @patch('autorag_live.retrievers.qdrant_adapter.QdrantClient')
-    def test_search_returns_results(self, mock_qdrant_client):
+    def test_search_returns_results(self, mock_qdrant_client, mock_distance):
         """Test search returns formatted results."""
+        # Mock Distance enum
+        mock_distance.COSINE = "cosine"
+        mock_distance.EUCLID = "euclid"
+        mock_distance.DOT = "dot"
+        
         mock_client = Mock()
         mock_qdrant_client.return_value = mock_client
 
@@ -211,7 +257,7 @@ class TestQdrantRetriever:
         mock_client.search.return_value = [mock_hit]
 
         retriever = QdrantRetriever()
-        retriever.encode = Mock(return_value=[[0.1, 0.2, 0.3]])
+        retriever.encode = Mock(return_value=np.array([[0.1, 0.2, 0.3]]))
 
         results = retriever.search("test query", k=1)
 
@@ -220,11 +266,23 @@ class TestQdrantRetriever:
         mock_client.search.assert_called_once()
 
     @patch('autorag_live.retrievers.qdrant_adapter.QDRANT_AVAILABLE', True)
+    @patch('autorag_live.retrievers.qdrant_adapter.Distance')
     @patch('autorag_live.retrievers.qdrant_adapter.QdrantClient')
-    def test_save_and_load_config(self, mock_qdrant_client):
+    def test_save_and_load_config(self, mock_qdrant_client, mock_distance):
         """Test saving and loading retriever configuration."""
+        # Mock Distance enum
+        mock_distance.COSINE = "cosine"
+        mock_distance.EUCLID = "euclid"
+        mock_distance.DOT = "dot"
+        
         mock_client = Mock()
         mock_qdrant_client.return_value = mock_client
+        
+        # Set client attributes for save test
+        mock_client._host = "localhost"
+        mock_client._port = 6333
+        mock_client._url = None
+        mock_client._api_key = None
 
         retriever = QdrantRetriever(
             model_name="test-model",

@@ -17,6 +17,7 @@ except ImportError:
     QDRANT_AVAILABLE = False
 
 from autorag_live.retrievers.faiss_adapter import DenseRetriever
+from autorag_live.types.types import RetrieverError
 
 logger = logging.getLogger(__name__)
 
@@ -150,49 +151,61 @@ class QdrantRetriever(DenseRetriever):
         Returns:
             List of (document, score) tuples
         """
-        # Generate query embedding
-        query_emb = self.encode([query])[0]
+        try:
+            # Generate query embedding
+            query_emb = self.encode([query])[0]
 
-        # Search
-        search_result = self.client.search(
-            collection_name=self.collection_name,
-            query_vector=query_emb.tolist(),
-            limit=k
-        )
+            # Search
+            search_result = self.client.search(
+                collection_name=self.collection_name,
+                query_vector=query_emb.tolist() if hasattr(query_emb, 'tolist') else query_emb,
+                limit=k
+            )
 
-        # Format results
-        results = []
-        for hit in search_result:
-            if hit.payload:
-                text = hit.payload.get("text", "")
-                score = hit.score
-                results.append((text, float(score)))
+            # Format results
+            results = []
+            for hit in search_result:
+                if hit.payload:
+                    text = hit.payload.get("text", "")
+                    score = hit.score
+                    results.append((text, float(score)))
 
-        return results
+            return results
+        except Exception as e:
+            raise RetrieverError(f"Search failed: {str(e)}") from e
 
     def save(self, path: str):
         """Save retriever configuration (not the actual vectors).
 
         Args:
-            path: Path to save configuration
+            path: Path to save configuration to
         """
-        config = {
-            "type": "qdrant",
-            "model_name": self.model_name,
-            "collection_name": self.collection_name,
-            "distance_metric": self.distance_metric,
-            "qdrant_config": {
-                "host": getattr(self.client, '_host', None),
-                "port": getattr(self.client, '_port', None),
-                "url": getattr(self.client, '_url', None),
-                "api_key": getattr(self.client, '_api_key', None)
+        try:
+            # Extract client configuration safely
+            qdrant_config = {}
+            if hasattr(self.client, '_host') and not hasattr(getattr(self.client, '_host', None), '__class__'):
+                qdrant_config["host"] = getattr(self.client, '_host', None)
+            if hasattr(self.client, '_port') and not hasattr(getattr(self.client, '_port', None), '__class__'):
+                qdrant_config["port"] = getattr(self.client, '_port', None)
+            if hasattr(self.client, '_url') and not hasattr(getattr(self.client, '_url', None), '__class__'):
+                qdrant_config["url"] = getattr(self.client, '_url', None)
+            if hasattr(self.client, '_api_key') and not hasattr(getattr(self.client, '_api_key', None), '__class__'):
+                qdrant_config["api_key"] = getattr(self.client, '_api_key', None)
+
+            config = {
+                "type": "qdrant",
+                "model_name": self.model_name,
+                "collection_name": self.collection_name,
+                "distance_metric": self.distance_metric,
+                "qdrant_config": qdrant_config
             }
-        }
 
-        with open(path, 'w') as f:
-            json.dump(config, f, indent=2)
+            with open(path, 'w') as f:
+                json.dump(config, f, indent=2)
 
-        logger.info(f"Saved Qdrant retriever config to {path}")
+            logger.info(f"Saved Qdrant retriever config to {path}")
+        except Exception as e:
+            raise RetrieverError(f"Failed to save retriever config: {str(e)}") from e
 
     @classmethod
     def load(cls, path: str) -> "QdrantRetriever":
