@@ -20,7 +20,7 @@ from ..types.types import (
     RetrieverError
 )
 
-from .bm25 import bm25_retrieve
+from .bm25 import bm25_retrieve, BM25Retriever
 from .dense import dense_retrieve
 from .hybrid import hybrid_retrieve
 from .faiss_adapter import (
@@ -35,6 +35,7 @@ from .elasticsearch_adapter import ElasticsearchRetriever
 
 __all__ = [
     "bm25_retrieve",
+    "BM25Retriever",
     "dense_retrieve",
     "hybrid_retrieve",
     "DenseRetriever",

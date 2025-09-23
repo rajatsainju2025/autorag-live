@@ -11,6 +11,14 @@ from ..types.types import (
     Retriever,
     RetrieverError
 )
+from ..utils import (
+    cached,
+    monitor_performance,
+    get_logger
+)
+
+logger = get_logger(__name__)
+
 
 class BaseRetriever(ABC):
     """Abstract base class for all retrievers."""
