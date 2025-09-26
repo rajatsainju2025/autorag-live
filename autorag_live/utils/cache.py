@@ -7,12 +7,12 @@ embeddings computation, model loading, and retrieval results.
 
 import hashlib
 import json
-import os
 import pickle
+import sys
 import time
 from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, Optional, Callable, TypeVar, Union
+from typing import Any, Dict, Optional, Callable, TypeVar
 from dataclasses import dataclass
 
 from autorag_live.utils.logging_config import get_logger
@@ -29,6 +29,12 @@ class CacheEntry:
     timestamp: float
     hits: int = 0
     size_bytes: int = 0
+    ttl: Optional[float] = None
+    expires_at: Optional[float] = None
+
+    def is_expired(self) -> bool:
+        """Check whether the entry is past its TTL."""
+        return self.expires_at is not None and time.time() >= self.expires_at
 
 
 class Cache:
@@ -63,6 +69,12 @@ class MemoryCache(Cache):
         self.max_size = max_size
         self.default_ttl = default_ttl
 
+    def _purge_expired(self) -> None:
+        """Remove expired entries eagerly."""
+        expired_keys = [key for key, entry in self._cache.items() if entry.is_expired()]
+        for key in expired_keys:
+            del self._cache[key]
+
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache with TTL check."""
         if key not in self._cache:
@@ -71,7 +83,7 @@ class MemoryCache(Cache):
         entry = self._cache[key]
 
         # Check TTL
-        if self.default_ttl and time.time() - entry.timestamp > self.default_ttl:
+        if entry.is_expired():
             del self._cache[key]
             return None
 
@@ -80,6 +92,7 @@ class MemoryCache(Cache):
 
     def set(self, key: str, value: Any, ttl: Optional[float] = None) -> None:
         """Set value in cache with optional TTL."""
+        self._purge_expired()
         # Evict if at capacity (simple LRU-like)
         if len(self._cache) >= self.max_size:
             # Remove oldest entry
@@ -87,10 +100,14 @@ class MemoryCache(Cache):
                            key=lambda k: self._cache[k].timestamp)
             del self._cache[oldest_key]
 
+        ttl_to_use = ttl if ttl is not None else self.default_ttl
+        now = time.time()
         entry = CacheEntry(
             value=value,
-            timestamp=time.time(),
-            size_bytes=self._estimate_size(value)
+            timestamp=now,
+            size_bytes=self._estimate_size(value),
+            ttl=ttl_to_use,
+            expires_at=(now + ttl_to_use) if ttl_to_use else None
         )
         self._cache[key] = entry
 
@@ -104,14 +121,26 @@ class MemoryCache(Cache):
 
     def size(self) -> int:
         """Get number of entries in cache."""
+        self._purge_expired()
         return len(self._cache)
 
     def _estimate_size(self, obj: Any) -> int:
         """Estimate object size in bytes."""
         try:
-            return len(pickle.dumps(obj))
-        except:
-            return 1024  # Default estimate
+            if isinstance(obj, (bytes, bytearray, memoryview)):
+                return len(obj)
+            if isinstance(obj, str):
+                return len(obj.encode('utf-8'))
+            size = sys.getsizeof(obj)
+            if size > 0:
+                return size
+        except Exception:
+            pass
+
+        try:
+            return len(pickle.dumps(obj, protocol=pickle.HIGHEST_PROTOCOL))
+        except Exception:
+            return 1024  # Fallback estimate
 
 
 class FileCache(Cache):
@@ -122,7 +151,10 @@ class FileCache(Cache):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self.max_size_bytes = int(max_size_mb * 1024 * 1024)
         self._index_file = self.cache_dir / "index.json"
+        self._hit_flush_interval = 10
+        self._dirty_hit_updates = 0
         self._load_index()
+        self._purge_expired()
 
     def _load_index(self) -> None:
         """Load cache index from disk."""
@@ -139,10 +171,30 @@ class FileCache(Cache):
         """Save cache index to disk."""
         with open(self._index_file, 'w') as f:
             json.dump(self._index, f, indent=2)
+        self._dirty_hit_updates = 0
+
+    def _purge_expired(self, persist: bool = True) -> None:
+        """Remove expired cache entries and optionally persist the index."""
+        now = time.time()
+        removed = False
+        for key, meta in list(self._index.items()):
+            expires_at = meta.get('expires_at')
+            if expires_at and now >= expires_at:
+                (self.cache_dir / f"{key}.pkl").unlink(missing_ok=True)
+                del self._index[key]
+                removed = True
+        if removed and persist:
+            self._save_index()
 
     def get(self, key: str) -> Optional[Any]:
         """Get value from file cache."""
         if key not in self._index:
+            return None
+
+        meta = self._index[key]
+        expires_at = meta.get('expires_at')
+        if expires_at and time.time() >= expires_at:
+            self.delete(key)
             return None
 
         cache_file = self.cache_dir / f"{key}.pkl"
@@ -154,8 +206,10 @@ class FileCache(Cache):
         try:
             with open(cache_file, 'rb') as f:
                 value = pickle.load(f)
-            self._index[key]['hits'] = self._index[key].get('hits', 0) + 1
-            self._save_index()
+            meta['hits'] = meta.get('hits', 0) + 1
+            self._dirty_hit_updates += 1
+            if self._dirty_hit_updates % self._hit_flush_interval == 0:
+                self._save_index()
             return value
         except:
             # Corrupted file, remove it
@@ -169,17 +223,22 @@ class FileCache(Cache):
         cache_file = self.cache_dir / f"{key}.pkl"
 
         # Check if we need to evict
+        self._purge_expired(persist=False)
         self._evict_if_needed()
 
         try:
+            payload = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
             with open(cache_file, 'wb') as f:
-                pickle.dump(value, f)
+                f.write(payload)
+            size = len(payload)
+            now = time.time()
 
             self._index[key] = {
-                'timestamp': time.time(),
+                'timestamp': now,
                 'ttl': ttl,
+                'expires_at': (now + ttl) if ttl else None,
                 'hits': 0,
-                'size': cache_file.stat().st_size
+                'size': size
             }
             self._save_index()
         except Exception as e:
@@ -205,6 +264,7 @@ class FileCache(Cache):
 
     def _evict_if_needed(self) -> None:
         """Evict old entries if cache is too large."""
+        self._purge_expired(persist=False)
         total_size = sum(entry.get('size', 0) for entry in self._index.values())
 
         if total_size < self.max_size_bytes:
