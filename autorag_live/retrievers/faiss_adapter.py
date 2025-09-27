@@ -1,5 +1,6 @@
 from __future__ import annotations
 from typing import List, Tuple, Optional, Dict, Any
+import hashlib
 import numpy as np
 import os
 
@@ -27,19 +28,43 @@ class DenseRetriever(BaseRetriever):
         self.index = None
         self.documents = []
         self.embeddings = None
+        self.embedding_dim = 384
+        self._embedding_cache: Dict[str, np.ndarray] = {}
 
     @cached(cache_name="embeddings", ttl=3600)
     def encode(self, texts: List[str]) -> np.ndarray:
         """Encode texts to embeddings. Override in subclasses."""
-        # Simple deterministic fallback
-        embeddings = []
+        if not texts:
+            return np.empty((0, self.embedding_dim), dtype=np.float32)
+
+        embeddings: List[np.ndarray] = []
         for text in texts:
-            # Create deterministic embedding based on text hash
-            hash_val = hash(text) % 10000
-            np.random.seed(hash_val)
-            embedding = np.random.randn(384)  # Standard embedding dimension
-            embeddings.append(embedding)
-        return np.array(embeddings)
+            cached_embedding = self._embedding_cache.get(text)
+            if cached_embedding is None:
+                computed = self._compute_fallback_embedding(text)
+                self._embedding_cache[text] = computed
+                cached_embedding = computed
+            embeddings.append(cached_embedding)
+
+        return np.vstack(embeddings)
+
+    def _compute_fallback_embedding(self, text: str) -> np.ndarray:
+        """Create a deterministic, normalized embedding for offline fallback."""
+        bytes_needed = self.embedding_dim * 4  # float32 bytes
+        buffer = bytearray()
+        salt = 0
+        while len(buffer) < bytes_needed:
+            message = f"{text}:{salt}".encode("utf-8")
+            buffer.extend(hashlib.sha256(message).digest())
+            salt += 1
+
+        ints = np.frombuffer(buffer[:bytes_needed], dtype=np.uint32)
+        floats = (ints.astype(np.float32) / np.float32(2 ** 31)) - np.float32(1.0)
+        vector = floats.astype(np.float32)
+        norm = np.linalg.norm(vector)
+        if norm == 0.0:
+            return vector
+        return vector / norm
 
     def build_index(self, documents: List[str]) -> None:
         """Build search index from documents."""
@@ -50,9 +75,9 @@ class DenseRetriever(BaseRetriever):
             if FAISS_AVAILABLE and self.embeddings is not None:
                 # Use FAISS for efficient search
                 dimension = self.embeddings.shape[1]
-                self.index = faiss.IndexFlatIP(dimension)  # Inner product (cosine)
+                self.index = faiss.IndexFlatIP(dimension)  # type: ignore[attr-defined]  # Inner product (cosine)
                 # Normalize embeddings for cosine similarity
-                faiss.normalize_L2(self.embeddings)
+                faiss.normalize_L2(self.embeddings)  # type: ignore[attr-defined]
                 self.index.add(self.embeddings.astype('float32'))
             else:
                 # Fallback to numpy-based search
@@ -145,12 +170,6 @@ class SentenceTransformerRetriever(DenseRetriever):
 
     @cached(cache_name="embeddings", ttl=3600)
     def encode(self, texts: List[str]) -> np.ndarray:
-        """Encode texts using sentence-transformers or fallback."""
-        if self.model is not None:
-            return self.model.encode(texts, convert_to_numpy=True)
-        else:
-            # Deterministic fallback
-            return super().encode(texts)
         """Encode texts using sentence-transformers or fallback."""
         if self.model is not None:
             return self.model.encode(texts, convert_to_numpy=True)
