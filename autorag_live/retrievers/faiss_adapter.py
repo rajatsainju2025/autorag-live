@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Tuple, Optional, Dict, Any, cast
 import hashlib
 import numpy as np
 import os
@@ -30,6 +30,8 @@ class DenseRetriever(BaseRetriever):
         self.embeddings = None
         self.embedding_dim = 384
         self._embedding_cache: Dict[str, np.ndarray] = {}
+        self._normalized_embeddings = cast(Optional[np.ndarray], None)
+        self._embedding_norms = cast(Optional[np.ndarray], None)
 
     @cached(cache_name="embeddings", ttl=3600)
     def encode(self, texts: List[str]) -> np.ndarray:
@@ -66,11 +68,26 @@ class DenseRetriever(BaseRetriever):
             return vector
         return vector / norm
 
+    def _normalize_matrix(self, matrix: np.ndarray) -> np.ndarray:
+        """Normalize rows of a matrix, guarding against zero vectors."""
+        norms = np.linalg.norm(matrix, axis=1, keepdims=True)
+        norms = np.where(norms == 0.0, 1.0, norms)
+        return matrix / norms
+
+    def _normalize_vector(self, vector: np.ndarray) -> np.ndarray:
+        """Normalize a 2D vector array with shape (1, dim)."""
+        norms = np.linalg.norm(vector, axis=1, keepdims=True)
+        norms = np.where(norms == 0.0, 1.0, norms)
+        return vector / norms
+
     def build_index(self, documents: List[str]) -> None:
         """Build search index from documents."""
         with monitor_performance("DenseRetriever.build_index", {"num_docs": len(documents)}):
             self.documents = documents
-            self.embeddings = self.encode(documents)
+            # Ensure a float32 contiguous view for downstream libraries
+            self.embeddings = np.ascontiguousarray(self.encode(documents).astype(np.float32))
+            self._normalized_embeddings = None
+            self._embedding_norms = None
 
             if FAISS_AVAILABLE and self.embeddings is not None:
                 # Use FAISS for efficient search
@@ -78,10 +95,11 @@ class DenseRetriever(BaseRetriever):
                 self.index = faiss.IndexFlatIP(dimension)  # type: ignore[attr-defined]  # Inner product (cosine)
                 # Normalize embeddings for cosine similarity
                 faiss.normalize_L2(self.embeddings)  # type: ignore[attr-defined]
-                self.index.add(self.embeddings.astype('float32'))
+                self.index.add(self.embeddings)
             else:
                 # Fallback to numpy-based search
                 self.index = "numpy"
+                self._ensure_normalized_embeddings()
 
             self._is_initialized = True
 
@@ -120,6 +138,7 @@ class DenseRetriever(BaseRetriever):
             save_retriever_index(self, path)
         except Exception as e:
             raise RetrieverError(f"Failed to save retriever: {e}")
+
     def search(self, query: str, k: int = 5) -> List[Tuple[str, float]]:
         """Search for most similar documents."""
         if self.index is None:
@@ -129,7 +148,7 @@ class DenseRetriever(BaseRetriever):
 
         if FAISS_AVAILABLE and hasattr(self.index, 'search'):  # type: ignore
             # FAISS search
-            faiss.normalize_L2(query_embedding)  # type: ignore
+            faiss.normalize_L2(query_embedding)  # type: ignore[attr-defined]
             scores, indices = self.index.search(query_embedding.astype('float32'), k)  # type: ignore
             results = []
             for score, idx in zip(scores[0], indices[0]):
@@ -139,19 +158,42 @@ class DenseRetriever(BaseRetriever):
         else:
             # Numpy fallback
             if self.embeddings is not None:
-                # Cosine similarity
-                query_norm = query_embedding / np.linalg.norm(query_embedding)
-                doc_norms = self.embeddings / np.linalg.norm(self.embeddings, axis=1, keepdims=True)
-                similarities = np.dot(doc_norms, query_norm.T).flatten()
+                self._ensure_normalized_embeddings()
+                if self._normalized_embeddings is None:
+                    return []
+                assert self._normalized_embeddings is not None
+
+                # Cosine similarity using cached normalized matrices
+                query_norm = self._normalize_vector(query_embedding)
+                similarities = np.dot(self._normalized_embeddings, query_norm.T).flatten()
 
                 # Get top k
                 top_indices = np.argsort(similarities)[-k:][::-1]
-                results = []
+                results: List[Tuple[str, float]] = []
                 for idx in top_indices:
                     results.append((self.documents[idx], float(similarities[idx])))
                 return results
-            else:
-                return []
+            return []
+
+    def _ensure_normalized_embeddings(self) -> None:
+        """Ensure cached normalized embeddings and norms are available for numpy fallback."""
+        if self.embeddings is None:
+            self._normalized_embeddings = None
+            self._embedding_norms = None
+            return
+
+        if self._normalized_embeddings is not None and self._embedding_norms is not None:
+            return
+
+        norms = np.linalg.norm(self.embeddings, axis=1, keepdims=False)
+        if norms.size == 0:
+            self._embedding_norms = np.array([], dtype=np.float32)
+            self._normalized_embeddings = self.embeddings.copy()
+            return
+
+        norms = np.where(norms == 0.0, 1.0, norms)
+        self._embedding_norms = norms.astype(np.float32)
+        self._normalized_embeddings = self.embeddings / norms[:, np.newaxis]
 
 
 class SentenceTransformerRetriever(DenseRetriever):
