@@ -1,5 +1,12 @@
-from typing import List
-from rank_bm25 import BM25Okapi
+from typing import Any, Dict, List, Tuple
+import numpy as np
+
+try:  # pragma: no cover - optional dependency guard
+    from rank_bm25 import BM25Okapi  # type: ignore
+    BM25_AVAILABLE = True
+except ImportError:  # pragma: no cover - fallback when rank_bm25 missing
+    BM25_AVAILABLE = False
+    BM25Okapi = None  # type: ignore
 
 from .base import BaseRetriever
 from ..types.types import QueryText, DocumentText, RetrievalResult, RetrieverError
@@ -12,14 +19,25 @@ def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
     """
     Retrieves top-k documents from the corpus using BM25.
     """
-    tokenized_corpus = [doc.split(" ") for doc in corpus]
-    bm25 = BM25Okapi(tokenized_corpus)
-    tokenized_query = query.split(" ")
-    doc_scores = bm25.get_scores(tokenized_query)
+    if not corpus:
+        return []
 
-    top_k_indices = sorted(range(len(doc_scores)), key=lambda i: doc_scores[i], reverse=True)[:k]
+    if not BM25_AVAILABLE or BM25Okapi is None:
+        raise ImportError("rank_bm25 is required for bm25_retrieve but is not installed")
 
-    return [corpus[i] for i in top_k_indices]
+    tokenized_corpus = [BM25Retriever._tokenize(doc) for doc in corpus]
+    bm25 = BM25Okapi(tokenized_corpus)  # type: ignore[call-arg]
+    tokenized_query = BM25Retriever._tokenize(query)
+    doc_scores = np.asarray(bm25.get_scores(tokenized_query), dtype=np.float32)
+
+    if doc_scores.size == 0:
+        return []
+
+    effective_k = min(k, len(doc_scores))
+    top_indices = np.argpartition(doc_scores, -effective_k)[-effective_k:]
+    top_sorted = top_indices[np.argsort(doc_scores[top_indices])[::-1]]
+
+    return [corpus[int(i)] for i in top_sorted]
 
 
 class BM25Retriever(BaseRetriever):
@@ -28,14 +46,23 @@ class BM25Retriever(BaseRetriever):
     def __init__(self):
         super().__init__()
         self.corpus: List[str] = []
-        self.bm25 = None
+        self.bm25: Any = None
+        self._tokenized_corpus: List[List[str]] = []
+        self._scores_cache: Dict[Tuple[str, ...], np.ndarray] = {}
 
     def add_documents(self, documents: List[DocumentText]) -> None:
         """Add documents to the retriever's index."""
         with monitor_performance("BM25Retriever.add_documents", {"num_docs": len(documents)}):
             self.corpus = documents
-            tokenized_corpus = [doc.split(" ") for doc in documents]
-            self.bm25 = BM25Okapi(tokenized_corpus)
+            self._tokenized_corpus = [self._tokenize(doc) for doc in documents]
+            if not BM25_AVAILABLE:
+                raise RetrieverError("rank_bm25 is required for BM25Retriever but is not installed")
+
+            if not self._tokenized_corpus:
+                self.bm25 = None
+            else:
+                self.bm25 = BM25Okapi(self._tokenized_corpus)  # type: ignore[call-arg]
+            self._scores_cache.clear()
             self._is_initialized = True
 
     def retrieve(self, query: QueryText, k: int = 5) -> RetrievalResult:
@@ -47,15 +74,30 @@ class BM25Retriever(BaseRetriever):
             if self.bm25 is None:
                 return []
 
-            tokenized_query = query.split(" ")
-            doc_scores = self.bm25.get_scores(tokenized_query)
+            tokenized_query = self._tokenize(query)
+            cache_key = tuple(tokenized_query)
+            cached_scores = self._scores_cache.get(cache_key)
 
-            # Get top k results with scores
-            top_k_indices = sorted(range(len(doc_scores)), key=lambda i: doc_scores[i], reverse=True)[:k]
+            if cached_scores is None:
+                scores = np.asarray(self.bm25.get_scores(tokenized_query), dtype=np.float32)
+                self._scores_cache[cache_key] = scores
+            else:
+                scores = cached_scores
 
-            results = []
-            for idx in top_k_indices:
-                results.append((self.corpus[idx], float(doc_scores[idx])))
+            if scores.size == 0:
+                return []
+
+            effective_k = min(k, scores.size)
+            if effective_k <= 0:
+                return []
+
+            # Use argpartition for efficient top-k selection
+            top_indices = np.argpartition(scores, -effective_k)[-effective_k:]
+            top_sorted = top_indices[np.argsort(scores[top_indices])[::-1]]
+
+            results: RetrievalResult = []
+            for idx in top_sorted:
+                results.append((self.corpus[int(idx)], float(scores[int(idx)])))
 
             return results
 
@@ -66,3 +108,8 @@ class BM25Retriever(BaseRetriever):
     def save(self, path: str) -> None:
         """Save retriever state to disk."""
         raise NotImplementedError("BM25 retriever persistence not implemented")
+
+    @staticmethod
+    def _tokenize(text: str) -> List[str]:
+        """Tokenize incoming text consistently."""
+        return [token for token in text.lower().split() if token]
