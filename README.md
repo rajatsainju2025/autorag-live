@@ -23,9 +23,16 @@ flowchart TD
 	E -->|accept if improved| Store[(runs/models)]
 ```
 
+## Requirements
+
+⚠️ **Python 3.10+ Required** - This project requires Python 3.10 or higher due to modern typing features and dependencies.
+
 ## Quickstart
 1. Create env and install deps
 ```bash
+# Ensure you have Python 3.10+
+python --version  # Should be 3.10.0 or higher
+
 conda create -n autorag-live python=3.10 -y
 conda run -n autorag-live pip install poetry
 conda run -n autorag-live poetry install

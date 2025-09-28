@@ -48,9 +48,14 @@ pip install elasticsearch
 
 ## 🛠️ Development Setup
 
+⚠️ **Important**: Ensure you have Python 3.10+ installed before proceeding.
+
 For contributors and development:
 
 ```bash
+# Check Python version first
+python --version  # Must be 3.10.0 or higher
+
 git clone https://github.com/rajatsainju2025/autorag-live
 cd autorag-live
 
