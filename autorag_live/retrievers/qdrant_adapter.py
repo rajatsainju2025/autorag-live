@@ -205,9 +205,25 @@ class QdrantRetriever(DenseRetriever):
         except Exception as e:
             raise RetrieverError(f"Failed to save retriever config: {str(e)}") from e
 
-    @classmethod
-    def load(cls, path: str) -> "QdrantRetriever":
+    def load(self, path: str) -> None:
         """Load retriever from configuration.
+
+        Args:
+            path: Path to configuration file
+        """
+        with open(path, 'r') as f:
+            config = json.load(f)
+
+        # Update instance attributes from loaded config
+        self.collection_name = config['collection_name']
+        self.embedding_dim = config['embedding_dim']
+        self.model_name = config.get('model_name')
+        
+        logger.info(f"Loaded Qdrant retriever from {path}")
+    
+    @classmethod
+    def load_from_config(cls, path: str) -> "QdrantRetriever":
+        """Create retriever instance from configuration file.
 
         Args:
             path: Path to configuration file

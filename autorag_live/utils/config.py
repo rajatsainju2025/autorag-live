@@ -12,7 +12,8 @@ from .schema import AutoRAGConfig
 class ConfigManager:
     """Central configuration manager for AutoRAG-Live."""
     
-    _instance = None
+    _instance: Optional["ConfigManager"] = None
+    _config: Optional[DictConfig] = None
     _config = None
     
     def __new__(cls):
@@ -38,13 +39,19 @@ class ConfigManager:
             augmentation_config = OmegaConf.load(config_path / "augmentation/default.yaml")
             
             # Merge configs
-            self._config = OmegaConf.merge(
+            merged_config = OmegaConf.merge(
                 base_config,
                 retrieval_config,
                 evaluation_config,
                 pipeline_config,
                 augmentation_config
             )
+            
+            # Ensure we have a DictConfig
+            if not isinstance(merged_config, DictConfig):
+                raise ConfigurationError("Configuration merge did not produce a DictConfig")
+            
+            self._config = merged_config
             
             # Make config immutable
             OmegaConf.set_readonly(self._config, True)
@@ -55,6 +62,10 @@ class ConfigManager:
     @property
     def config(self) -> DictConfig:
         """Get the full configuration."""
+        if self._config is None:
+            raise ConfigurationError("Configuration not initialized")
+        if not isinstance(self._config, DictConfig):
+            raise ConfigurationError("Configuration is not a DictConfig")
         return self._config
     
     def get(self, key: str, default: Any = None) -> Any:
@@ -69,6 +80,8 @@ class ConfigManager:
             Configuration value
         """
         try:
+            if self._config is None:
+                raise ConfigurationError("Configuration not initialized")
             return OmegaConf.select(self._config, key, default=default)
         except Exception as e:
             raise ConfigurationError(f"Error accessing config key '{key}': {str(e)}")
@@ -91,6 +104,10 @@ class ConfigManager:
             
             # Validate the new config
             # TODO: Add schema validation
+            
+            # Ensure we have a DictConfig
+            if not isinstance(mutable_config, DictConfig):
+                raise ConfigurationError("Configuration update did not produce a DictConfig")
             
             # Make immutable and update
             OmegaConf.set_readonly(mutable_config, True)

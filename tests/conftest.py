@@ -72,7 +72,7 @@ def temp_config_dir() -> Generator[Path, None, None]:
         yield tmp_path
 
 @pytest.fixture
-def config_manager(temp_config_dir: Path) -> ConfigManager:
+def config_manager(temp_config_dir: Path) -> Generator[ConfigManager, None, None]:
     """Get a ConfigManager instance with test configuration."""
     os.environ["AUTORAG_CONFIG_DIR"] = str(temp_config_dir / "config")
     config_manager = ConfigManager.get_instance()

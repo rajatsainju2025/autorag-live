@@ -211,7 +211,7 @@ class TestElasticsearchRetriever:
             assert config["vector_boost"] == 2.0
 
             # Test loading
-            loaded_retriever = ElasticsearchRetriever.load(temp_path)
+            loaded_retriever = ElasticsearchRetriever.load_from_config(temp_path)
             assert loaded_retriever.index_name == "test_index"
             assert loaded_retriever.text_boost == 1.5
             assert loaded_retriever.vector_boost == 2.0
@@ -234,7 +234,7 @@ class TestElasticsearchRetriever:
 
         try:
             with pytest.raises(ValueError, match="Invalid config type"):
-                ElasticsearchRetriever.load(temp_path)
+                ElasticsearchRetriever.load_from_config(temp_path)
         finally:
             import os
             os.unlink(temp_path)
@@ -297,7 +297,7 @@ class TestNumpyElasticsearchFallback:
             retriever.save(temp_path)
 
             # Load
-            loaded_retriever = NumpyElasticsearchFallback.load(temp_path)
+            loaded_retriever = NumpyElasticsearchFallback.load_from_config(temp_path)
 
             assert loaded_retriever.documents == documents
             assert loaded_retriever.embeddings is not None

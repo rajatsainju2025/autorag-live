@@ -1,7 +1,7 @@
 """Elasticsearch adapter for hybrid search with vector and text capabilities."""
 
 import json
-from typing import Any, Dict, List, Optional, Union, Tuple
+from typing import Any, Dict, List, Optional, Union, Tuple, cast
 
 import numpy as np
 
@@ -11,12 +11,21 @@ try:
     ELASTICSEARCH_AVAILABLE = True
 except ImportError:
     Elasticsearch = None
+    bulk = None
     ELASTICSEARCH_AVAILABLE = False
 
 from autorag_live.retrievers.faiss_adapter import DenseRetriever
 from autorag_live.utils import get_logger
 
 logger = get_logger(__name__)
+
+
+def _ensure_elasticsearch_available() -> None:
+    """Ensure Elasticsearch is available, raise error if not."""
+    if not ELASTICSEARCH_AVAILABLE or Elasticsearch is None:
+        raise RuntimeError(
+            "Elasticsearch is not installed. Install it with: pip install elasticsearch"
+        )
 
 
 class ElasticsearchRetriever(DenseRetriever):
@@ -57,14 +66,15 @@ class ElasticsearchRetriever(DenseRetriever):
         self.vector_boost = vector_boost
 
         # Initialize Elasticsearch client
+        _ensure_elasticsearch_available()
         if cloud_id:
-            self.client = Elasticsearch(
+            self.client = cast(Any, Elasticsearch)(
                 cloud_id=cloud_id,
                 api_key=api_key
             )
         else:
             hosts = hosts or ["http://localhost:9200"]
-            self.client = Elasticsearch(
+            self.client = cast(Any, Elasticsearch)(
                 hosts=hosts,
                 api_key=api_key
             )
@@ -147,7 +157,9 @@ class ElasticsearchRetriever(DenseRetriever):
             actions.append(action)
 
         # Bulk index
-        success, failed = bulk(self.client, actions, refresh=True)
+        _ensure_elasticsearch_available()
+        bulk_func = cast(Any, bulk)
+        success, failed = bulk_func(self.client, actions, refresh=True)
 
         if failed:
             logger.warning(f"Failed to index {len(failed)} documents")
@@ -316,8 +328,39 @@ class ElasticsearchRetriever(DenseRetriever):
 
         logger.info(f"Saved Elasticsearch retriever config to {path}")
 
+    def load(self, path: str) -> None:
+        """Load retriever from configuration.
+
+        Args:
+            path: Path to configuration file
+        """
+        with open(path, 'r') as f:
+            config = json.load(f)
+        
+        # Update instance attributes from loaded config
+        self.index_name = config['index_name']
+        self.embedding_dim = config['embedding_dim']
+        self.model_name = config.get('model_name')
+        
+        # Recreate client if needed
+        _ensure_elasticsearch_available()
+        elasticsearch_cls = cast(Any, Elasticsearch)
+            
+        if config.get('cloud_id') and config.get('api_key'):
+            self.client = elasticsearch_cls(
+                cloud_id=config['cloud_id'],
+                api_key=config['api_key']
+            )
+        elif config.get('hosts') and config.get('api_key'):
+            self.client = elasticsearch_cls(
+                hosts=config['hosts'],
+                api_key=config['api_key']
+            )
+        
+        logger.info(f"Loaded Elasticsearch retriever from {path}")
+    
     @classmethod
-    def load(cls, path: str) -> "ElasticsearchRetriever":
+    def load_from_config(cls, path: str) -> "ElasticsearchRetriever":
         """Load retriever from configuration.
 
         Args:
@@ -428,8 +471,26 @@ class NumpyElasticsearchFallback(DenseRetriever):
 
         logger.info(f"Saved numpy fallback retriever to {path}")
 
+    def load(self, path: str) -> None:
+        """Load retriever from configuration.
+
+        Args:
+            path: Path to configuration file
+        """
+        with open(path, 'r') as f:
+            config = json.load(f)
+        
+        # Update instance attributes from loaded config
+        self.corpus = config.get('corpus', [])
+        self.embeddings = config.get('embeddings')
+        self.index_name = config['index_name'] 
+        self.embedding_dim = config['embedding_dim']
+        self.model_name = config.get('model_name')
+        
+        logger.info(f"Loaded NumpyElasticsearchFallback from {path}")
+    
     @classmethod
-    def load(cls, path: str) -> "NumpyElasticsearchFallback":
+    def load_from_config(cls, path: str) -> "NumpyElasticsearchFallback":
         """Load retriever from file."""
         with open(path, 'r') as f:
             data = json.load(f)
