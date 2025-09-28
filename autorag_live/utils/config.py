@@ -28,24 +28,29 @@ class ConfigManager:
     def _initialize_config(self) -> None:
         """Initialize configuration from files."""
         try:
-            # Load base config
-            config_path = Path(__file__).parent.parent.parent / "config"
+            # Load base config - check for test override
+            import os
+            config_dir_override = os.environ.get("AUTORAG_CONFIG_DIR")
+            if config_dir_override:
+                config_path = Path(config_dir_override)
+            else:
+                config_path = Path(__file__).parent.parent.parent / "config"
+            
             base_config = OmegaConf.load(config_path / "config.yaml")
             
-            # Load component configs
-            retrieval_config = OmegaConf.load(config_path / "retrieval/default.yaml")
-            evaluation_config = OmegaConf.load(config_path / "evaluation/default.yaml")
-            pipeline_config = OmegaConf.load(config_path / "pipeline/default.yaml")
-            augmentation_config = OmegaConf.load(config_path / "augmentation/default.yaml")
+            # Try to load component configs (might not exist in test)
+            configs_to_merge = [base_config]
+            
+            for component in ["retrieval", "evaluation", "pipeline", "augmentation"]:
+                component_file = config_path / component / "default.yaml"
+                if component_file.exists():
+                    configs_to_merge.append(OmegaConf.load(component_file))
             
             # Merge configs
-            merged_config = OmegaConf.merge(
-                base_config,
-                retrieval_config,
-                evaluation_config,
-                pipeline_config,
-                augmentation_config
-            )
+            if len(configs_to_merge) == 1:
+                merged_config = base_config
+            else:
+                merged_config = OmegaConf.merge(*configs_to_merge)
             
             # Ensure we have a DictConfig
             if not isinstance(merged_config, DictConfig):

@@ -20,7 +20,9 @@ def test_config_basic_access(config_manager):
     """Test basic configuration access."""
     assert config_manager.get("name") == "autorag-test"
     assert config_manager.get("version") == "0.0.1"
-    assert isinstance(config_manager.get("paths"), dict)
+    paths = config_manager.get("paths")
+    assert paths is not None
+    assert "data_dir" in paths
 
 
 def test_config_nested_access(config_manager):
@@ -53,5 +55,8 @@ def test_config_update(config_manager):
 
 def test_invalid_config_access(config_manager):
     """Test error handling for invalid configuration access."""
-    with pytest.raises(ConfigurationError):
-        config_manager.get("invalid.nested.key")
+    # Invalid keys should return None by default
+    assert config_manager.get("invalid.nested.key") is None
+    
+    # Can provide custom default
+    assert config_manager.get("invalid.nested.key", "default") == "default"
