@@ -183,8 +183,8 @@ class TestQdrantRetriever:
         save_path = tmp_path / "retriever_state.json"
         retriever.save(str(save_path))
         
-        # Load state
-        loaded = QdrantRetriever.load(str(save_path))
+        # Load state using class method
+        loaded = QdrantRetriever.from_config(str(save_path))
         assert loaded.collection_name == retriever.collection_name
         assert loaded.model_name == retriever.model_name
 
@@ -305,8 +305,8 @@ class TestQdrantRetriever:
             assert config["collection_name"] == "test_collection"
             assert config["distance_metric"] == "cosine"
 
-            # Test loading
-            loaded_retriever = QdrantRetriever.load(temp_path)
+            # Test loading using class method
+            loaded_retriever = QdrantRetriever.from_config(temp_path)
             assert loaded_retriever.model_name == "test-model"
             assert loaded_retriever.collection_name == "test_collection"
 
@@ -327,7 +327,7 @@ class TestQdrantRetriever:
 
         try:
             with pytest.raises(ValueError, match="Invalid config type"):
-                QdrantRetriever.load(temp_path)
+                QdrantRetriever.from_config(temp_path)
         finally:
             import os
             os.unlink(temp_path)

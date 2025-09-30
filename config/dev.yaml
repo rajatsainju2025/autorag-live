@@ -1,0 +1,22 @@
+# Development Configuration
+version: "0.1.0"
+debug: true
+
+logging:
+  level: "DEBUG"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/autorag-dev.log"
+
+data:
+  cache_dir: "~/.autorag/cache"
+  temp_dir: "/tmp/autorag"
+  cleanup_on_exit: false
+
+retrieval:
+  default_top_k: 5  # Smaller for development
+  timeout_seconds: 10.0
+  batch_size: 10
+
+evaluation:
+  batch_size: 8  # Smaller for development
+  timeout_seconds: 30.0

@@ -1,20 +1,74 @@
-# Pre-commit hooks
+# Pre-commit hooks for AutoRAG-Live
 # See https://pre-commit.com for more information
-# See https://pre-commit.com/hooks.html for more hooks
+
 repos:
--   repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0
+  # General cleanup
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.5.0
     hooks:
-    -   id: trailing-whitespace
-    -   id: end-of-file-fixer
-    -   id: check-yaml
-    -   id: check-added-large-files
--   repo: https://github.com/psf/black
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+      - id: debug-statements
+      - id: check-ast
+
+  # Code formatting
+  - repo: https://github.com/psf/black
     rev: 23.11.0
     hooks:
-    -   id: black
--   repo: https://github.com/charliermarsh/ruff-pre-commit
+      - id: black
+        language_version: python3
+        args: ['--line-length=100']
+
+  # Import sorting
+  - repo: https://github.com/pycqa/isort
+    rev: 5.12.0
+    hooks:
+      - id: isort
+        args: ['--profile', 'black', '--line-length=100']
+
+  # Linting with ruff (faster than flake8)
+  - repo: https://github.com/charliermarsh/ruff-pre-commit
     rev: 'v0.1.6'
     hooks:
-    -   id: ruff
+      - id: ruff
         args: [--fix]
+
+  # Type checking
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.6.1
+    hooks:
+      - id: mypy
+        additional_dependencies: [types-all]
+        args: ['--ignore-missing-imports', '--no-strict-optional']
+
+  # Security scanning
+  - repo: https://github.com/PyCQA/bandit
+    rev: 1.7.5
+    hooks:
+      - id: bandit
+        args: ['-c', 'pyproject.toml']
+
+  # Configuration validation
+  - repo: local
+    hooks:
+      - id: validate-configs
+        name: Validate configuration files
+        entry: python -c "import sys; from omegaconf import OmegaConf; [OmegaConf.load(f) for f in sys.argv[1:]]"
+        language: system
+        files: ^config/.*\.yaml$
+        pass_filenames: true
+
+  # Test validation (lightweight)
+  - repo: local
+    hooks:
+      - id: run-quick-tests
+        name: Run quick tests
+        entry: python -m pytest tests/ -x --tb=short -q
+        language: system
+        pass_filenames: false
+        stages: [commit]

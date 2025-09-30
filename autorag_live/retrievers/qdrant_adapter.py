@@ -205,19 +205,70 @@ class QdrantRetriever(DenseRetriever):
         except Exception as e:
             raise RetrieverError(f"Failed to save retriever config: {str(e)}") from e
 
+    @classmethod
+    def from_config(cls, path: str) -> 'QdrantRetriever':
+        """Create a retriever instance from a configuration file.
+
+        Args:
+            path: Path to configuration file
+
+        Returns:
+            QdrantRetriever: A new instance configured from the file
+
+        Raises:
+            RetrieverError: If loading fails
+            ValueError: If config type is invalid
+        """
+        with open(path, 'r') as f:
+            config = json.load(f)
+            
+        if config.get('type') != 'qdrant':
+            raise ValueError("Invalid config type")
+
+        # Create a new instance with basic config
+        instance = cls(
+            model_name=config.get('model_name'),
+            collection_name=config.get('collection_name'),
+            distance_metric=config.get('distance_metric', 'cosine')
+        )
+
+        # Load client configuration
+        if 'qdrant_config' in config:
+            client_config = config['qdrant_config']
+            if 'url' in client_config and client_config['url']:
+                instance = cls(
+                    model_name=config.get('model_name'),
+                    collection_name=config.get('collection_name'),
+                    url=client_config['url'],
+                    api_key=client_config.get('api_key'),
+                    distance_metric=config.get('distance_metric', 'cosine')
+                )
+            else:
+                instance = cls(
+                    model_name=config.get('model_name'),
+                    collection_name=config.get('collection_name'),
+                    host=client_config.get('host', 'localhost'),
+                    port=client_config.get('port', 6333),
+                    api_key=client_config.get('api_key'),
+                    distance_metric=config.get('distance_metric', 'cosine')
+                )
+
+        return instance
+
     def load(self, path: str) -> None:
-        """Load retriever from configuration.
+        """Load retriever state from config file.
 
         Args:
             path: Path to configuration file
         """
-        with open(path, 'r') as f:
-            config = json.load(f)
-
-        # Update instance attributes from loaded config
-        self.collection_name = config['collection_name']
-        self.embedding_dim = config['embedding_dim']
-        self.model_name = config.get('model_name')
+        # Use the class method to create a new instance
+        new_instance = self.from_config(path)
+        
+        # Update this instance's attributes
+        self.collection_name = new_instance.collection_name
+        self.model_name = new_instance.model_name
+        self.distance_metric = new_instance.distance_metric
+        self.client = new_instance.client
         
         logger.info(f"Loaded Qdrant retriever from {path}")
     

@@ -66,8 +66,9 @@ from .data.time_series import (
     FFTEmbedder
 )
 
-# CLI
-from .cli import app
+# CLI - import will be fixed later
+# from . import cli
+# app = cli.app
 
 __all__ = [
     # Version
@@ -123,6 +124,6 @@ __all__ = [
     "TimeSeriesNote",
     "FFTEmbedder",
 
-    # CLI
-    "app"
+    # CLI - will be added back
+    # "app"
 ]

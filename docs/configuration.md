@@ -1,6 +1,15 @@
-# Configuration
+# Configuration System
 
-AutoRAG-Live uses a hierarchical configuration system with YAML files and environment variable overrides.
+AutoRAG-Live uses a sophisticated configuration system built on [OmegaConf](https://omegaconf.readthedocs.io/) with dataclass schemas for type safety and validation.
+
+## Overview
+
+The configuration system provides:
+- **Type-safe configuration** through dataclass schemas
+- **Environment variable overrides** with automatic type conversion  
+- **Configuration validation** with detailed error messages
+- **Version migration** for smooth upgrades
+- **Hierarchical configuration** with component-specific configs
 
 ## 📁 Configuration Structure
 

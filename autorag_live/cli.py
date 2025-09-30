@@ -31,6 +31,10 @@ setup_logging()
 
 app = typer.Typer()
 
+# Add config management sub-command
+config_app = typer.Typer(name="config", help="Configuration management commands")
+app.add_typer(config_app)
+
 # Dummy corpus for demonstration
 CORPUS = [
     "The sky is blue.",
@@ -476,6 +480,107 @@ def benchmark(
         benchmark.save_results(output_file)
     else:
         benchmark.save_results()
+
+
+@config_app.command("validate")
+def config_validate(
+    config_file: Annotated[str, typer.Argument(help="Configuration file to validate")],
+):
+    """Validate a configuration file."""
+    try:
+        from autorag_live.cli.config_migrate import validate_command
+        import argparse
+        
+        # Create mock args namespace
+        args = argparse.Namespace()
+        args.input = config_file
+        args.verbose = False
+        
+        exit_code = validate_command(args)
+        if exit_code != 0:
+            raise typer.Exit(exit_code)
+            
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@config_app.command("migrate")  
+def config_migrate(
+    config_file: Annotated[str, typer.Argument(help="Configuration file to migrate")],
+    to_version: Annotated[str, typer.Option(help="Target version")],
+    output: Annotated[Optional[str], typer.Option(help="Output file")] = None,
+):
+    """Migrate configuration between versions."""
+    try:
+        from autorag_live.cli.config_migrate import migrate_command
+        import argparse
+        
+        # Create mock args namespace
+        args = argparse.Namespace()
+        args.input = config_file
+        args.to_version = to_version
+        args.output = output
+        args.validate = True
+        args.verbose = False
+        
+        exit_code = migrate_command(args)
+        if exit_code != 0:
+            raise typer.Exit(exit_code)
+            
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@config_app.command("info")
+def config_info(
+    config_file: Annotated[str, typer.Argument(help="Configuration file to analyze")],
+    show_structure: Annotated[bool, typer.Option(help="Show complete structure")] = False,
+):
+    """Show configuration file information."""
+    try:
+        from autorag_live.cli.config_migrate import info_command
+        import argparse
+        
+        # Create mock args namespace
+        args = argparse.Namespace()
+        args.input = config_file
+        args.show_structure = show_structure
+        args.verbose = False
+        
+        exit_code = info_command(args)
+        if exit_code != 0:
+            raise typer.Exit(exit_code)
+            
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
+
+
+@config_app.command("init")
+def config_init(
+    output: Annotated[str, typer.Option(help="Output configuration file")] = "config.yaml",
+    force: Annotated[bool, typer.Option(help="Overwrite existing file")] = False,
+):
+    """Initialize a new configuration file."""
+    try:
+        from autorag_live.cli.config_migrate import init_command
+        import argparse
+        
+        # Create mock args namespace  
+        args = argparse.Namespace()
+        args.output = output
+        args.force = force
+        args.verbose = False
+        
+        exit_code = init_command(args)
+        if exit_code != 0:
+            raise typer.Exit(exit_code)
+            
+    except Exception as e:
+        typer.echo(f"Error: {e}", err=True)
+        raise typer.Exit(1)
 
 
 if __name__ == "__main__":
