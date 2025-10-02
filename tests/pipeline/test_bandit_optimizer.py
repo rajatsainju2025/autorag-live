@@ -1,15 +1,15 @@
 """Tests for bandit optimizer."""
 
-import pytest
-import numpy as np
 from unittest.mock import patch
+
+import pytest
 
 from autorag_live.pipeline.bandit_optimizer import (
     BanditArm,
-    UCB1Bandit,
-    ThompsonSamplingBandit,
     BanditHybridOptimizer,
-    create_bandit_optimizer
+    ThompsonSamplingBandit,
+    UCB1Bandit,
+    create_bandit_optimizer,
 )
 
 
@@ -94,7 +94,7 @@ class TestUCB1Bandit:
 class TestThompsonSamplingBandit:
     """Test Thompson Sampling bandit algorithm."""
 
-    @patch('numpy.random.beta')
+    @patch("numpy.random.beta")
     def test_thompson_sampling_selection(self, mock_beta):
         """Test Thompson Sampling arm selection."""
         # Mock beta distribution samples
@@ -126,9 +126,7 @@ class TestBanditHybridOptimizer:
         """Test bandit optimizer initialization."""
         retriever_names = ["bm25", "dense", "hybrid"]
         optimizer = BanditHybridOptimizer(
-            retriever_names=retriever_names,
-            bandit_type="ucb1",
-            num_random_arms=5
+            retriever_names=retriever_names, bandit_type="ucb1", num_random_arms=5
         )
 
         assert optimizer.retriever_names == retriever_names
@@ -148,8 +146,8 @@ class TestBanditHybridOptimizer:
         weights = {"bm25": 2.0, "dense": 1.0}
         normalized = optimizer._normalize_weights(weights)
 
-        assert abs(normalized["bm25"] - 2/3) < 1e-6
-        assert abs(normalized["dense"] - 1/3) < 1e-6
+        assert abs(normalized["bm25"] - 2 / 3) < 1e-6
+        assert abs(normalized["dense"] - 1 / 3) < 1e-6
 
     def test_suggest_weights(self):
         """Test weight suggestion."""
@@ -221,9 +219,7 @@ class TestBanditHybridOptimizer:
     def test_thompson_sampling_optimizer(self):
         """Test optimizer with Thompson Sampling."""
         optimizer = BanditHybridOptimizer(
-            ["bm25", "dense"],
-            bandit_type="thompson",
-            num_random_arms=3
+            ["bm25", "dense"], bandit_type="thompson", num_random_arms=3
         )
 
         assert isinstance(optimizer.bandit, ThompsonSamplingBandit)
@@ -235,11 +231,7 @@ class TestBanditHybridOptimizer:
     def test_invalid_bandit_type(self):
         """Test invalid bandit type raises error."""
         with pytest.raises(ValueError, match="Unknown bandit type"):
-            BanditHybridOptimizer(
-                ["bm25", "dense"],
-                bandit_type="invalid",
-                num_random_arms=3
-            )
+            BanditHybridOptimizer(["bm25", "dense"], bandit_type="invalid", num_random_arms=3)
 
 
 class TestCreateBanditOptimizer:
@@ -248,9 +240,7 @@ class TestCreateBanditOptimizer:
     def test_create_ucb1_optimizer(self):
         """Test creating UCB1 optimizer."""
         optimizer = create_bandit_optimizer(
-            retriever_names=["bm25", "dense"],
-            bandit_type="ucb1",
-            num_random_arms=5
+            retriever_names=["bm25", "dense"], bandit_type="ucb1", num_random_arms=5
         )
 
         assert isinstance(optimizer, BanditHybridOptimizer)
@@ -259,9 +249,7 @@ class TestCreateBanditOptimizer:
     def test_create_thompson_optimizer(self):
         """Test creating Thompson Sampling optimizer."""
         optimizer = create_bandit_optimizer(
-            retriever_names=["bm25", "dense"],
-            bandit_type="thompson",
-            num_random_arms=3
+            retriever_names=["bm25", "dense"], bandit_type="thompson", num_random_arms=3
         )
 
         assert isinstance(optimizer, BanditHybridOptimizer)

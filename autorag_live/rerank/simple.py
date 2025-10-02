@@ -1,9 +1,9 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import List, Sequence, Tuple, Dict
+
 import math
 import random
-
+from dataclasses import dataclass
+from typing import Dict, List, Sequence, Tuple
 
 Token = str
 
@@ -93,9 +93,9 @@ class SimpleReranker:
                     # gradient wrt weights is proportional to feature diff
                     p_f1, p_f2, p_f3 = _features(q, pos)
                     n_f1, n_f2, n_f3 = _features(q, n)
-                    g1 = (n_f1 - p_f1)
-                    g2 = (n_f2 - p_f2)
-                    g3 = (n_f3 - p_f3)
+                    g1 = n_f1 - p_f1
+                    g2 = n_f2 - p_f2
+                    g3 = n_f3 - p_f3
                     self.w1 -= self.lr * g1
                     self.w2 -= self.lr * g2
                     self.w3 -= self.lr * g3

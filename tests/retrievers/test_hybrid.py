@@ -1,5 +1,6 @@
 from autorag_live.retrievers import hybrid
 
+
 def test_hybrid_retrieve():
     corpus = ["hello world", "this is a test", "another document", "fourth doc"]
     query = "hello"

@@ -12,11 +12,11 @@ paths:
   data_dir: ${hydra:runtime.cwd}/data
   cache_dir: ${hydra:runtime.cwd}/.cache
   runs_dir: ${hydra:runtime.cwd}/runs
-  
+
 logging:
   level: INFO
   format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-  
+
 cache:
   embeddings:
     enabled: true

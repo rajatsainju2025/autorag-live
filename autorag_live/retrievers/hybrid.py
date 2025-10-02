@@ -1,5 +1,7 @@
 from typing import List
+
 from . import bm25, dense
+
 
 def hybrid_retrieve(query: str, corpus: List[str], k: int, bm25_weight: float = 0.5) -> List[str]:
     """
@@ -8,7 +10,7 @@ def hybrid_retrieve(query: str, corpus: List[str], k: int, bm25_weight: float = 
     # Placeholder implementation
     bm25_results = bm25.bm25_retrieve(query, corpus, k)
     dense_results = dense.dense_retrieve(query, corpus, k)
-    
+
     # Simple interleaving for now
     results = []
     for i in range(k):

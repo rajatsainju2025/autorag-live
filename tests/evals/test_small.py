@@ -1,4 +1,4 @@
-from autorag_live.evals.small import exact_match, token_f1, run_small_suite
+from autorag_live.evals.small import exact_match, run_small_suite, token_f1
 
 
 def test_exact_match_and_f1():

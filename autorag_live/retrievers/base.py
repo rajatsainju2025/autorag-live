@@ -2,20 +2,10 @@
 Base retriever interface and abstract classes.
 """
 from abc import ABC, abstractmethod
-from typing import List, Dict, Any, Optional
+from typing import List
 
-from ..types.types import (
-    QueryText,
-    DocumentText,
-    RetrievalResult,
-    Retriever,
-    RetrieverError
-)
-from ..utils import (
-    cached,
-    monitor_performance,
-    get_logger
-)
+from ..types.types import DocumentText, QueryText, RetrievalResult
+from ..utils import get_logger
 
 logger = get_logger(__name__)
 

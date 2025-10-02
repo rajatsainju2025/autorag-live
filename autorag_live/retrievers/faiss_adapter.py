@@ -1,20 +1,23 @@
 from __future__ import annotations
-from typing import List, Tuple, Optional, Dict, Any, cast
+
 import hashlib
-import numpy as np
 import os
+from typing import Dict, List, Optional, Tuple, cast
+
+import numpy as np
 
 # Try to import FAISS; fall back to numpy-based implementation if not available
 try:
     import faiss  # type: ignore
+
     FAISS_AVAILABLE = True
 except ImportError:
     FAISS_AVAILABLE = False
     faiss = None  # type: ignore
 
+from ..types.types import DocumentText, QueryText, RetrievalResult, RetrieverError
+from ..utils import cached, get_logger, monitor_performance
 from .base import BaseRetriever
-from ..types.types import QueryText, DocumentText, RetrievalResult, RetrieverError
-from ..utils import cached, monitor_performance, get_logger
 
 logger = get_logger(__name__)
 
@@ -61,7 +64,7 @@ class DenseRetriever(BaseRetriever):
             salt += 1
 
         ints = np.frombuffer(buffer[:bytes_needed], dtype=np.uint32)
-        floats = (ints.astype(np.float32) / np.float32(2 ** 31)) - np.float32(1.0)
+        floats = (ints.astype(np.float32) / np.float32(2**31)) - np.float32(1.0)
         vector = floats.astype(np.float32)
         norm = np.linalg.norm(vector)
         if norm == 0.0:
@@ -146,10 +149,10 @@ class DenseRetriever(BaseRetriever):
 
         query_embedding = self.encode([query])
 
-        if FAISS_AVAILABLE and hasattr(self.index, 'search'):  # type: ignore
+        if FAISS_AVAILABLE and hasattr(self.index, "search"):  # type: ignore
             # FAISS search
             faiss.normalize_L2(query_embedding)  # type: ignore[attr-defined]
-            scores, indices = self.index.search(query_embedding.astype('float32'), k)  # type: ignore
+            scores, indices = self.index.search(query_embedding.astype("float32"), k)  # type: ignore
             results = []
             for score, idx in zip(scores[0], indices[0]):
                 if idx < len(self.documents):
@@ -206,6 +209,7 @@ class SentenceTransformerRetriever(DenseRetriever):
         # Try to load sentence-transformers model
         try:
             from sentence_transformers import SentenceTransformer  # type: ignore
+
             self.model = SentenceTransformer(model_name)
         except ImportError:
             logger.warning("sentence-transformers not available. Using deterministic fallback.")
@@ -220,7 +224,9 @@ class SentenceTransformerRetriever(DenseRetriever):
             return super().encode(texts)
 
 
-def create_dense_retriever(retriever_type: str = "sentence-transformer", **kwargs) -> DenseRetriever:
+def create_dense_retriever(
+    retriever_type: str = "sentence-transformer", **kwargs
+) -> DenseRetriever:
     """Factory function for dense retrievers."""
     if retriever_type == "sentence-transformer":
         return SentenceTransformerRetriever(**kwargs)
@@ -231,28 +237,29 @@ def create_dense_retriever(retriever_type: str = "sentence-transformer", **kwarg
 def save_retriever_index(retriever: DenseRetriever, path: str) -> None:
     """Save retriever index and documents."""
     os.makedirs(path, exist_ok=True)
-    
+
     # Save documents
     with open(os.path.join(path, "documents.txt"), "w") as f:
         for doc in retriever.documents:
             f.write(doc + "\n")
-    
+
     # Save embeddings if available
     if retriever.embeddings is not None:
         np.save(os.path.join(path, "embeddings.npy"), retriever.embeddings)
-    
+
     # Save FAISS index if available
-    if FAISS_AVAILABLE and hasattr(retriever.index, 'write'):  # type: ignore
+    if FAISS_AVAILABLE and hasattr(retriever.index, "write"):  # type: ignore
         faiss.write_index(retriever.index, os.path.join(path, "faiss.index"))  # type: ignore
-    
+
     # Save config
     config = {
         "model_name": retriever.model_name,
         "retriever_type": retriever.__class__.__name__,
         "num_documents": len(retriever.documents),
-        "faiss_available": FAISS_AVAILABLE
+        "faiss_available": FAISS_AVAILABLE,
     }
     import json
+
     with open(os.path.join(path, "config.json"), "w") as f:
         json.dump(config, f, indent=2)
 
@@ -260,31 +267,30 @@ def save_retriever_index(retriever: DenseRetriever, path: str) -> None:
 def load_retriever_index(path: str) -> DenseRetriever:
     """Load retriever index and documents."""
     import json
-    
+
     # Load config
     with open(os.path.join(path, "config.json"), "r") as f:
         config = json.load(f)
-    
+
     # Create retriever
     retriever = create_dense_retriever(
-        retriever_type="sentence-transformer",
-        model_name=config["model_name"]
+        retriever_type="sentence-transformer", model_name=config["model_name"]
     )
-    
+
     # Load documents
     with open(os.path.join(path, "documents.txt"), "r") as f:
         retriever.documents = [line.strip() for line in f if line.strip()]
-    
+
     # Load embeddings
     embeddings_path = os.path.join(path, "embeddings.npy")
     if os.path.exists(embeddings_path):
         retriever.embeddings = np.load(embeddings_path)
-    
+
     # Load FAISS index
     faiss_path = os.path.join(path, "faiss.index")
     if FAISS_AVAILABLE and os.path.exists(faiss_path):
         retriever.index = faiss.read_index(faiss_path)  # type: ignore
     else:
         retriever.index = "numpy"
-    
+
     return retriever

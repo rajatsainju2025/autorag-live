@@ -6,7 +6,7 @@ AutoRAG-Live uses a sophisticated configuration system built on [OmegaConf](http
 
 The configuration system provides:
 - **Type-safe configuration** through dataclass schemas
-- **Environment variable overrides** with automatic type conversion  
+- **Environment variable overrides** with automatic type conversion
 - **Configuration validation** with detailed error messages
 - **Version migration** for smooth upgrades
 - **Hierarchical configuration** with component-specific configs

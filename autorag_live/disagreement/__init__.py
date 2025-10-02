@@ -7,14 +7,7 @@ This module provides disagreement analysis components for:
 - Analysis tools: Understanding retriever disagreements for optimization
 """
 
-from .metrics import (
-    jaccard_at_k,
-    kendall_tau_at_k
-)
+from .metrics import jaccard_at_k, kendall_tau_at_k
 from .report import generate_disagreement_report
 
-__all__ = [
-    "jaccard_at_k",
-    "kendall_tau_at_k",
-    "generate_disagreement_report"
-]
+__all__ = ["jaccard_at_k", "kendall_tau_at_k", "generate_disagreement_report"]

@@ -1,29 +1,29 @@
+import json
+import os
+import time
+from datetime import datetime
+from typing import List, Optional
+
 import typer
 from typing_extensions import Annotated
-from typing import List, Optional
-import os
-import json
-from pathlib import Path
-from datetime import datetime
-import time
 
-from autorag_live.retrievers import bm25, dense, hybrid
-from autorag_live.disagreement import metrics, report
-from autorag_live.evals.small import run_small_suite
-from autorag_live.evals.advanced_metrics import comprehensive_evaluation, aggregate_metrics
 from autorag_live.augment.synonym_miner import (
     mine_synonyms_from_disagreements,
-    update_terms_from_mining
+    update_terms_from_mining,
 )
-from autorag_live.pipeline.hybrid_optimizer import (
-    grid_search_hybrid_weights,
-    save_hybrid_config,
-    load_hybrid_config
-)
+from autorag_live.data.time_series import FFTEmbedder, TimeSeriesNote, TimeSeriesRetriever
+from autorag_live.disagreement import metrics, report
+from autorag_live.evals.advanced_metrics import aggregate_metrics, comprehensive_evaluation
+from autorag_live.evals.small import run_small_suite
 from autorag_live.pipeline.acceptance_policy import AcceptancePolicy, safe_config_update
 from autorag_live.pipeline.bandit_optimizer import BanditHybridOptimizer
+from autorag_live.pipeline.hybrid_optimizer import (
+    grid_search_hybrid_weights,
+    load_hybrid_config,
+    save_hybrid_config,
+)
 from autorag_live.rerank.simple import SimpleReranker
-from autorag_live.data.time_series import TimeSeriesRetriever, TimeSeriesNote, FFTEmbedder
+from autorag_live.retrievers import bm25, dense, hybrid
 from autorag_live.utils import setup_logging
 
 # Setup logging
@@ -46,11 +46,14 @@ CORPUS = [
     "The fox is a mammal.",
 ]
 
+
 @app.command()
 def disagree(
     query: str,
     k: Annotated[int, typer.Option(help="Number of documents to retrieve.")] = 10,
-    report_path: Annotated[str, typer.Option(help="Path to save the HTML report.")] = "reports/disagreement_report.html",
+    report_path: Annotated[
+        str, typer.Option(help="Path to save the HTML report.")
+    ] = "reports/disagreement_report.html",
 ):
     """
     Run disagreement analysis between different retrievers for a given query.
@@ -96,33 +99,41 @@ def disagree(
 @app.command()
 def eval(
     suite: Annotated[str, typer.Option(help="Evaluation suite to run")] = "small",
-    judge: Annotated[str, typer.Option(help="Judge type: deterministic or openai")] = "deterministic",
+    judge: Annotated[
+        str, typer.Option(help="Judge type: deterministic or openai")
+    ] = "deterministic",
 ):
     """Run evaluation suites (e.g., small)."""
     if suite == "small":
         summary = run_small_suite(judge_type=judge)
         print(f"EM={summary['metrics']['em']:.3f} F1={summary['metrics']['f1']:.3f}")
-        print(f"Relevance={summary['metrics']['relevance']:.3f} Faithfulness={summary['metrics']['faithfulness']:.3f}")
+        print(
+            f"Relevance={summary['metrics']['relevance']:.3f} Faithfulness={summary['metrics']['faithfulness']:.3f}"
+        )
         print(f"Wrote runs/{summary['run_id']}.json")
     else:
         raise typer.BadParameter(f"Unknown suite: {suite}")
 
 
-@app.command() 
+@app.command()
 def optimize(
-    queries: Annotated[List[str], typer.Option(help="Queries for optimization")] = ["bright sun", "blue sky", "fox mammal"],
+    queries: Annotated[List[str], typer.Option(help="Queries for optimization")] = [
+        "bright sun",
+        "blue sky",
+        "fox mammal",
+    ],
 ):
     """Optimize hybrid retriever weights with acceptance policy."""
-    
+
     def update_func():
         weights, score = grid_search_hybrid_weights(queries, CORPUS, k=5, grid_size=4)
         save_hybrid_config(weights)
         print(f"New weights: BM25={weights.bm25_weight:.3f}, Dense={weights.dense_weight:.3f}")
         print(f"Diversity score: {score:.3f}")
-    
+
     policy = AcceptancePolicy(threshold=0.01)
     accepted = safe_config_update(update_func, ["hybrid_config.json"], policy)
-    
+
     if accepted:
         print("✅ Optimization accepted!")
     else:
@@ -132,7 +143,10 @@ def optimize(
 @app.command()
 def advanced_eval(
     query: Annotated[str, typer.Option(help="Query to evaluate")] = "bright sun in the sky",
-    relevant_docs: Annotated[List[str], typer.Option(help="Relevant documents")] = ["The sun is bright.", "The sun in the sky is bright."],
+    relevant_docs: Annotated[List[str], typer.Option(help="Relevant documents")] = [
+        "The sun is bright.",
+        "The sun in the sky is bright.",
+    ],
     output_file: Annotated[Optional[str], typer.Option(help="Output file for metrics")] = None,
 ):
     """Run advanced evaluation metrics for a query."""
@@ -144,11 +158,7 @@ def advanced_eval(
     hybrid_results = hybrid.hybrid_retrieve(query, CORPUS, 5)
 
     # Run comprehensive evaluation for each retriever
-    retrievers = {
-        "BM25": bm25_results,
-        "Dense": dense_results,
-        "Hybrid": hybrid_results
-    }
+    retrievers = {"BM25": bm25_results, "Dense": dense_results, "Hybrid": hybrid_results}
 
     all_metrics = {}
     for name, results in retrievers.items():
@@ -170,9 +180,9 @@ def advanced_eval(
             "query": query,
             "relevant_docs": relevant_docs,
             "retriever_metrics": all_metrics,
-            "aggregated_metrics": aggregated
+            "aggregated_metrics": aggregated,
         }
-        with open(output_file, 'w') as f:
+        with open(output_file, "w") as f:
             json.dump(result, f, indent=2)
         print(f"\nResults saved to {output_file}")
 
@@ -204,17 +214,18 @@ def rerank(
 
 @app.command()
 def bandit_optimize(
-    queries: Annotated[List[str], typer.Option(help="Queries for bandit optimization")] = ["bright sun", "blue sky", "fox mammal"],
+    queries: Annotated[List[str], typer.Option(help="Queries for bandit optimization")] = [
+        "bright sun",
+        "blue sky",
+        "fox mammal",
+    ],
     algorithm: Annotated[str, typer.Option(help="Bandit algorithm: ucb1 or thompson")] = "ucb1",
     iterations: Annotated[int, typer.Option(help="Number of iterations")] = 10,
 ):
     """Optimize hybrid weights using bandit algorithms."""
     print(f"Running {algorithm} bandit optimization with {iterations} iterations")
 
-    optimizer = BanditHybridOptimizer(
-        retriever_names=["bm25", "dense"],
-        bandit_type=algorithm
-    )
+    optimizer = BanditHybridOptimizer(retriever_names=["bm25", "dense"], bandit_type=algorithm)
 
     # Simple optimization loop
     for i in range(iterations):
@@ -250,15 +261,17 @@ def bandit_optimize(
 
 @app.command()
 def time_series_retrieve(
-    query: Annotated[str, typer.Option(help="Query for time-series retrieval")] = "recent developments",
+    query: Annotated[
+        str, typer.Option(help="Query for time-series retrieval")
+    ] = "recent developments",
     time_window: Annotated[str, typer.Option(help="Time window (e.g., 7d, 30d)")] = "7d",
 ):
     """Retrieve documents using time-series aware retrieval."""
     print(f"Running time-series retrieval for query: '{query}' with window: {time_window}")
 
     # Create sample time-series notes
-    from datetime import datetime, timedelta
     import random
+    from datetime import datetime, timedelta
 
     notes = []
     base_time = datetime.now()
@@ -276,25 +289,24 @@ def time_series_retrieve(
     retriever.add_notes(notes)
 
     # Parse time window
-    if time_window.endswith('d'):
+    if time_window.endswith("d"):
         window_days = int(time_window[:-1])
     else:
         window_days = 7  # default
 
     # Retrieve with time window
     results = retriever.search(
-        query=query,
-        query_time=base_time,
-        top_k=5,
-        time_window_days=window_days
+        query=query, query_time=base_time, top_k=5, time_window_days=window_days
     )
 
     print(f"\nRetrieved {len(results)} documents within {time_window}:")
     for i, result in enumerate(results):
-        time_diff = result['time_diff_days']
+        time_diff = result["time_diff_days"]
         print(f"{i+1}. ({time_diff:.1f} days ago) {result['content']}")
-        print(f"   Combined score: {result['combined_score']:.3f} "
-              f"(temporal: {result['temporal_score']:.3f}, content: {result['content_score']:.3f})")
+        print(
+            f"   Combined score: {result['combined_score']:.3f} "
+            f"(temporal: {result['temporal_score']:.3f}, content: {result['content_score']:.3f})"
+        )
 
 
 @app.command()
@@ -322,12 +334,8 @@ def compare_retrievers(
 
     # Save comparison if requested
     if output_file:
-        comparison = {
-            "query": query,
-            "results": results,
-            "timestamp": datetime.now().isoformat()
-        }
-        with open(output_file, 'w') as f:
+        comparison = {"query": query, "results": results, "timestamp": datetime.now().isoformat()}
+        with open(output_file, "w") as f:
             json.dump(comparison, f, indent=2)
         print(f"\nComparison saved to {output_file}")
 
@@ -345,14 +353,15 @@ def config(
             print("Current Configuration:")
             print(f"  BM25 Weight: {config.bm25_weight:.3f}")
             print(f"  Dense Weight: {config.dense_weight:.3f}")
-        except:
-            print("No configuration found. Using defaults:")
+        except Exception as e:
+            print(f"No configuration found ({e}). Using defaults:")
             print("  BM25 Weight: 0.500")
             print("  Dense Weight: 0.500")
 
     elif action == "reset":
         # Reset to default
         from autorag_live.pipeline.hybrid_optimizer import HybridWeights
+
         default_config = HybridWeights(bm25_weight=0.5, dense_weight=0.5)
         save_hybrid_config(default_config)
         print("Configuration reset to defaults.")
@@ -363,6 +372,7 @@ def config(
             return
 
         from autorag_live.pipeline.hybrid_optimizer import HybridWeights
+
         new_config = HybridWeights(bm25_weight=bm25_weight, dense_weight=dense_weight)
         save_hybrid_config(new_config)
         print(f"Configuration updated: BM25={bm25_weight:.3f}, Dense={dense_weight:.3f}")
@@ -405,17 +415,19 @@ def self_improve(
             update_terms_from_mining(synonyms)
             print(f"  Added {len(synonyms)} synonym groups")
 
-        history.append({
-            "iteration": i+1,
-            "diversity": diversity,
-            "weights": {"bm25": weights.bm25_weight, "dense": weights.dense_weight},
-            "synonyms_added": len(synonyms) if synonyms else 0
-        })
+        history.append(
+            {
+                "iteration": i + 1,
+                "diversity": diversity,
+                "weights": {"bm25": weights.bm25_weight, "dense": weights.dense_weight},
+                "synonyms_added": len(synonyms) if synonyms else 0,
+            }
+        )
 
     # Save results
     os.makedirs(output_dir, exist_ok=True)
     output_file = f"{output_dir}/self_improvement_{int(time.time())}.json"
-    with open(output_file, 'w') as f:
+    with open(output_file, "w") as f:
         json.dump(history, f, indent=2)
 
     print(f"\nSelf-improvement complete! Results saved to {output_file}")
@@ -429,15 +441,15 @@ def benchmark(
 ):
     """Run performance benchmarks for system components."""
     from autorag_live.evals.performance_benchmarks import (
-        run_full_benchmark_suite,
         PerformanceBenchmark,
-        benchmark_retrievers,
+        benchmark_augmentation,
+        benchmark_disagreement_analysis,
         benchmark_evaluation,
         benchmark_optimization,
-        benchmark_augmentation,
         benchmark_reranking,
+        benchmark_retrievers,
         benchmark_time_series,
-        benchmark_disagreement_analysis
+        run_full_benchmark_suite,
     )
 
     if components is None:
@@ -488,24 +500,25 @@ def config_validate(
 ):
     """Validate a configuration file."""
     try:
-        from autorag_live.cli.config_migrate import validate_command
         import argparse
-        
+
+        from autorag_live.cli.config_migrate import validate_command
+
         # Create mock args namespace
         args = argparse.Namespace()
         args.input = config_file
         args.verbose = False
-        
+
         exit_code = validate_command(args)
         if exit_code != 0:
             raise typer.Exit(exit_code)
-            
+
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
 
 
-@config_app.command("migrate")  
+@config_app.command("migrate")
 def config_migrate(
     config_file: Annotated[str, typer.Argument(help="Configuration file to migrate")],
     to_version: Annotated[str, typer.Option(help="Target version")],
@@ -513,9 +526,10 @@ def config_migrate(
 ):
     """Migrate configuration between versions."""
     try:
-        from autorag_live.cli.config_migrate import migrate_command
         import argparse
-        
+
+        from autorag_live.cli.config_migrate import migrate_command
+
         # Create mock args namespace
         args = argparse.Namespace()
         args.input = config_file
@@ -523,11 +537,11 @@ def config_migrate(
         args.output = output
         args.validate = True
         args.verbose = False
-        
+
         exit_code = migrate_command(args)
         if exit_code != 0:
             raise typer.Exit(exit_code)
-            
+
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -540,19 +554,20 @@ def config_info(
 ):
     """Show configuration file information."""
     try:
-        from autorag_live.cli.config_migrate import info_command
         import argparse
-        
+
+        from autorag_live.cli.config_migrate import info_command
+
         # Create mock args namespace
         args = argparse.Namespace()
         args.input = config_file
         args.show_structure = show_structure
         args.verbose = False
-        
+
         exit_code = info_command(args)
         if exit_code != 0:
             raise typer.Exit(exit_code)
-            
+
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)
@@ -565,19 +580,20 @@ def config_init(
 ):
     """Initialize a new configuration file."""
     try:
-        from autorag_live.cli.config_migrate import init_command
         import argparse
-        
-        # Create mock args namespace  
+
+        from autorag_live.cli.config_migrate import init_command
+
+        # Create mock args namespace
         args = argparse.Namespace()
         args.output = output
         args.force = force
         args.verbose = False
-        
+
         exit_code = init_command(args)
         if exit_code != 0:
             raise typer.Exit(exit_code)
-            
+
     except Exception as e:
         typer.echo(f"Error: {e}", err=True)
         raise typer.Exit(1)

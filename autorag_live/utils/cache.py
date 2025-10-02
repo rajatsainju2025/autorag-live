@@ -10,21 +10,22 @@ import json
 import pickle
 import sys
 import time
+from dataclasses import dataclass
 from functools import wraps
 from pathlib import Path
-from typing import Any, Dict, Optional, Callable, TypeVar
-from dataclasses import dataclass
+from typing import Any, Callable, Dict, Optional, TypeVar
 
 from autorag_live.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass
 class CacheEntry:
     """Cache entry with metadata."""
+
     value: Any
     timestamp: float
     hits: int = 0
@@ -96,8 +97,7 @@ class MemoryCache(Cache):
         # Evict if at capacity (simple LRU-like)
         if len(self._cache) >= self.max_size:
             # Remove oldest entry
-            oldest_key = min(self._cache.keys(),
-                           key=lambda k: self._cache[k].timestamp)
+            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k].timestamp)
             del self._cache[oldest_key]
 
         ttl_to_use = ttl if ttl is not None else self.default_ttl
@@ -107,7 +107,7 @@ class MemoryCache(Cache):
             timestamp=now,
             size_bytes=self._estimate_size(value),
             ttl=ttl_to_use,
-            expires_at=(now + ttl_to_use) if ttl_to_use else None
+            expires_at=(now + ttl_to_use) if ttl_to_use else None,
         )
         self._cache[key] = entry
 
@@ -130,7 +130,7 @@ class MemoryCache(Cache):
             if isinstance(obj, (bytes, bytearray, memoryview)):
                 return len(obj)
             if isinstance(obj, str):
-                return len(obj.encode('utf-8'))
+                return len(obj.encode("utf-8"))
             size = sys.getsizeof(obj)
             if size > 0:
                 return size
@@ -160,16 +160,16 @@ class FileCache(Cache):
         """Load cache index from disk."""
         if self._index_file.exists():
             try:
-                with open(self._index_file, 'r') as f:
+                with open(self._index_file, "r") as f:
                     self._index = json.load(f)
-            except:
+            except (json.JSONDecodeError, FileNotFoundError, OSError):
                 self._index = {}
         else:
             self._index = {}
 
     def _save_index(self) -> None:
         """Save cache index to disk."""
-        with open(self._index_file, 'w') as f:
+        with open(self._index_file, "w") as f:
             json.dump(self._index, f, indent=2)
         self._dirty_hit_updates = 0
 
@@ -178,7 +178,7 @@ class FileCache(Cache):
         now = time.time()
         removed = False
         for key, meta in list(self._index.items()):
-            expires_at = meta.get('expires_at')
+            expires_at = meta.get("expires_at")
             if expires_at and now >= expires_at:
                 (self.cache_dir / f"{key}.pkl").unlink(missing_ok=True)
                 del self._index[key]
@@ -192,7 +192,7 @@ class FileCache(Cache):
             return None
 
         meta = self._index[key]
-        expires_at = meta.get('expires_at')
+        expires_at = meta.get("expires_at")
         if expires_at and time.time() >= expires_at:
             self.delete(key)
             return None
@@ -204,14 +204,14 @@ class FileCache(Cache):
             return None
 
         try:
-            with open(cache_file, 'rb') as f:
+            with open(cache_file, "rb") as f:
                 value = pickle.load(f)
-            meta['hits'] = meta.get('hits', 0) + 1
+            meta["hits"] = meta.get("hits", 0) + 1
             self._dirty_hit_updates += 1
             if self._dirty_hit_updates % self._hit_flush_interval == 0:
                 self._save_index()
             return value
-        except:
+        except (pickle.PickleError, FileNotFoundError, OSError, EOFError):
             # Corrupted file, remove it
             cache_file.unlink(missing_ok=True)
             del self._index[key]
@@ -228,17 +228,17 @@ class FileCache(Cache):
 
         try:
             payload = pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)
-            with open(cache_file, 'wb') as f:
+            with open(cache_file, "wb") as f:
                 f.write(payload)
             size = len(payload)
             now = time.time()
 
             self._index[key] = {
-                'timestamp': now,
-                'ttl': ttl,
-                'expires_at': (now + ttl) if ttl else None,
-                'hits': 0,
-                'size': size
+                "timestamp": now,
+                "ttl": ttl,
+                "expires_at": (now + ttl) if ttl else None,
+                "hits": 0,
+                "size": size,
             }
             self._save_index()
         except Exception as e:
@@ -265,22 +265,19 @@ class FileCache(Cache):
     def _evict_if_needed(self) -> None:
         """Evict old entries if cache is too large."""
         self._purge_expired(persist=False)
-        total_size = sum(entry.get('size', 0) for entry in self._index.values())
+        total_size = sum(entry.get("size", 0) for entry in self._index.values())
 
         if total_size < self.max_size_bytes:
             return
 
         # Sort by access time and evict oldest
-        entries = sorted(
-            self._index.items(),
-            key=lambda x: x[1]['timestamp']
-        )
+        entries = sorted(self._index.items(), key=lambda x: x[1]["timestamp"])
 
         for key, entry in entries:
             if total_size < self.max_size_bytes * 0.8:  # Keep 80% capacity
                 break
             self.delete(key)
-            total_size -= entry.get('size', 0)
+            total_size -= entry.get("size", 0)
 
 
 class CacheManager:
@@ -293,13 +290,13 @@ class CacheManager:
     def _setup_default_caches(self) -> None:
         """Set up default caches."""
         # Memory cache for embeddings
-        self.caches['embeddings'] = MemoryCache(max_size=100, default_ttl=3600)
+        self.caches["embeddings"] = MemoryCache(max_size=100, default_ttl=3600)
 
         # File cache for models
-        self.caches['models'] = FileCache(cache_dir=".cache/models", max_size_mb=500)
+        self.caches["models"] = FileCache(cache_dir=".cache/models", max_size_mb=500)
 
         # Memory cache for retrieval results
-        self.caches['retrieval'] = MemoryCache(max_size=500, default_ttl=1800)
+        self.caches["retrieval"] = MemoryCache(max_size=500, default_ttl=1800)
 
     def get_cache(self, name: str) -> Cache:
         """Get or create a cache by name."""
@@ -318,7 +315,9 @@ class CacheManager:
 cache_manager = CacheManager()
 
 
-def cached(cache_name: str = "default", ttl: Optional[float] = None, key_func: Optional[Callable] = None):
+def cached(
+    cache_name: str = "default", ttl: Optional[float] = None, key_func: Optional[Callable] = None
+):
     """Decorator for caching function results."""
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
@@ -331,12 +330,10 @@ def cached(cache_name: str = "default", ttl: Optional[float] = None, key_func: O
                 key = key_func(*args, **kwargs)
             else:
                 # Default key generation
-                key_data = {
-                    'func': func.__name__,
-                    'args': args,
-                    'kwargs': sorted(kwargs.items())
-                }
-                key = hashlib.md5(json.dumps(key_data, sort_keys=True, default=str).encode()).hexdigest()
+                key_data = {"func": func.__name__, "args": args, "kwargs": sorted(kwargs.items())}
+                key = hashlib.md5(
+                    json.dumps(key_data, sort_keys=True, default=str).encode()
+                ).hexdigest()
 
             # Try cache first
             cached_result = cache.get(key)
@@ -353,15 +350,13 @@ def cached(cache_name: str = "default", ttl: Optional[float] = None, key_func: O
             return result
 
         return wrapper
+
     return decorator
 
 
 def generate_cache_key(*args, **kwargs) -> str:
     """Generate a cache key from arguments."""
-    key_data = {
-        'args': args,
-        'kwargs': sorted(kwargs.items())
-    }
+    key_data = {"args": args, "kwargs": sorted(kwargs.items())}
     return hashlib.md5(json.dumps(key_data, sort_keys=True, default=str).encode()).hexdigest()
 
 

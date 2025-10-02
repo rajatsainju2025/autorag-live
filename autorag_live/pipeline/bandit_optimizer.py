@@ -1,8 +1,9 @@
 """Bandit algorithm for online hybrid weight optimization."""
 
-from typing import Dict, List, Optional, Tuple, Any
-import numpy as np
 from dataclasses import dataclass
+from typing import Any, Dict, List, Tuple
+
+import numpy as np
 
 from autorag_live.utils import get_logger
 
@@ -12,6 +13,7 @@ logger = get_logger(__name__)
 @dataclass
 class BanditArm:
     """Represents an arm in the multi-armed bandit."""
+
     weights: Dict[str, float]
     reward_history: List[float]
     pull_count: int
@@ -123,7 +125,7 @@ class BanditHybridOptimizer:
         bandit_type: str = "ucb1",
         exploration_factor: float = 2.0,
         num_random_arms: int = 10,
-        weight_bounds: Tuple[float, float] = (0.0, 1.0)
+        weight_bounds: Tuple[float, float] = (0.0, 1.0),
     ):
         """Initialize bandit hybrid optimizer.
 
@@ -160,8 +162,7 @@ class BanditHybridOptimizer:
             # Generate random weights that sum to 1
             weights = np.random.dirichlet(np.ones(len(self.retriever_names)))
             weight_dict = {
-                name: float(weight)
-                for name, weight in zip(self.retriever_names, weights)
+                name: float(weight) for name, weight in zip(self.retriever_names, weights)
             }
             arms.append(BanditArm(weight_dict))
 
@@ -179,9 +180,7 @@ class BanditHybridOptimizer:
         # Clamp to bounds
         for name in normalized:
             normalized[name] = np.clip(
-                normalized[name],
-                self.weight_bounds[0],
-                self.weight_bounds[1]
+                normalized[name], self.weight_bounds[0], self.weight_bounds[1]
             )
 
         # Renormalize after clamping
@@ -252,7 +251,7 @@ class BanditHybridOptimizer:
             "average_reward": np.mean(rewards) if rewards else 0,
             "arm_rewards": rewards,
             "arm_pulls": pulls,
-            "best_weights": self.get_best_weights()
+            "best_weights": self.get_best_weights(),
         }
 
     def add_custom_arm(self, weights: Dict[str, float]):
@@ -264,9 +263,7 @@ class BanditHybridOptimizer:
 
 
 def create_bandit_optimizer(
-    retriever_names: List[str],
-    bandit_type: str = "ucb1",
-    **kwargs
+    retriever_names: List[str], bandit_type: str = "ucb1", **kwargs
 ) -> BanditHybridOptimizer:
     """Factory function to create bandit optimizer.
 
@@ -278,8 +275,4 @@ def create_bandit_optimizer(
     Returns:
         Configured BanditHybridOptimizer instance
     """
-    return BanditHybridOptimizer(
-        retriever_names=retriever_names,
-        bandit_type=bandit_type,
-        **kwargs
-    )
+    return BanditHybridOptimizer(retriever_names=retriever_names, bandit_type=bandit_type, **kwargs)

@@ -1,10 +1,9 @@
 """Advanced evaluation metrics for RAG systems."""
 
-import numpy as np
-from typing import List, Dict, Any, Optional, Tuple
-from collections import defaultdict
 import math
-from scipy.stats import entropy
+from typing import Dict, List, Optional
+
+import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 
@@ -111,8 +110,9 @@ def novelty_score(retrieved_docs: List[str], query_history: List[str]) -> float:
     return len(novel_docs) / len(current_set) if current_set else 0.0
 
 
-def semantic_coverage(retrieved_docs: List[str], all_relevant_docs: List[str],
-                     embeddings: Optional[np.ndarray] = None) -> float:
+def semantic_coverage(
+    retrieved_docs: List[str], all_relevant_docs: List[str], embeddings: Optional[np.ndarray] = None
+) -> float:
     """Calculate semantic coverage of relevant documents.
 
     Args:
@@ -126,8 +126,10 @@ def semantic_coverage(retrieved_docs: List[str], all_relevant_docs: List[str],
     if not all_relevant_docs or embeddings is None:
         return 0.0
 
-    retrieved_embeddings = embeddings[:len(retrieved_docs)]
-    relevant_embeddings = embeddings[len(retrieved_docs):len(retrieved_docs) + len(all_relevant_docs)]
+    retrieved_embeddings = embeddings[: len(retrieved_docs)]
+    relevant_embeddings = embeddings[
+        len(retrieved_docs) : len(retrieved_docs) + len(all_relevant_docs)
+    ]
 
     if len(retrieved_embeddings) == 0 or len(relevant_embeddings) == 0:
         return 0.0
@@ -172,8 +174,7 @@ def robustness_score(retrieved_docs_list: List[List[str]], relevant_docs: List[s
     return float(max(0.0, 1.0 - cv))
 
 
-def contextual_relevance(retrieved_docs: List[str], query: str,
-                        context_window: int = 3) -> float:
+def contextual_relevance(retrieved_docs: List[str], query: str, context_window: int = 3) -> float:
     """Calculate contextual relevance based on term proximity.
 
     Args:
@@ -215,7 +216,7 @@ def contextual_relevance(retrieved_docs: List[str], query: str,
                     pos2_list = term_positions[term2]
 
                     # Find minimum distance between any positions
-                    min_dist = float('inf')
+                    min_dist = float("inf")
                     for pos1 in pos1_list:
                         for pos2 in pos2_list:
                             min_dist = min(min_dist, abs(pos1 - pos2))
@@ -269,8 +270,7 @@ def fairness_score(retrieved_docs: List[str], document_groups: Dict[str, List[st
     return float(max(0.0, 1.0 - cv))
 
 
-def efficiency_score(retrieval_time: float, num_docs: int,
-                    baseline_time: float = 1.0) -> float:
+def efficiency_score(retrieval_time: float, num_docs: int, baseline_time: float = 1.0) -> float:
     """Calculate efficiency score based on retrieval time.
 
     Args:
@@ -295,9 +295,13 @@ def efficiency_score(retrieval_time: float, num_docs: int,
     return (time_score + throughput_score) / 2
 
 
-def comprehensive_evaluation(retrieved_docs: List[str], relevant_docs: List[str],
-                           query: str = "", embeddings: Optional[np.ndarray] = None,
-                           **kwargs) -> Dict[str, float]:
+def comprehensive_evaluation(
+    retrieved_docs: List[str],
+    relevant_docs: List[str],
+    query: str = "",
+    embeddings: Optional[np.ndarray] = None,
+    **kwargs
+) -> Dict[str, float]:
     """Run comprehensive evaluation with multiple metrics.
 
     Args:
@@ -315,47 +319,47 @@ def comprehensive_evaluation(retrieved_docs: List[str], relevant_docs: List[str]
     # Basic metrics
     if retrieved_docs and relevant_docs:
         # NDCG@5 and NDCG@10
-        metrics['ndcg@5'] = ndcg_at_k(retrieved_docs, relevant_docs, k=5)
-        metrics['ndcg@10'] = ndcg_at_k(retrieved_docs, relevant_docs, k=10)
+        metrics["ndcg@5"] = ndcg_at_k(retrieved_docs, relevant_docs, k=5)
+        metrics["ndcg@10"] = ndcg_at_k(retrieved_docs, relevant_docs, k=10)
 
         # Precision and Recall
         retrieved_set = set(retrieved_docs)
         relevant_set = set(relevant_docs)
         intersection = retrieved_set & relevant_set
 
-        metrics['precision@5'] = len(intersection) / len(retrieved_docs[:5]) if retrieved_docs[:5] else 0.0
-        metrics['precision@10'] = len(intersection) / len(retrieved_docs[:10]) if retrieved_docs[:10] else 0.0
-        metrics['recall@5'] = len(intersection) / len(relevant_set) if relevant_set else 0.0
-        metrics['recall@10'] = len(intersection) / len(relevant_set) if relevant_set else 0.0
+        metrics["precision@5"] = (
+            len(intersection) / len(retrieved_docs[:5]) if retrieved_docs[:5] else 0.0
+        )
+        metrics["precision@10"] = (
+            len(intersection) / len(retrieved_docs[:10]) if retrieved_docs[:10] else 0.0
+        )
+        metrics["recall@5"] = len(intersection) / len(relevant_set) if relevant_set else 0.0
+        metrics["recall@10"] = len(intersection) / len(relevant_set) if relevant_set else 0.0
 
     # Advanced metrics
     if embeddings is not None and len(retrieved_docs) > 1:
-        metrics['diversity'] = diversity_score(retrieved_docs, embeddings)
+        metrics["diversity"] = diversity_score(retrieved_docs, embeddings)
 
     if query:
-        metrics['contextual_relevance'] = contextual_relevance(retrieved_docs, query)
+        metrics["contextual_relevance"] = contextual_relevance(retrieved_docs, query)
 
     # Additional metrics from kwargs
-    if 'query_history' in kwargs:
-        metrics['novelty'] = novelty_score(retrieved_docs, kwargs['query_history'])
+    if "query_history" in kwargs:
+        metrics["novelty"] = novelty_score(retrieved_docs, kwargs["query_history"])
 
-    if 'all_relevant_docs' in kwargs and embeddings is not None:
-        metrics['semantic_coverage'] = semantic_coverage(
-            retrieved_docs, kwargs['all_relevant_docs'], embeddings
+    if "all_relevant_docs" in kwargs and embeddings is not None:
+        metrics["semantic_coverage"] = semantic_coverage(
+            retrieved_docs, kwargs["all_relevant_docs"], embeddings
         )
 
-    if 'retrieved_docs_list' in kwargs:
-        metrics['robustness'] = robustness_score(
-            kwargs['retrieved_docs_list'], relevant_docs
-        )
+    if "retrieved_docs_list" in kwargs:
+        metrics["robustness"] = robustness_score(kwargs["retrieved_docs_list"], relevant_docs)
 
-    if 'document_groups' in kwargs:
-        metrics['fairness'] = fairness_score(retrieved_docs, kwargs['document_groups'])
+    if "document_groups" in kwargs:
+        metrics["fairness"] = fairness_score(retrieved_docs, kwargs["document_groups"])
 
-    if 'retrieval_time' in kwargs and 'num_docs' in kwargs:
-        metrics['efficiency'] = efficiency_score(
-            kwargs['retrieval_time'], kwargs['num_docs']
-        )
+    if "retrieval_time" in kwargs and "num_docs" in kwargs:
+        metrics["efficiency"] = efficiency_score(kwargs["retrieval_time"], kwargs["num_docs"])
 
     return metrics
 
@@ -383,11 +387,11 @@ def aggregate_metrics(metrics_list: List[Dict[str, float]]) -> Dict[str, Dict[st
 
         if values:
             aggregated[metric_name] = {
-                'mean': float(np.mean(values)),
-                'std': float(np.std(values)),
-                'min': float(np.min(values)),
-                'max': float(np.max(values)),
-                'count': len(values)
+                "mean": float(np.mean(values)),
+                "std": float(np.std(values)),
+                "min": float(np.min(values)),
+                "max": float(np.max(values)),
+                "count": len(values),
             }
 
     return aggregated

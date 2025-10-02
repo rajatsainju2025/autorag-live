@@ -4,24 +4,24 @@ default:
     b: 0.75
     k1: 1.5
     tokenizer: whitespace
-    
+
   dense:
     model_name: all-MiniLM-L6-v2
     batch_size: 32
     normalize_embeddings: true
-    
+
   hybrid:
     weights:
       bm25: 0.3
       dense: 0.7
     normalize_scores: true
-    
+
   qdrant:
     host: localhost
     port: 6333
     collection_name: autorag_docs
     distance_metric: cosine
-    
+
   elasticsearch:
     hosts: ['localhost:9200']
     index_name: autorag_docs

@@ -1,5 +1,6 @@
 from typing import List
 
+
 def rewrite_query(query: str, num_rewrites: int = 3) -> List[str]:
     """
     Generates paraphrases of a query.

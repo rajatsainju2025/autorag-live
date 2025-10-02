@@ -5,25 +5,26 @@ This module provides tools for monitoring system performance, collecting
 metrics, and profiling expensive operations.
 """
 
-import time
-import psutil
+import statistics
 import threading
+import time
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Any, Callable, TypeVar
-from collections import defaultdict
-import statistics
+from typing import Any, Callable, Dict, List, Optional, TypeVar
+
+import psutil
 
 from autorag_live.utils.logging_config import get_logger
 
 logger = get_logger(__name__)
 
-T = TypeVar('T')
+T = TypeVar("T")
 
 
 @dataclass
 class PerformanceMetrics:
     """Performance metrics for an operation."""
+
     operation_name: str
     start_time: float
     end_time: Optional[float] = None
@@ -51,11 +52,12 @@ class PerformanceMetrics:
 @dataclass
 class AggregatedMetrics:
     """Aggregated performance metrics."""
+
     operation_name: str
     call_count: int = 0
     total_duration: float = 0.0
     avg_duration: float = 0.0
-    min_duration: float = float('inf')
+    min_duration: float = float("inf")
     max_duration: float = 0.0
     durations: List[float] = field(default_factory=list)
     total_memory_mb: float = 0.0
@@ -84,16 +86,18 @@ class AggregatedMetrics:
     def get_summary(self) -> Dict[str, Any]:
         """Get summary statistics."""
         return {
-            'operation': self.operation_name,
-            'calls': self.call_count,
-            'total_duration': round(self.total_duration, 3),
-            'avg_duration': round(self.avg_duration, 3),
-            'min_duration': round(self.min_duration, 3) if self.min_duration != float('inf') else 0,
-            'max_duration': round(self.max_duration, 3),
-            'p50_duration': round(statistics.median(self.durations), 3) if self.durations else 0,
-            'p95_duration': round(statistics.quantiles(self.durations, n=20)[18], 3) if len(self.durations) >= 20 else round(self.max_duration, 3),
-            'avg_memory_mb': round(self.avg_memory_mb, 1),
-            'peak_memory_mb': round(max(self.memory_peaks), 1) if self.memory_peaks else 0
+            "operation": self.operation_name,
+            "calls": self.call_count,
+            "total_duration": round(self.total_duration, 3),
+            "avg_duration": round(self.avg_duration, 3),
+            "min_duration": round(self.min_duration, 3) if self.min_duration != float("inf") else 0,
+            "max_duration": round(self.max_duration, 3),
+            "p50_duration": round(statistics.median(self.durations), 3) if self.durations else 0,
+            "p95_duration": round(statistics.quantiles(self.durations, n=20)[18], 3)
+            if len(self.durations) >= 20
+            else round(self.max_duration, 3),
+            "avg_memory_mb": round(self.avg_memory_mb, 1),
+            "peak_memory_mb": round(max(self.memory_peaks), 1) if self.memory_peaks else 0,
         }
 
 
@@ -175,9 +179,7 @@ def monitor_performance(operation_name: str, metadata: Optional[Dict[str, Any]] 
         return
 
     metrics = PerformanceMetrics(
-        operation_name=operation_name,
-        start_time=time.time(),
-        metadata=metadata or {}
+        operation_name=operation_name, start_time=time.time(), metadata=metadata or {}
     )
 
     try:
@@ -194,11 +196,12 @@ def profile_function(operation_name: Optional[str] = None):
         op_name = operation_name or f"{func.__module__}.{func.__name__}"
 
         def wrapper(*args, **kwargs) -> T:
-            with monitor_performance(op_name) as metrics:
+            with monitor_performance(op_name):
                 result = func(*args, **kwargs)
                 return result
 
         return wrapper
+
     return decorator
 
 
@@ -247,12 +250,12 @@ class SystemMonitor:
     def _get_system_metrics(self) -> Dict[str, Any]:
         """Get current system metrics."""
         return {
-            'timestamp': time.time(),
-            'cpu_percent': psutil.cpu_percent(interval=None),
-            'memory_percent': psutil.virtual_memory().percent,
-            'memory_used_mb': psutil.virtual_memory().used / 1024 / 1024,
-            'disk_usage_percent': psutil.disk_usage('/').percent,
-            'process_count': len(psutil.pids())
+            "timestamp": time.time(),
+            "cpu_percent": psutil.cpu_percent(interval=None),
+            "memory_percent": psutil.virtual_memory().percent,
+            "memory_used_mb": psutil.virtual_memory().used / 1024 / 1024,
+            "disk_usage_percent": psutil.disk_usage("/").percent,
+            "process_count": len(psutil.pids()),
         }
 
     def get_recent_metrics(self, last_n: int = 10) -> List[Dict[str, Any]]:
@@ -270,14 +273,20 @@ class SystemMonitor:
 
         # Calculate averages
         avg_metrics = {}
-        keys = ['cpu_percent', 'memory_percent', 'memory_used_mb', 'disk_usage_percent', 'process_count']
+        keys = [
+            "cpu_percent",
+            "memory_percent",
+            "memory_used_mb",
+            "disk_usage_percent",
+            "process_count",
+        ]
 
         for key in keys:
             values = [m[key] for m in metrics if key in m]
             if values:
-                avg_metrics[f'avg_{key}'] = round(statistics.mean(values), 2)
-                avg_metrics[f'max_{key}'] = round(max(values), 2)
-                avg_metrics[f'min_{key}'] = round(min(values), 2)
+                avg_metrics[f"avg_{key}"] = round(statistics.mean(values), 2)
+                avg_metrics[f"max_{key}"] = round(max(values), 2)
+                avg_metrics[f"min_{key}"] = round(min(values), 2)
 
         return avg_metrics
 

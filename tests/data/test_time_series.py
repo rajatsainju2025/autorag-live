@@ -1,16 +1,16 @@
 """Tests for time-series note support."""
 
-import json
 import tempfile
-import pytest
 from datetime import datetime, timedelta
+
 import numpy as np
+import pytest
 
 from autorag_live.data.time_series import (
-    TimeSeriesNote,
     FFTEmbedder,
+    TimeSeriesNote,
     TimeSeriesRetriever,
-    create_time_series_retriever
+    create_time_series_retriever,
 )
 
 
@@ -22,11 +22,7 @@ class TestTimeSeriesNote:
         timestamp = datetime(2023, 1, 1, 12, 0, 0)
         metadata = {"category": "work", "priority": "high"}
 
-        note = TimeSeriesNote(
-            content="Meeting notes",
-            timestamp=timestamp,
-            metadata=metadata
-        )
+        note = TimeSeriesNote(content="Meeting notes", timestamp=timestamp, metadata=metadata)
 
         assert note.content == "Meeting notes"
         assert note.timestamp == timestamp
@@ -37,10 +33,7 @@ class TestTimeSeriesNote:
         """Test note with pre-computed embedding."""
         embedding = np.array([0.1, 0.2, 0.3])
         note = TimeSeriesNote(
-            content="Test",
-            timestamp=datetime.now(),
-            metadata={},
-            embedding=embedding
+            content="Test", timestamp=datetime.now(), metadata={}, embedding=embedding
         )
 
         assert note.embedding is not None
@@ -52,16 +45,14 @@ class TestTimeSeriesNote:
             TimeSeriesNote(
                 content="Test",
                 timestamp="invalid",  # type: ignore # Invalid type for testing
-                metadata={}
+                metadata={},
             )
 
     def test_note_to_dict(self):
         """Test converting note to dictionary."""
         timestamp = datetime(2023, 1, 1, 12, 0, 0)
         note = TimeSeriesNote(
-            content="Test content",
-            timestamp=timestamp,
-            metadata={"key": "value"}
+            content="Test content", timestamp=timestamp, metadata={"key": "value"}
         )
 
         note_dict = note.to_dict()
@@ -80,7 +71,7 @@ class TestTimeSeriesNote:
             "content": "Test content",
             "timestamp": timestamp_str,
             "metadata": {"key": "value"},
-            "embedding": embedding
+            "embedding": embedding,
         }
 
         note = TimeSeriesNote.from_dict(note_dict)
@@ -97,12 +88,7 @@ class TestFFTEmbedder:
 
     def test_embedder_initialization(self):
         """Test FFT embedder initialization."""
-        embedder = FFTEmbedder(
-            window_size=50,
-            overlap=0.25,
-            n_fft=64,
-            embedding_dim=256
-        )
+        embedder = FFTEmbedder(window_size=50, overlap=0.25, n_fft=64, embedding_dim=256)
 
         assert embedder.window_size == 50
         assert embedder.overlap == 0.25
@@ -154,11 +140,7 @@ class TestTimeSeriesRetriever:
     def test_retriever_initialization(self):
         """Test retriever initialization."""
         embedder = FFTEmbedder(embedding_dim=128)
-        retriever = TimeSeriesRetriever(
-            embedder=embedder,
-            temporal_weight=0.4,
-            content_weight=0.6
-        )
+        retriever = TimeSeriesRetriever(embedder=embedder, temporal_weight=0.4, content_weight=0.6)
 
         assert retriever.embedder == embedder
         assert retriever.temporal_weight == 0.4
@@ -172,9 +154,7 @@ class TestTimeSeriesRetriever:
         timestamp = datetime(2023, 1, 1, 12, 0, 0)
 
         note = retriever.add_note(
-            content="Meeting notes",
-            timestamp=timestamp,
-            metadata={"category": "work"}
+            content="Meeting notes", timestamp=timestamp, metadata={"category": "work"}
         )
 
         assert len(retriever.notes) == 1
@@ -281,7 +261,7 @@ class TestTimeSeriesRetriever:
         retriever.add_note("Test note 1", base_time, {"id": 1})
         retriever.add_note("Test note 2", base_time + timedelta(days=1), {"id": 2})
 
-        with tempfile.NamedTemporaryFile(mode='w+', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w+", delete=False) as f:
             temp_path = f.name
 
         try:
@@ -301,6 +281,7 @@ class TestTimeSeriesRetriever:
 
         finally:
             import os
+
             os.unlink(temp_path)
 
     def test_empty_search(self):
@@ -316,10 +297,7 @@ class TestCreateTimeSeriesRetriever:
 
     def test_create_retriever(self):
         """Test creating retriever with factory function."""
-        retriever = create_time_series_retriever(
-            temporal_weight=0.5,
-            content_weight=0.5
-        )
+        retriever = create_time_series_retriever(temporal_weight=0.5, content_weight=0.5)
 
         assert isinstance(retriever, TimeSeriesRetriever)
         assert retriever.temporal_weight == 0.5

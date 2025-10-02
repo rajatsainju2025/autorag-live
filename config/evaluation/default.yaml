@@ -11,12 +11,12 @@ default:
     - name: faithfulness
       enabled: true
       judge_type: deterministic
-      
+
   llm_judge:
     type: deterministic  # or openai
     temperature: 0.7
     max_tokens: 100
-    
+
   benchmarks:
     warmup_iterations: 2
     test_iterations: 10

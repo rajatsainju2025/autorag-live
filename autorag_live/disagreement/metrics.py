@@ -1,5 +1,7 @@
 from typing import List, Set, cast
+
 from scipy.stats import kendalltau
+
 
 def jaccard_at_k(list1: List[str], list2: List[str]) -> float:
     """
@@ -10,6 +12,7 @@ def jaccard_at_k(list1: List[str], list2: List[str]) -> float:
     intersection = len(set1.intersection(set2))
     union = len(set1.union(set2))
     return intersection / union if union != 0 else 0
+
 
 def kendall_tau_at_k(list1: List[str], list2: List[str]) -> float:
     """
@@ -28,7 +31,6 @@ def kendall_tau_at_k(list1: List[str], list2: List[str]) -> float:
     for item in all_items:
         ranks1.append(rank1.get(item, len(all_items)))
         ranks2.append(rank2.get(item, len(all_items)))
-        
+
     tau, _ = kendalltau(ranks1, ranks2)
     return cast(float, tau)
-

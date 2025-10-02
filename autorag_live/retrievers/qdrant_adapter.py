@@ -1,11 +1,11 @@
 import json
-from typing import Any, Dict, List, Literal, Optional, Union, Tuple
+from typing import List, Literal, Optional, Tuple
 
-import numpy as np
 
 try:
     from qdrant_client import QdrantClient
     from qdrant_client.http.models import Distance, VectorParams
+
     QDRANT_AVAILABLE = True
 except ImportError:
     QdrantClient = None
@@ -31,7 +31,7 @@ class QdrantRetriever(DenseRetriever):
         port: int = 6333,
         url: Optional[str] = None,
         api_key: Optional[str] = None,
-        distance_metric: Literal["cosine", "euclid", "dot"] = "cosine"
+        distance_metric: Literal["cosine", "euclid", "dot"] = "cosine",
     ) -> None:
         """Initialize Qdrant retriever.
 
@@ -47,9 +47,7 @@ class QdrantRetriever(DenseRetriever):
         super().__init__(model_name)
 
         if not QDRANT_AVAILABLE:
-            raise ImportError(
-                "Qdrant is not installed. Install with: pip install qdrant-client"
-            )
+            raise ImportError("Qdrant is not installed. Install with: pip install qdrant-client")
 
         self.collection_name = collection_name
         self.distance_metric = distance_metric
@@ -65,7 +63,7 @@ class QdrantRetriever(DenseRetriever):
             distance_map = {
                 "cosine": Distance.COSINE,  # type: ignore
                 "euclid": Distance.EUCLID,  # type: ignore
-                "dot": Distance.DOT  # type: ignore
+                "dot": Distance.DOT,  # type: ignore
             }
             self.qdrant_distance = distance_map.get(distance_metric, Distance.COSINE)  # type: ignore
         else:
@@ -88,9 +86,8 @@ class QdrantRetriever(DenseRetriever):
                         self.client.create_collection(
                             collection_name=self.collection_name,
                             vectors_config=VectorParams(  # type: ignore
-                                size=dimension,
-                                distance=self.qdrant_distance
-                            )
+                                size=dimension, distance=self.qdrant_distance
+                            ),
                         )
                     else:
                         raise RuntimeError("Qdrant not available or distance metric not set")
@@ -119,20 +116,11 @@ class QdrantRetriever(DenseRetriever):
         # Prepare points
         points = []
         for i, (doc, emb) in enumerate(zip(documents, embeddings)):
-            point = {
-                "id": i,
-                "vector": emb.tolist(),
-                "payload": {
-                    "text": doc
-                }
-            }
+            point = {"id": i, "vector": emb.tolist(), "payload": {"text": doc}}
             points.append(point)
 
         # Upsert points
-        self.client.upsert(
-            collection_name=self.collection_name,
-            points=points
-        )
+        self.client.upsert(collection_name=self.collection_name, points=points)
 
         # Store documents for compatibility
         self.documents = documents
@@ -156,8 +144,8 @@ class QdrantRetriever(DenseRetriever):
             # Search
             search_result = self.client.search(
                 collection_name=self.collection_name,
-                query_vector=query_emb.tolist() if hasattr(query_emb, 'tolist') else query_emb,
-                limit=k
+                query_vector=query_emb.tolist() if hasattr(query_emb, "tolist") else query_emb,
+                limit=k,
             )
 
             # Format results
@@ -181,24 +169,32 @@ class QdrantRetriever(DenseRetriever):
         try:
             # Extract client configuration safely
             qdrant_config = {}
-            if hasattr(self.client, '_host') and not hasattr(getattr(self.client, '_host', None), '__class__'):
-                qdrant_config["host"] = getattr(self.client, '_host', None)
-            if hasattr(self.client, '_port') and not hasattr(getattr(self.client, '_port', None), '__class__'):
-                qdrant_config["port"] = getattr(self.client, '_port', None)
-            if hasattr(self.client, '_url') and not hasattr(getattr(self.client, '_url', None), '__class__'):
-                qdrant_config["url"] = getattr(self.client, '_url', None)
-            if hasattr(self.client, '_api_key') and not hasattr(getattr(self.client, '_api_key', None), '__class__'):
-                qdrant_config["api_key"] = getattr(self.client, '_api_key', None)
+            if hasattr(self.client, "_host") and not hasattr(
+                getattr(self.client, "_host", None), "__class__"
+            ):
+                qdrant_config["host"] = getattr(self.client, "_host", None)
+            if hasattr(self.client, "_port") and not hasattr(
+                getattr(self.client, "_port", None), "__class__"
+            ):
+                qdrant_config["port"] = getattr(self.client, "_port", None)
+            if hasattr(self.client, "_url") and not hasattr(
+                getattr(self.client, "_url", None), "__class__"
+            ):
+                qdrant_config["url"] = getattr(self.client, "_url", None)
+            if hasattr(self.client, "_api_key") and not hasattr(
+                getattr(self.client, "_api_key", None), "__class__"
+            ):
+                qdrant_config["api_key"] = getattr(self.client, "_api_key", None)
 
             config = {
                 "type": "qdrant",
                 "model_name": self.model_name,
                 "collection_name": self.collection_name,
                 "distance_metric": self.distance_metric,
-                "qdrant_config": qdrant_config
+                "qdrant_config": qdrant_config,
             }
 
-            with open(path, 'w') as f:
+            with open(path, "w") as f:
                 json.dump(config, f, indent=2)
 
             logger.info(f"Saved Qdrant retriever config to {path}")
@@ -206,7 +202,7 @@ class QdrantRetriever(DenseRetriever):
             raise RetrieverError(f"Failed to save retriever config: {str(e)}") from e
 
     @classmethod
-    def from_config(cls, path: str) -> 'QdrantRetriever':
+    def from_config(cls, path: str) -> "QdrantRetriever":
         """Create a retriever instance from a configuration file.
 
         Args:
@@ -219,38 +215,38 @@ class QdrantRetriever(DenseRetriever):
             RetrieverError: If loading fails
             ValueError: If config type is invalid
         """
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             config = json.load(f)
-            
-        if config.get('type') != 'qdrant':
+
+        if config.get("type") != "qdrant":
             raise ValueError("Invalid config type")
 
         # Create a new instance with basic config
         instance = cls(
-            model_name=config.get('model_name'),
-            collection_name=config.get('collection_name'),
-            distance_metric=config.get('distance_metric', 'cosine')
+            model_name=config.get("model_name"),
+            collection_name=config.get("collection_name"),
+            distance_metric=config.get("distance_metric", "cosine"),
         )
 
         # Load client configuration
-        if 'qdrant_config' in config:
-            client_config = config['qdrant_config']
-            if 'url' in client_config and client_config['url']:
+        if "qdrant_config" in config:
+            client_config = config["qdrant_config"]
+            if "url" in client_config and client_config["url"]:
                 instance = cls(
-                    model_name=config.get('model_name'),
-                    collection_name=config.get('collection_name'),
-                    url=client_config['url'],
-                    api_key=client_config.get('api_key'),
-                    distance_metric=config.get('distance_metric', 'cosine')
+                    model_name=config.get("model_name"),
+                    collection_name=config.get("collection_name"),
+                    url=client_config["url"],
+                    api_key=client_config.get("api_key"),
+                    distance_metric=config.get("distance_metric", "cosine"),
                 )
             else:
                 instance = cls(
-                    model_name=config.get('model_name'),
-                    collection_name=config.get('collection_name'),
-                    host=client_config.get('host', 'localhost'),
-                    port=client_config.get('port', 6333),
-                    api_key=client_config.get('api_key'),
-                    distance_metric=config.get('distance_metric', 'cosine')
+                    model_name=config.get("model_name"),
+                    collection_name=config.get("collection_name"),
+                    host=client_config.get("host", "localhost"),
+                    port=client_config.get("port", 6333),
+                    api_key=client_config.get("api_key"),
+                    distance_metric=config.get("distance_metric", "cosine"),
                 )
 
         return instance
@@ -263,15 +259,15 @@ class QdrantRetriever(DenseRetriever):
         """
         # Use the class method to create a new instance
         new_instance = self.from_config(path)
-        
+
         # Update this instance's attributes
         self.collection_name = new_instance.collection_name
         self.model_name = new_instance.model_name
         self.distance_metric = new_instance.distance_metric
         self.client = new_instance.client
-        
+
         logger.info(f"Loaded Qdrant retriever from {path}")
-    
+
     @classmethod
     def load_from_config(cls, path: str) -> "QdrantRetriever":
         """Create retriever instance from configuration file.
@@ -282,7 +278,7 @@ class QdrantRetriever(DenseRetriever):
         Returns:
             Loaded QdrantRetriever instance
         """
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             config = json.load(f)
 
         if config.get("type") != "qdrant":
@@ -297,5 +293,5 @@ class QdrantRetriever(DenseRetriever):
             host=qdrant_config.get("host"),
             port=qdrant_config.get("port"),
             url=qdrant_config.get("url"),
-            api_key=qdrant_config.get("api_key")
+            api_key=qdrant_config.get("api_key"),
         )

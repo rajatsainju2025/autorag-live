@@ -1,5 +1,7 @@
-from autorag_live.disagreement import metrics
 import numpy as np
+
+from autorag_live.disagreement import metrics
+
 
 def test_jaccard_at_k():
     list1 = ["a", "b", "c"]
@@ -13,6 +15,7 @@ def test_jaccard_at_k():
     list5 = ["a", "b", "c"]
     list6 = ["a", "b", "c"]
     assert metrics.jaccard_at_k(list5, list6) == 1
+
 
 def test_kendall_tau_at_k():
     list1 = ["a", "b", "c"]
@@ -28,4 +31,3 @@ def test_kendall_tau_at_k():
     # The exact value depends on the implementation details of handling disjoint sets.
     # Let's just check it's a valid number for now.
     assert isinstance(metrics.kendall_tau_at_k(list5, list6), float)
-

@@ -1,10 +1,11 @@
 from __future__ import annotations
-from dataclasses import dataclass
-from typing import Dict, List, Any
-import os
+
 import json
+import os
 import random
 import time
+from dataclasses import dataclass
+from typing import Any, Dict, List
 
 from autorag_live.evals.llm_judge import get_judge
 from autorag_live.utils import get_logger
@@ -14,12 +15,14 @@ logger = get_logger(__name__)
 SEED = 1337
 random.seed(SEED)
 
+
 @dataclass
 class QAItem:
     id: str
     question: str
     context_docs: List[str]
     answer: str
+
 
 SMALL_QA: List[QAItem] = [
     QAItem(
@@ -88,38 +91,40 @@ def run_small_suite(runs_dir: str = "runs", judge_type: str = "deterministic") -
 
     judge = get_judge(judge_type)
     logger.debug(f"Using judge: {judge_type}")
-    
+
     results: List[Dict[str, Any]] = []
     ems: List[float] = []
     f1s: List[float] = []
     relevances: List[float] = []
     faithfulnesses: List[float] = []
-    
+
     for i, item in enumerate(SMALL_QA):
         logger.debug(f"Processing QA item {i+1}/{len(SMALL_QA)}: {item.id}")
         pred = simple_qa_answer(item.question, item.context_docs)
         context = " ".join(item.context_docs)
-        
+
         em = exact_match(pred, item.answer)
         f1 = token_f1(pred, item.answer)
         relevance = judge.judge_answer_relevance(item.question, pred, context)
         faithfulness = judge.judge_faithfulness(pred, context)
-        
+
         ems.append(em)
         f1s.append(f1)
         relevances.append(relevance)
         faithfulnesses.append(faithfulness)
-        
-        results.append({
-            "id": item.id,
-            "question": item.question,
-            "pred": pred,
-            "gold": item.answer,
-            "em": em,
-            "f1": f1,
-            "relevance": relevance,
-            "faithfulness": faithfulness,
-        })
+
+        results.append(
+            {
+                "id": item.id,
+                "question": item.question,
+                "pred": pred,
+                "gold": item.answer,
+                "em": em,
+                "f1": f1,
+                "relevance": relevance,
+                "faithfulness": faithfulness,
+            }
+        )
 
     summary = {
         "run_id": run_id,
@@ -135,8 +140,10 @@ def run_small_suite(runs_dir: str = "runs", judge_type: str = "deterministic") -
     }
     with open(os.path.join(runs_dir, f"{run_id}.json"), "w") as f:
         json.dump(summary, f, indent=2)
-    
-    logger.info(f"Completed small evaluation suite. Run ID: {run_id}, Avg EM: {summary['metrics']['em']:.3f}, Avg F1: {summary['metrics']['f1']:.3f}, Avg Relevance: {summary['metrics']['relevance']:.3f}, Avg Faithfulness: {summary['metrics']['faithfulness']:.3f}")
+
+    logger.info(
+        f"Completed small evaluation suite. Run ID: {run_id}, Avg EM: {summary['metrics']['em']:.3f}, Avg F1: {summary['metrics']['f1']:.3f}, Avg Relevance: {summary['metrics']['relevance']:.3f}, Avg Faithfulness: {summary['metrics']['faithfulness']:.3f}"
+    )
     logger.info(f"Results saved to: {os.path.join(runs_dir, f'{run_id}.json')}")
-    
+
     return summary

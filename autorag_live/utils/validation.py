@@ -3,16 +3,15 @@ Configuration validation utilities.
 
 This module provides schema validation and version migration tools for configuration management.
 """
-from dataclasses import Field, dataclass, fields
-from typing import Any, Dict, List, Optional, Set, Type, TypeVar, Union, cast, get_type_hints
-from typing_extensions import Protocol
-from omegaconf import OmegaConf, DictConfig
-from omegaconf.basecontainer import BaseContainer
+from dataclasses import Field
+from typing import Any, Dict, List, Set, Type, TypeVar, Union, cast, get_type_hints
 
-from .schema import AutoRAGConfig
+from omegaconf import DictConfig, OmegaConf
+
 from ..types.types import ConfigurationError
 
-T = TypeVar('T')  # Generic type for config classes
+T = TypeVar("T")  # Generic type for config classes
+
 
 def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
     """
@@ -27,26 +26,28 @@ def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
     """
     try:
         # Check if schema_cls is a dataclass
-        if not hasattr(schema_cls, '__dataclass_fields__'):
+        if not hasattr(schema_cls, "__dataclass_fields__"):
             raise ConfigurationError(f"{schema_cls.__name__} is not a dataclass")
-        
-        schema_fields = cast(Dict[str, Field], getattr(schema_cls, '__dataclass_fields__'))
+
+        schema_fields = cast(Dict[str, Field], getattr(schema_cls, "__dataclass_fields__"))
 
         # Get type hints to check for Optional types
         type_hints = get_type_hints(schema_cls)
-        
+
         # Get required fields (not Optional and no default)
         required_fields: Set[str] = set()
         for field_name, field in schema_fields.items():
             # Check if field is Optional (Union with None)
             field_type = type_hints.get(field_name)
             is_optional = False
-            if field_type and hasattr(field_type, '__origin__'):
-                if field_type.__origin__ is Union and hasattr(field_type, '__args__'):
+            if field_type and hasattr(field_type, "__origin__"):
+                if field_type.__origin__ is Union and hasattr(field_type, "__args__"):
                     is_optional = type(None) in field_type.__args__
-            
+
             # Field is required if it has no default and is not Optional
-            if not is_optional and (field.default is field.default_factory or field.default is None):
+            if not is_optional and (
+                field.default is field.default_factory or field.default is None
+            ):
                 required_fields.add(field_name)
 
         # Check required fields
@@ -70,6 +71,7 @@ def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
     except Exception as e:
         raise ConfigurationError(f"Configuration validation failed: {str(e)}")
 
+
 def validate_field(name: str, value: Any, expected_type: Any) -> None:
     """
     Validate a single configuration field.
@@ -89,7 +91,9 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
                 if value is None:
                     return
                 non_none_types = tuple(t for t in expected_type.__args__ if t is not type(None))
-                expected_type = non_none_types[0] if len(non_none_types) == 1 else Union[non_none_types]
+                expected_type = (
+                    non_none_types[0] if len(non_none_types) == 1 else Union[non_none_types]
+                )
 
         # Handle Lists
         if getattr(expected_type, "__origin__", None) is list:
@@ -103,9 +107,10 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
         # Handle Dicts (including OmegaConf DictConfig)
         if getattr(expected_type, "__origin__", None) is dict:
             from omegaconf import DictConfig
+
             if not isinstance(value, (dict, DictConfig)):
                 raise ConfigurationError(f"Field '{name}' must be a dict or DictConfig")
-            if hasattr(expected_type, '__args__') and len(expected_type.__args__) >= 2:
+            if hasattr(expected_type, "__args__") and len(expected_type.__args__) >= 2:
                 key_type, value_type = expected_type.__args__
                 for k, v in value.items():
                     validate_field(f"{name}.key", k, key_type)
@@ -125,6 +130,7 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
 
     except Exception as e:
         raise ConfigurationError(f"Validation failed for field '{name}': {str(e)}")
+
 
 def merge_with_env_vars(config: DictConfig, prefix: str = "AUTORAG") -> DictConfig:
     """
@@ -150,10 +156,7 @@ def merge_with_env_vars(config: DictConfig, prefix: str = "AUTORAG") -> DictConf
         config = cast(DictConfig, OmegaConf.create(OmegaConf.to_container(config)))
 
         # Get relevant env vars
-        env_vars = {
-            k: v for k, v in os.environ.items()
-            if k.startswith(f"{prefix}_")
-        }
+        env_vars = {k: v for k, v in os.environ.items() if k.startswith(f"{prefix}_")}
 
         # Update config
         for env_key, env_value in env_vars.items():
@@ -185,11 +188,8 @@ def merge_with_env_vars(config: DictConfig, prefix: str = "AUTORAG") -> DictConf
     except Exception as e:
         raise ConfigurationError(f"Failed to merge environment variables: {str(e)}")
 
-def migrate_config(
-    config: DictConfig, 
-    from_version: str,
-    to_version: str
-) -> DictConfig:
+
+def migrate_config(config: DictConfig, from_version: str, to_version: str) -> DictConfig:
     """
     Migrate configuration from one version to another.
 
@@ -222,6 +222,7 @@ def migrate_config(
             f"Failed to migrate config from v{from_version} to v{to_version}: {str(e)}"
         )
 
+
 def _get_migration_steps(from_version: str, to_version: str) -> List[Any]:
     """Get ordered list of migration steps between versions."""
     # Define version migrations
@@ -236,10 +237,11 @@ def _get_migration_steps(from_version: str, to_version: str) -> List[Any]:
     except KeyError:
         raise ConfigurationError(f"No migration path from v{from_version} to v{to_version}")
 
+
 def _migrate_0_1_0_to_0_2_0(config: DictConfig) -> DictConfig:
     """Migrate from v0.1.0 to v0.2.0 format."""
     try:
-        # Create mutable copy 
+        # Create mutable copy
         migrated = cast(DictConfig, OmegaConf.create(OmegaConf.to_container(config)))
 
         # Example migrations:

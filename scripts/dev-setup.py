@@ -10,7 +10,10 @@ import sys
 from pathlib import Path
 from typing import List, Optional
 
-def run_command(cmd: List[str], description: str, check: bool = True) -> Optional[subprocess.CompletedProcess]:
+
+def run_command(
+    cmd: List[str], description: str, check: bool = True
+) -> Optional[subprocess.CompletedProcess]:
     """Run a command with proper error handling."""
     print(f"📦 {description}...")
     try:
@@ -29,6 +32,7 @@ def run_command(cmd: List[str], description: str, check: bool = True) -> Optiona
             sys.exit(1)
         return None
 
+
 def check_python_version():
     """Check if Python version is compatible."""
     print("🐍 Checking Python version...")
@@ -38,34 +42,34 @@ def check_python_version():
         sys.exit(1)
     print(f"✅ Python {version.major}.{version.minor}.{version.micro} is compatible")
 
+
 def install_poetry():
     """Install Poetry if not available."""
     print("📝 Checking Poetry installation...")
     result = run_command(["poetry", "--version"], "Check Poetry", check=False)
-    
+
     if result is None or result.returncode != 0:
         print("🔧 Installing Poetry...")
-        install_cmd = [
-            sys.executable, "-m", "pip", "install", "poetry"
-        ]
+        install_cmd = [sys.executable, "-m", "pip", "install", "poetry"]
         run_command(install_cmd, "Install Poetry")
     else:
         print("✅ Poetry is already installed")
 
+
 def setup_poetry_environment():
     """Set up Poetry virtual environment and install dependencies."""
     print("🏗️ Setting up Poetry environment...")
-    
+
     # Configure Poetry
     run_command(["poetry", "config", "virtualenvs.in-project", "true"], "Configure Poetry")
-    
+
     # Install dependencies
     run_command(["poetry", "install"], "Install dependencies")
-    
+
     # Install development dependencies
     dev_deps = [
         "pytest>=7.0",
-        "pytest-cov>=4.0", 
+        "pytest-cov>=4.0",
         "pytest-mock>=3.0",
         "black>=23.0",
         "isort>=5.0",
@@ -74,26 +78,30 @@ def setup_poetry_environment():
         "bandit>=1.7",
         "pre-commit>=3.0",
         "jupyter>=1.0",
-        "ipykernel>=6.0"
+        "ipykernel>=6.0",
     ]
-    
+
     for dep in dev_deps:
         run_command(["poetry", "add", "--group", "dev", dep], f"Install {dep.split('>=')[0]}")
+
 
 def setup_pre_commit():
     """Set up pre-commit hooks."""
     print("🔨 Setting up pre-commit hooks...")
-    
+
     # Install pre-commit
     run_command(["poetry", "run", "pre-commit", "install"], "Install pre-commit hooks")
-    
+
     # Run pre-commit on all files to verify setup
-    run_command(["poetry", "run", "pre-commit", "run", "--all-files"], "Run pre-commit check", check=False)
+    run_command(
+        ["poetry", "run", "pre-commit", "run", "--all-files"], "Run pre-commit check", check=False
+    )
+
 
 def create_development_config():
     """Create development configuration files."""
     print("⚙️ Creating development configuration...")
-    
+
     # Create .env template
     env_template = """# Development Environment Variables
 # Copy to .env and customize as needed
@@ -103,7 +111,7 @@ AUTORAG_DEBUG=true
 AUTORAG_LOG_LEVEL=DEBUG
 AUTORAG_CONFIG_DIR=./config
 
-# Model Configuration  
+# Model Configuration
 AUTORAG_MODEL_CACHE_DIR=~/.cache/huggingface
 AUTORAG_DEVICE=auto
 
@@ -120,7 +128,7 @@ PYTEST_CURRENT_TEST=""
     if not env_file.exists():
         env_file.write_text(env_template)
         print("✅ Created .env.template")
-    
+
     # Create development config
     dev_config = """# Development Configuration
 version: "0.1.0"
@@ -148,19 +156,20 @@ evaluation:
 
     config_dir = Path("config")
     dev_config_file = config_dir / "dev.yaml"
-    
+
     if not dev_config_file.exists():
         config_dir.mkdir(exist_ok=True)
         dev_config_file.write_text(dev_config)
         print("✅ Created config/dev.yaml")
 
+
 def setup_vscode():
     """Set up VS Code configuration."""
     print("🔧 Setting up VS Code configuration...")
-    
+
     vscode_dir = Path(".vscode")
     vscode_dir.mkdir(exist_ok=True)
-    
+
     # Settings
     settings = {
         "python.defaultInterpreterPath": "./.venv/bin/python",
@@ -170,21 +179,17 @@ def setup_vscode():
         "python.linting.ruffEnabled": True,
         "python.formatting.provider": "black",
         "editor.formatOnSave": True,
-        "editor.codeActionsOnSave": {
-            "source.organizeImports": True
-        },
-        "files.associations": {
-            "*.yaml": "yaml",
-            "*.yml": "yaml"
-        }
+        "editor.codeActionsOnSave": {"source.organizeImports": True},
+        "files.associations": {"*.yaml": "yaml", "*.yml": "yaml"},
     }
-    
+
     import json
+
     settings_file = vscode_dir / "settings.json"
     if not settings_file.exists():
         settings_file.write_text(json.dumps(settings, indent=2))
         print("✅ Created .vscode/settings.json")
-    
+
     # Launch configuration
     launch_config = {
         "version": "0.2.0",
@@ -195,15 +200,15 @@ def setup_vscode():
                 "request": "launch",
                 "program": "${file}",
                 "console": "integratedTerminal",
-                "envFile": "${workspaceFolder}/.env"
+                "envFile": "${workspaceFolder}/.env",
             },
             {
                 "name": "AutoRAG CLI",
-                "type": "python", 
+                "type": "python",
                 "request": "launch",
                 "module": "autorag_live.cli",
                 "args": ["--help"],
-                "console": "integratedTerminal"
+                "console": "integratedTerminal",
             },
             {
                 "name": "Run Tests",
@@ -211,20 +216,21 @@ def setup_vscode():
                 "request": "launch",
                 "module": "pytest",
                 "args": ["tests/", "-v"],
-                "console": "integratedTerminal"
-            }
-        ]
+                "console": "integratedTerminal",
+            },
+        ],
     }
-    
+
     launch_file = vscode_dir / "launch.json"
     if not launch_file.exists():
         launch_file.write_text(json.dumps(launch_config, indent=2))
         print("✅ Created .vscode/launch.json")
 
+
 def create_makefile():
     """Create Makefile for common development tasks."""
     print("📋 Creating Makefile...")
-    
+
     makefile_content = """# AutoRAG-Live Development Makefile
 
 .PHONY: help install test lint format clean docs serve-docs build
@@ -289,30 +295,32 @@ update-deps: ## Update dependencies
         makefile.write_text(makefile_content)
         print("✅ Created Makefile")
 
+
 def main():
     """Main setup function."""
     print("🚀 AutoRAG-Live Development Environment Setup")
     print("=" * 50)
-    
+
     # Check prerequisites
     check_python_version()
-    
+
     # Install and configure Poetry
     install_poetry()
     setup_poetry_environment()
-    
+
     # Set up development tools
     setup_pre_commit()
     create_development_config()
     setup_vscode()
     create_makefile()
-    
+
     print("\n✨ Development environment setup complete!")
     print("\nNext steps:")
     print("1. Copy .env.template to .env and customize")
     print("2. Run 'make test' to verify everything works")
     print("3. Use 'make help' to see available commands")
     print("4. Start developing! 🎉")
+
 
 if __name__ == "__main__":
     main()

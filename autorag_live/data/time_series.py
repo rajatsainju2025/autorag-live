@@ -1,10 +1,11 @@
 """Time-series note support with FFT-based embeddings."""
 
-from typing import Dict, List, Optional, Tuple, Any, Union
-from datetime import datetime, timedelta
-import numpy as np
-from dataclasses import dataclass
 import json
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Dict, List, Optional
+
+import numpy as np
 
 from autorag_live.utils import get_logger
 
@@ -14,6 +15,7 @@ logger = get_logger(__name__)
 @dataclass
 class TimeSeriesNote:
     """Represents a time-series note with temporal information."""
+
     content: str
     timestamp: datetime
     metadata: Dict[str, Any]
@@ -33,7 +35,7 @@ class TimeSeriesNote:
             "content": self.content,
             "timestamp": self.timestamp.isoformat(),
             "metadata": self.metadata,
-            "embedding": self.embedding.tolist() if self.embedding is not None else None
+            "embedding": self.embedding.tolist() if self.embedding is not None else None,
         }
 
     @classmethod
@@ -43,7 +45,7 @@ class TimeSeriesNote:
             content=data["content"],
             timestamp=datetime.fromisoformat(data["timestamp"]),
             metadata=data.get("metadata", {}),
-            embedding=np.array(data["embedding"]) if data.get("embedding") else None
+            embedding=np.array(data["embedding"]) if data.get("embedding") else None,
         )
 
 
@@ -55,7 +57,7 @@ class FFTEmbedder:
         window_size: int = 100,
         overlap: float = 0.5,
         n_fft: Optional[int] = None,
-        embedding_dim: int = 384
+        embedding_dim: int = 384,
     ):
         """Initialize FFT embedder.
 
@@ -90,7 +92,7 @@ class FFTEmbedder:
         """Compute FFT-based features from signal."""
         # Apply window
         if len(signal) >= self.window_size:
-            windowed_signal = signal[:self.window_size] * self.window
+            windowed_signal = signal[: self.window_size] * self.window
         else:
             # Pad shorter signals
             windowed_signal = np.pad(signal, (0, self.window_size - len(signal)))
@@ -102,23 +104,25 @@ class FFTEmbedder:
 
         # Extract features from different frequency bands
         # Low frequencies (0-10% of spectrum)
-        low_freq = fft_magnitude[:self.n_fft // 10]
+        low_freq = fft_magnitude[: self.n_fft // 10]
         # Mid frequencies (10-50% of spectrum)
-        mid_freq = fft_magnitude[self.n_fft // 10:self.n_fft // 2]
+        mid_freq = fft_magnitude[self.n_fft // 10 : self.n_fft // 2]
         # High frequencies (50-100% of spectrum)
-        high_freq = fft_magnitude[self.n_fft // 2:]
+        high_freq = fft_magnitude[self.n_fft // 2 :]
 
         # Statistical features
         features = []
         for freq_band in [low_freq, mid_freq, high_freq]:
             if len(freq_band) > 0:
-                features.extend([
-                    np.mean(freq_band),
-                    np.std(freq_band),
-                    np.max(freq_band),
-                    np.min(freq_band),
-                    np.sum(freq_band**2)  # Energy
-                ])
+                features.extend(
+                    [
+                        np.mean(freq_band),
+                        np.std(freq_band),
+                        np.max(freq_band),
+                        np.min(freq_band),
+                        np.sum(freq_band**2),  # Energy
+                    ]
+                )
 
         return np.array(features)
 
@@ -129,7 +133,7 @@ class FFTEmbedder:
 
         # Project to desired embedding dimension
         if len(features) >= self.embedding_dim:
-            embedding = features[:self.embedding_dim]
+            embedding = features[: self.embedding_dim]
         else:
             # Pad with zeros if needed
             embedding = np.pad(features, (0, self.embedding_dim - len(features)))
@@ -158,7 +162,7 @@ class TimeSeriesRetriever:
         self,
         embedder: Optional[FFTEmbedder] = None,
         temporal_weight: float = 0.3,
-        content_weight: float = 0.7
+        content_weight: float = 0.7,
     ):
         """Initialize time-series retriever.
 
@@ -175,17 +179,10 @@ class TimeSeriesRetriever:
         self.embeddings: Optional[np.ndarray] = None
 
     def add_note(
-        self,
-        content: str,
-        timestamp: datetime,
-        metadata: Optional[Dict[str, Any]] = None
+        self, content: str, timestamp: datetime, metadata: Optional[Dict[str, Any]] = None
     ) -> TimeSeriesNote:
         """Add a note to the retriever."""
-        note = TimeSeriesNote(
-            content=content,
-            timestamp=timestamp,
-            metadata=metadata or {}
-        )
+        note = TimeSeriesNote(content=content, timestamp=timestamp, metadata=metadata or {})
 
         # Generate embedding
         note.embedding = self.embedder.embed_text(content)
@@ -246,7 +243,7 @@ class TimeSeriesRetriever:
         query: str,
         query_time: datetime,
         top_k: int = 10,
-        time_window_days: Optional[float] = None
+        time_window_days: Optional[float] = None,
     ) -> List[Dict[str, Any]]:
         """Search for relevant notes using temporal and content features.
 
@@ -282,10 +279,7 @@ class TimeSeriesRetriever:
             content_sim = self._content_similarity(query_embedding, note.embedding)
 
             # Combine similarities
-            combined_score = (
-                self.temporal_weight * temporal_sim +
-                self.content_weight * content_sim
-            )
+            combined_score = self.temporal_weight * temporal_sim + self.content_weight * content_sim
 
             result = {
                 "content": note.content,
@@ -293,8 +287,9 @@ class TimeSeriesRetriever:
                 "temporal_score": temporal_sim,
                 "content_score": content_sim,
                 "combined_score": combined_score,
+                "score": combined_score,  # Alias for compatibility
                 "metadata": note.metadata,
-                "time_diff_days": abs((query_time - note.timestamp).total_seconds()) / (24 * 3600)
+                "time_diff_days": abs((query_time - note.timestamp).total_seconds()) / (24 * 3600),
             }
             results.append(result)
 
@@ -320,29 +315,26 @@ class TimeSeriesRetriever:
         total_span = (end_time - start_time).total_seconds() / (24 * 3600)  # days
 
         # Create bins
-        bin_edges = [
-            start_time + timedelta(days=i * total_span / bins)
-            for i in range(bins + 1)
-        ]
+        bin_edges = [start_time + timedelta(days=i * total_span / bins) for i in range(bins + 1)]
 
         # Count notes per bin
         distribution = []
         for i in range(bins):
             bin_start = bin_edges[i]
             bin_end = bin_edges[i + 1]
-            count = sum(1 for ts in timestamps if bin_start <= ts < bin_end)
-            distribution.append({
-                "start": bin_start,
-                "end": bin_end,
-                "count": count
-            })
+            # Include the last bin's end edge
+            if i == bins - 1:
+                count = sum(1 for ts in timestamps if bin_start <= ts <= bin_end)
+            else:
+                count = sum(1 for ts in timestamps if bin_start <= ts < bin_end)
+            distribution.append({"start": bin_start, "end": bin_end, "count": count})
 
         return {
             "start_time": start_time,
             "end_time": end_time,
             "total_span_days": total_span,
             "num_notes": len(self.notes),
-            "distribution": distribution
+            "distribution": distribution,
         }
 
     def save(self, path: str):
@@ -355,11 +347,11 @@ class TimeSeriesRetriever:
                 "window_size": self.embedder.window_size,
                 "overlap": self.embedder.overlap,
                 "n_fft": self.embedder.n_fft,
-                "embedding_dim": self.embedder.embedding_dim
-            }
+                "embedding_dim": self.embedder.embedding_dim,
+            },
         }
 
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(data, f, indent=2, default=str)
 
         logger.info(f"Saved time-series retriever to {path}")
@@ -367,7 +359,7 @@ class TimeSeriesRetriever:
     @classmethod
     def load(cls, path: str) -> "TimeSeriesRetriever":
         """Load retriever from file."""
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             data = json.load(f)
 
         # Recreate embedder
@@ -378,7 +370,7 @@ class TimeSeriesRetriever:
         retriever = cls(
             embedder=embedder,
             temporal_weight=data.get("temporal_weight", 0.3),
-            content_weight=data.get("content_weight", 0.7)
+            content_weight=data.get("content_weight", 0.7),
         )
 
         # Load notes

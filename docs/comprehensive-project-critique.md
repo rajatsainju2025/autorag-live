@@ -52,7 +52,7 @@ AutoRAG-Live is an ambitious Retrieval-Augmented Generation experimentation plat
 
 **Algorithmic Inefficiencies:**
 - Redundant embedding computations in dense retrievers
-- Missing tokenization caching in BM25 
+- Missing tokenization caching in BM25
 - Inefficient TTL enforcement in cache system
 - Suboptimal numpy operations
 
@@ -67,7 +67,7 @@ AutoRAG-Live is an ambitious Retrieval-Augmented Generation experimentation plat
 - Document Python 3.10+ requirement clearly
 - Add dependency version constraints
 
-**Commit 2: Resolve import errors and type system violations**  
+**Commit 2: Resolve import errors and type system violations**
 - Fix all MyPy import resolution errors
 - Correct method signature mismatches
 - Standardize Optional type usage

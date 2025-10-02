@@ -1,22 +1,21 @@
 """Integration tests for autorag-live system components."""
 
-import pytest
-import tempfile
 import os
-import json
-from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-from autorag_live.retrievers import bm25, dense, hybrid
-from autorag_live.disagreement import metrics, report
-from autorag_live.evals.small import run_small_suite
-from autorag_live.evals.advanced_metrics import comprehensive_evaluation
-from autorag_live.pipeline.hybrid_optimizer import grid_search_hybrid_weights
-from autorag_live.pipeline.acceptance_policy import AcceptancePolicy, safe_config_update
-from autorag_live.augment.synonym_miner import mine_synonyms_from_disagreements
-from autorag_live.rerank.simple import SimpleReranker
-from autorag_live.data.time_series import TimeSeriesRetriever, TimeSeriesNote, FFTEmbedder
+import tempfile
 from datetime import datetime, timedelta
+from unittest.mock import patch
+
+import pytest
+
+from autorag_live.augment.synonym_miner import mine_synonyms_from_disagreements
+from autorag_live.data.time_series import FFTEmbedder, TimeSeriesNote, TimeSeriesRetriever
+from autorag_live.disagreement import metrics
+from autorag_live.evals.advanced_metrics import comprehensive_evaluation
+from autorag_live.evals.small import run_small_suite
+from autorag_live.pipeline.acceptance_policy import AcceptancePolicy, safe_config_update
+from autorag_live.pipeline.hybrid_optimizer import grid_search_hybrid_weights
+from autorag_live.rerank.simple import SimpleReranker
+from autorag_live.retrievers import bm25, dense, hybrid
 
 
 @pytest.fixture
@@ -37,7 +36,7 @@ def sample_corpus():
         "Computer vision enables machines to interpret visual information.",
         "Data science combines statistics, programming, and domain expertise.",
         "Python is a popular programming language for data science.",
-        "Jupyter notebooks provide an interactive environment for coding."
+        "Jupyter notebooks provide an interactive environment for coding.",
     ]
 
 
@@ -49,7 +48,7 @@ def sample_queries():
         "fox jumping over dog",
         "machine learning and AI",
         "programming with Python",
-        "data science techniques"
+        "data science techniques",
     ]
 
 
@@ -109,19 +108,19 @@ class TestEvaluationIntegration:
         """Test small evaluation suite with retriever results."""
         # This would normally run the full evaluation suite
         # For integration testing, we'll mock the expensive parts
-        with patch('autorag_live.evals.small.dense_retrieve') as mock_dense, \
-             patch('autorag_live.evals.small.bm25_retrieve') as mock_bm25:
-
+        with patch("autorag_live.evals.small.dense_retrieve") as mock_dense, patch(
+            "autorag_live.evals.small.bm25_retrieve"
+        ) as mock_bm25:
             mock_dense.return_value = sample_corpus[:3]
             mock_bm25.return_value = sample_corpus[:3]
 
             # This should not raise an exception
             summary = run_small_suite(judge_type="deterministic")
 
-            assert 'metrics' in summary
-            assert 'run_id' in summary
-            assert 'em' in summary['metrics']
-            assert 'f1' in summary['metrics']
+            assert "metrics" in summary
+            assert "run_id" in summary
+            assert "em" in summary["metrics"]
+            assert "f1" in summary["metrics"]
 
     def test_advanced_metrics_comprehensive(self, sample_corpus, sample_queries):
         """Test comprehensive evaluation with advanced metrics."""
@@ -135,8 +134,15 @@ class TestEvaluationIntegration:
         metrics_dict = comprehensive_evaluation(retrieved_docs, relevant_docs, query)
 
         # Check that expected metrics are present
-        expected_metrics = ['ndcg@5', 'ndcg@10', 'precision@5', 'precision@10',
-                          'recall@5', 'recall@10', 'contextual_relevance']
+        expected_metrics = [
+            "ndcg@5",
+            "ndcg@10",
+            "precision@5",
+            "precision@10",
+            "recall@5",
+            "recall@10",
+            "contextual_relevance",
+        ]
 
         for metric in expected_metrics:
             assert metric in metrics_dict
@@ -154,8 +160,8 @@ class TestOptimizationIntegration:
             sample_queries[:2], sample_corpus, k=3, grid_size=3
         )
 
-        assert hasattr(weights, 'bm25_weight')
-        assert hasattr(weights, 'dense_weight')
+        assert hasattr(weights, "bm25_weight")
+        assert hasattr(weights, "dense_weight")
         assert 0.0 <= weights.bm25_weight <= 1.0
         assert 0.0 <= weights.dense_weight <= 1.0
         assert abs(weights.bm25_weight + weights.dense_weight - 1.0) < 0.01  # Should sum to ~1
@@ -166,14 +172,14 @@ class TestOptimizationIntegration:
         policy = AcceptancePolicy(threshold=0.01)
 
         # Create a temporary file to test with
-        with tempfile.NamedTemporaryFile(mode='w', delete=False) as f:
+        with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
             f.write('{"test": "data"}')
             temp_file = f.name
 
         try:
             # Test safe update
             def update_func():
-                with open(temp_file, 'w') as f:
+                with open(temp_file, "w") as f:
                     f.write('{"test": "updated"}')
 
             accepted = safe_config_update(update_func, [temp_file], policy)
@@ -182,7 +188,7 @@ class TestOptimizationIntegration:
             assert accepted
 
             # Verify file was updated
-            with open(temp_file, 'r') as f:
+            with open(temp_file, "r") as f:
                 content = f.read()
                 assert content == '{"test": "updated"}'
 
@@ -203,9 +209,7 @@ class TestAugmentationIntegration:
         hybrid_results = hybrid.hybrid_retrieve(query, sample_corpus, 5)
 
         # Mine synonyms
-        synonyms = mine_synonyms_from_disagreements(
-            bm25_results, dense_results, hybrid_results
-        )
+        synonyms = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
 
         # Should return a list (may be empty if no synonyms found)
         assert isinstance(synonyms, list)
@@ -213,8 +217,8 @@ class TestAugmentationIntegration:
         # If synonyms found, they should be dictionaries with term mappings
         for synonym_group in synonyms:
             assert isinstance(synonym_group, dict)
-            assert 'term' in synonym_group
-            assert 'synonyms' in synonym_group
+            assert "term" in synonym_group
+            assert "synonyms" in synonym_group
 
 
 class TestRerankerIntegration:
@@ -254,12 +258,8 @@ class TestTimeSeriesIntegration:
         base_time = datetime.now()
 
         for i, doc in enumerate(sample_corpus[:5]):  # Use subset for speed
-            timestamp = base_time - timedelta(days=i*2)  # Spread over 10 days
-            note = TimeSeriesNote(
-                content=doc,
-                timestamp=timestamp,
-                metadata={"id": f"note_{i}"}
-            )
+            timestamp = base_time - timedelta(days=i * 2)  # Spread over 10 days
+            note = TimeSeriesNote(content=doc, timestamp=timestamp, metadata={"id": f"note_{i}"})
             notes.append(note)
 
         # Initialize retriever
@@ -269,25 +269,20 @@ class TestTimeSeriesIntegration:
 
         # Test search
         query = "sun bright sky"
-        results = retriever.search(
-            query=query,
-            query_time=base_time,
-            top_k=3,
-            time_window_days=7
-        )
+        results = retriever.search(query=query, query_time=base_time, top_k=3, time_window_days=7)
 
         # Should return list of dictionaries
         assert isinstance(results, list)
         assert len(results) <= 3
 
         for result in results:
-            assert 'content' in result
-            assert 'timestamp' in result
-            assert 'combined_score' in result
-            assert 'temporal_score' in result
-            assert 'content_score' in result
-            assert isinstance(result['combined_score'], float)
-            assert 0.0 <= result['combined_score'] <= 1.0
+            assert "content" in result
+            assert "timestamp" in result
+            assert "combined_score" in result
+            assert "temporal_score" in result
+            assert "content_score" in result
+            assert isinstance(result["combined_score"], float)
+            assert 0.0 <= result["combined_score"] <= 1.0
 
 
 class TestEndToEndIntegration:
@@ -311,9 +306,9 @@ class TestEndToEndIntegration:
         metrics_dict = comprehensive_evaluation(reranked_docs, relevant_docs, query)
 
         # Should have evaluation metrics
-        assert 'ndcg@5' in metrics_dict
-        assert 'precision@5' in metrics_dict
-        assert 'contextual_relevance' in metrics_dict
+        assert "ndcg@5" in metrics_dict
+        assert "precision@5" in metrics_dict
+        assert "contextual_relevance" in metrics_dict
 
     def test_disagreement_analysis_pipeline(self, sample_corpus, sample_queries):
         """Test the complete disagreement analysis pipeline."""
@@ -337,13 +332,11 @@ class TestEndToEndIntegration:
             assert 0.0 <= value <= 1.0
 
         # Mine synonyms from disagreements
-        synonyms = mine_synonyms_from_disagreements(
-            bm25_results, dense_results, hybrid_results
-        )
+        synonyms = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
         assert isinstance(synonyms, list)
 
-    @patch('autorag_live.evals.small.dense_retrieve')
-    @patch('autorag_live.evals.small.bm25_retrieve')
+    @patch("autorag_live.evals.small.dense_retrieve")
+    @patch("autorag_live.evals.small.bm25_retrieve")
     def test_evaluation_pipeline_with_mocking(self, mock_bm25, mock_dense, sample_corpus):
         """Test evaluation pipeline with mocked retrievers."""
         # Setup mocks
@@ -354,9 +347,9 @@ class TestEndToEndIntegration:
         summary = run_small_suite(judge_type="deterministic")
 
         # Verify results structure
-        assert 'metrics' in summary
-        assert 'run_id' in summary
-        assert all(key in summary['metrics'] for key in ['em', 'f1', 'relevance', 'faithfulness'])
+        assert "metrics" in summary
+        assert "run_id" in summary
+        assert all(key in summary["metrics"] for key in ["em", "f1", "relevance", "faithfulness"])
 
         # Verify mocks were called
         mock_bm25.assert_called()
@@ -400,11 +393,11 @@ class TestErrorHandlingIntegration:
 
         # Test with non-existent file
         def failing_update():
-            with open('/nonexistent/path/file.json', 'w') as f:
-                f.write('test')
+            with open("/nonexistent/path/file.json", "w") as f:
+                f.write("test")
 
         # Should reject the update due to file operation failure
-        accepted = safe_config_update(failing_update, ['/nonexistent/path/file.json'], policy)
+        accepted = safe_config_update(failing_update, ["/nonexistent/path/file.json"], policy)
         assert not accepted
 
 

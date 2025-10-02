@@ -10,28 +10,19 @@ This module provides various retrieval implementations including:
 - Elasticsearch: Search engine adapter
 """
 
-from typing import List, Tuple, Optional, Dict, Any
 
-from ..types.types import (
-    QueryText,
-    DocumentText,
-    RetrievalResult,
-    Retriever,
-    RetrieverError
-)
-
-from .bm25 import bm25_retrieve, BM25Retriever
+from .bm25 import BM25Retriever, bm25_retrieve
 from .dense import dense_retrieve
-from .hybrid import hybrid_retrieve
+from .elasticsearch_adapter import ElasticsearchRetriever
 from .faiss_adapter import (
     DenseRetriever,
     SentenceTransformerRetriever,
     create_dense_retriever,
+    load_retriever_index,
     save_retriever_index,
-    load_retriever_index
 )
+from .hybrid import hybrid_retrieve
 from .qdrant_adapter import QdrantRetriever
-from .elasticsearch_adapter import ElasticsearchRetriever
 
 __all__ = [
     "bm25_retrieve",
@@ -44,5 +35,5 @@ __all__ = [
     "save_retriever_index",
     "load_retriever_index",
     "QdrantRetriever",
-    "ElasticsearchRetriever"
+    "ElasticsearchRetriever",
 ]

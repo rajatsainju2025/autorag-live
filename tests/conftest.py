@@ -4,16 +4,13 @@ Shared pytest fixtures for AutoRAG-Live tests.
 import os
 import tempfile
 from pathlib import Path
-import pytest
-from typing import Generator, Dict, Any
+from typing import Generator
 
+import pytest
 from omegaconf import OmegaConf
+
+from autorag_live.types.types import DocumentText, QueryText
 from autorag_live.utils.config import ConfigManager
-from autorag_live.types.types import (
-    DocumentText,
-    QueryText,
-    RetrievalResult
-)
 
 # Test data
 SAMPLE_DOCS = [
@@ -29,22 +26,25 @@ SAMPLE_QUERIES = [
     "fox jumping over dog",
 ]
 
+
 @pytest.fixture
 def sample_docs() -> list[DocumentText]:
     """Sample documents for testing."""
     return SAMPLE_DOCS
+
 
 @pytest.fixture
 def sample_queries() -> list[QueryText]:
     """Sample queries for testing."""
     return SAMPLE_QUERIES
 
+
 @pytest.fixture
 def temp_config_dir() -> Generator[Path, None, None]:
     """Create a temporary config directory."""
     with tempfile.TemporaryDirectory() as tmpdir:
         tmp_path = Path(tmpdir)
-        
+
         # Create config structure
         config_dir = tmp_path / "config"
         config_dir.mkdir()
@@ -52,7 +52,7 @@ def temp_config_dir() -> Generator[Path, None, None]:
         (config_dir / "evaluation").mkdir()
         (config_dir / "pipeline").mkdir()
         (config_dir / "augmentation").mkdir()
-        
+
         # Create minimal test configs
         test_config = {
             "name": "autorag-test",
@@ -60,16 +60,14 @@ def temp_config_dir() -> Generator[Path, None, None]:
             "paths": {
                 "data_dir": str(tmp_path / "data"),
                 "cache_dir": str(tmp_path / ".cache"),
-                "runs_dir": str(tmp_path / "runs")
-            }
+                "runs_dir": str(tmp_path / "runs"),
+            },
         }
-        
-        OmegaConf.save(
-            OmegaConf.create(test_config),
-            config_dir / "config.yaml"
-        )
-        
+
+        OmegaConf.save(OmegaConf.create(test_config), config_dir / "config.yaml")
+
         yield tmp_path
+
 
 @pytest.fixture
 def config_manager(temp_config_dir: Path) -> Generator[ConfigManager, None, None]:

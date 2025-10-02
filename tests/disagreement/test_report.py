@@ -1,5 +1,7 @@
 import os
+
 from autorag_live.disagreement import report
+
 
 def test_generate_disagreement_report():
     query = "test query"
@@ -12,9 +14,9 @@ def test_generate_disagreement_report():
         "kendall_tau_bm25_vs_dense": -1.0,
     }
     output_path = "test_report.html"
-    
+
     report.generate_disagreement_report(query, results, metrics, output_path)
-    
+
     assert os.path.exists(output_path)
     with open(output_path, "r") as f:
         content = f.read()
@@ -24,5 +26,5 @@ def test_generate_disagreement_report():
         assert "0.3333" in content
         assert "bm25" in content
         assert "doc a" in content
-        
+
     os.remove(output_path)

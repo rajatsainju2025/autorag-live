@@ -7,9 +7,8 @@ appropriate log levels, and consistent formatting across all modules.
 
 import logging
 import logging.config
-import sys
 from pathlib import Path
-from typing import Dict, Any, Optional
+from typing import Any, Dict, Optional
 
 
 class AutoRAGLogger:
@@ -17,68 +16,51 @@ class AutoRAGLogger:
 
     # Default logging configuration
     DEFAULT_CONFIG = {
-        'version': 1,
-        'disable_existing_loggers': False,
-        'formatters': {
-            'detailed': {
-                'format': '%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s',
-                'datefmt': '%Y-%m-%d %H:%M:%S'
+        "version": 1,
+        "disable_existing_loggers": False,
+        "formatters": {
+            "detailed": {
+                "format": "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s",
+                "datefmt": "%Y-%m-%d %H:%M:%S",
             },
-            'simple': {
-                'format': '%(levelname)s - %(name)s - %(message)s'
+            "simple": {"format": "%(levelname)s - %(name)s - %(message)s"},
+            "json": {
+                "format": '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "function": "%(funcName)s", "line": %(lineno)d, "message": "%(message)s"}',
+                "datefmt": "%Y-%m-%dT%H:%M:%S%z",
             },
-            'json': {
-                'format': '{"timestamp": "%(asctime)s", "level": "%(levelname)s", "logger": "%(name)s", "function": "%(funcName)s", "line": %(lineno)d, "message": "%(message)s"}',
-                'datefmt': '%Y-%m-%dT%H:%M:%S%z'
-            }
         },
-        'handlers': {
-            'console': {
-                'class': 'logging.StreamHandler',
-                'level': 'INFO',
-                'formatter': 'simple',
-                'stream': 'ext://sys.stdout'
+        "handlers": {
+            "console": {
+                "class": "logging.StreamHandler",
+                "level": "INFO",
+                "formatter": "simple",
+                "stream": "ext://sys.stdout",
             },
-            'file': {
-                'class': 'logging.handlers.RotatingFileHandler',
-                'level': 'DEBUG',
-                'formatter': 'detailed',
-                'filename': 'logs/autorag_live.log',
-                'maxBytes': 10 * 1024 * 1024,  # 10MB
-                'backupCount': 5
-            }
+            "file": {
+                "class": "logging.handlers.RotatingFileHandler",
+                "level": "DEBUG",
+                "formatter": "detailed",
+                "filename": "logs/autorag_live.log",
+                "maxBytes": 10 * 1024 * 1024,  # 10MB
+                "backupCount": 5,
+            },
         },
-        'root': {
-            'level': 'INFO',
-            'handlers': ['console']
+        "root": {"level": "INFO", "handlers": ["console"]},
+        "loggers": {
+            "autorag_live": {"level": "DEBUG", "handlers": ["console"], "propagate": False},
+            "autorag_live.cli": {"level": "INFO", "handlers": ["console"], "propagate": False},
+            "autorag_live.retrievers": {
+                "level": "DEBUG",
+                "handlers": ["console"],
+                "propagate": False,
+            },
+            "autorag_live.evals": {"level": "INFO", "handlers": ["console"], "propagate": False},
+            "autorag_live.pipeline": {
+                "level": "DEBUG",
+                "handlers": ["console"],
+                "propagate": False,
+            },
         },
-        'loggers': {
-            'autorag_live': {
-                'level': 'DEBUG',
-                'handlers': ['console'],
-                'propagate': False
-            },
-            'autorag_live.cli': {
-                'level': 'INFO',
-                'handlers': ['console'],
-                'propagate': False
-            },
-            'autorag_live.retrievers': {
-                'level': 'DEBUG',
-                'handlers': ['console'],
-                'propagate': False
-            },
-            'autorag_live.evals': {
-                'level': 'INFO',
-                'handlers': ['console'],
-                'propagate': False
-            },
-            'autorag_live.pipeline': {
-                'level': 'DEBUG',
-                'handlers': ['console'],
-                'propagate': False
-            }
-        }
     }
 
     _configured = False
@@ -86,10 +68,10 @@ class AutoRAGLogger:
     @classmethod
     def configure(
         cls,
-        level: str = 'INFO',
+        level: str = "INFO",
         log_file: Optional[str] = None,
         json_format: bool = False,
-        config_override: Optional[Dict[str, Any]] = None
+        config_override: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Configure logging for AutoRAG-Live.
@@ -110,35 +92,35 @@ class AutoRAGLogger:
             cls._deep_update(config, config_override)
 
         # Set root level
-        config['root']['level'] = level
+        config["root"]["level"] = level
 
         # Configure log file if specified
         if log_file:
-            config['handlers']['file']['filename'] = log_file
+            config["handlers"]["file"]["filename"] = log_file
             # Ensure logs directory exists
             log_path = Path(log_file)
             log_path.parent.mkdir(parents=True, exist_ok=True)
 
             # Add file handler to root if not already present
-            if 'file' not in config['root']['handlers']:
-                config['root']['handlers'].append('file')
+            if "file" not in config["root"]["handlers"]:
+                config["root"]["handlers"].append("file")
         else:
             # Remove file handler entirely if no log file
-            if 'file' in config['handlers']:
-                del config['handlers']['file']
+            if "file" in config["handlers"]:
+                del config["handlers"]["file"]
             # Remove file handler from all loggers if no log file
-            for logger_config in config['loggers'].values():
-                if 'file' in logger_config['handlers']:
-                    logger_config['handlers'].remove('file')
+            for logger_config in config["loggers"].values():
+                if "file" in logger_config["handlers"]:
+                    logger_config["handlers"].remove("file")
             # Also remove from root if present
-            if 'file' in config['root']['handlers']:
-                config['root']['handlers'].remove('file')
+            if "file" in config["root"]["handlers"]:
+                config["root"]["handlers"].remove("file")
 
         # Set JSON format if requested
         if json_format:
-            for handler_config in config['handlers'].values():
-                if 'formatter' in handler_config:
-                    handler_config['formatter'] = 'json'
+            for handler_config in config["handlers"].values():
+                if "formatter" in handler_config:
+                    handler_config["formatter"] = "json"
 
         # Apply configuration
         logging.config.dictConfig(config)
@@ -184,9 +166,7 @@ def get_logger(name: str) -> logging.Logger:
 
 
 def setup_logging(
-    level: str = 'INFO',
-    log_file: Optional[str] = None,
-    json_format: bool = False
+    level: str = "INFO", log_file: Optional[str] = None, json_format: bool = False
 ) -> None:
     """
     Setup logging configuration.

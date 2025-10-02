@@ -1,13 +1,14 @@
 """Elasticsearch adapter for hybrid search with vector and text capabilities."""
 
 import json
-from typing import Any, Dict, List, Optional, Union, Tuple, cast
+from typing import Any, Dict, List, Optional, Tuple, Union, cast
 
 import numpy as np
 
 try:
     from elasticsearch import Elasticsearch
     from elasticsearch.helpers import bulk
+
     ELASTICSEARCH_AVAILABLE = True
 except ImportError:
     Elasticsearch = None
@@ -40,7 +41,7 @@ class ElasticsearchRetriever(DenseRetriever):
         embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
         text_boost: float = 1.0,
         vector_boost: float = 1.0,
-        **kwargs
+        **kwargs,
     ):
         """Initialize Elasticsearch retriever.
 
@@ -68,16 +69,10 @@ class ElasticsearchRetriever(DenseRetriever):
         # Initialize Elasticsearch client
         _ensure_elasticsearch_available()
         if cloud_id:
-            self.client = cast(Any, Elasticsearch)(
-                cloud_id=cloud_id,
-                api_key=api_key
-            )
+            self.client = cast(Any, Elasticsearch)(cloud_id=cloud_id, api_key=api_key)
         else:
             hosts = hosts or ["http://localhost:9200"]
-            self.client = cast(Any, Elasticsearch)(
-                hosts=hosts,
-                api_key=api_key
-            )
+            self.client = cast(Any, Elasticsearch)(hosts=hosts, api_key=api_key)
 
         # Check connection
         if not self.client.ping():
@@ -90,26 +85,17 @@ class ElasticsearchRetriever(DenseRetriever):
         mapping = {
             "mappings": {
                 "properties": {
-                    "content": {
-                        "type": "text",
-                        "analyzer": "standard"
-                    },
+                    "content": {"type": "text", "analyzer": "standard"},
                     "content_vector": {
                         "type": "dense_vector",
                         "dims": dimension,
                         "index": True,
-                        "similarity": "cosine"
+                        "similarity": "cosine",
                     },
-                    "metadata": {
-                        "type": "object",
-                        "dynamic": True
-                    }
+                    "metadata": {"type": "object", "dynamic": True},
                 }
             },
-            "settings": {
-                "number_of_shards": 1,
-                "number_of_replicas": 0
-            }
+            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
         }
         return mapping
 
@@ -117,10 +103,7 @@ class ElasticsearchRetriever(DenseRetriever):
         """Ensure the index exists with correct mapping."""
         if not self.client.indices.exists(index=self.index_name):
             mapping = self._create_index_mapping(dimension)
-            self.client.indices.create(
-                index=self.index_name,
-                body=mapping
-            )
+            self.client.indices.create(index=self.index_name, body=mapping)
             logger.info(f"Created Elasticsearch index: {self.index_name}")
         else:
             logger.info(f"Using existing Elasticsearch index: {self.index_name}")
@@ -151,8 +134,8 @@ class ElasticsearchRetriever(DenseRetriever):
                 "_source": {
                     "content": doc,
                     "content_vector": emb.tolist(),
-                    "metadata": metadata[i] if metadata and i < len(metadata) else {}
-                }
+                    "metadata": metadata[i] if metadata and i < len(metadata) else {},
+                },
             }
             actions.append(action)
 
@@ -171,10 +154,7 @@ class ElasticsearchRetriever(DenseRetriever):
         self.add_documents(documents)
 
     def search(
-        self,
-        query: str,
-        k: int = 10,
-        search_type: str = "hybrid"
+        self, query: str, k: int = 10, search_type: str = "hybrid"
     ) -> List[Tuple[str, float]]:
         """Search for relevant documents.
 
@@ -198,22 +178,12 @@ class ElasticsearchRetriever(DenseRetriever):
     def _text_search(self, query: str, k: int) -> List[Tuple[str, float]]:
         """Perform text-based search."""
         search_body = {
-            "query": {
-                "match": {
-                    "content": {
-                        "query": query,
-                        "boost": self.text_boost
-                    }
-                }
-            },
+            "query": {"match": {"content": {"query": query, "boost": self.text_boost}}},
             "size": k,
-            "_source": ["content"]
+            "_source": ["content"],
         }
 
-        response = self.client.search(
-            index=self.index_name,
-            body=search_body
-        )
+        response = self.client.search(index=self.index_name, body=search_body)
 
         results = []
         for hit in response["hits"]["hits"]:
@@ -234,21 +204,16 @@ class ElasticsearchRetriever(DenseRetriever):
                     "query": {"match_all": {}},
                     "script": {
                         "source": "cosineSimilarity(params.query_vector, 'content_vector') + 1.0",
-                        "params": {
-                            "query_vector": query_emb.tolist()
-                        }
+                        "params": {"query_vector": query_emb.tolist()},
                     },
-                    "boost": self.vector_boost
+                    "boost": self.vector_boost,
                 }
             },
             "size": k,
-            "_source": ["content"]
+            "_source": ["content"],
         }
 
-        response = self.client.search(
-            index=self.index_name,
-            body=search_body
-        )
+        response = self.client.search(index=self.index_name, body=search_body)
 
         results = []
         for hit in response["hits"]["hits"]:
@@ -267,37 +232,25 @@ class ElasticsearchRetriever(DenseRetriever):
             "query": {
                 "bool": {
                     "should": [
-                        {
-                            "match": {
-                                "content": {
-                                    "query": query,
-                                    "boost": self.text_boost
-                                }
-                            }
-                        },
+                        {"match": {"content": {"query": query, "boost": self.text_boost}}},
                         {
                             "script_score": {
                                 "query": {"match_all": {}},
                                 "script": {
                                     "source": "cosineSimilarity(params.query_vector, 'content_vector') + 1.0",
-                                    "params": {
-                                        "query_vector": query_emb.tolist()
-                                    }
+                                    "params": {"query_vector": query_emb.tolist()},
                                 },
-                                "boost": self.vector_boost
+                                "boost": self.vector_boost,
                             }
-                        }
+                        },
                     ]
                 }
             },
             "size": k,
-            "_source": ["content"]
+            "_source": ["content"],
         }
 
-        response = self.client.search(
-            index=self.index_name,
-            body=search_body
-        )
+        response = self.client.search(index=self.index_name, body=search_body)
 
         results = []
         for hit in response["hits"]["hits"]:
@@ -319,11 +272,11 @@ class ElasticsearchRetriever(DenseRetriever):
             "model_name": self.model_name,
             "text_boost": self.text_boost,
             "vector_boost": self.vector_boost,
-            "hosts": getattr(self.client, '_hosts', None),
-            "cloud_id": getattr(self.client, '_cloud_id', None)
+            "hosts": getattr(self.client, "_hosts", None),
+            "cloud_id": getattr(self.client, "_cloud_id", None),
         }
 
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(config, f, indent=2)
 
         logger.info(f"Saved Elasticsearch retriever config to {path}")
@@ -334,31 +287,25 @@ class ElasticsearchRetriever(DenseRetriever):
         Args:
             path: Path to configuration file
         """
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             config = json.load(f)
-        
+
         # Update instance attributes from loaded config
-        self.index_name = config['index_name']
-        self.embedding_dim = config['embedding_dim']
-        self.model_name = config.get('model_name')
-        
+        self.index_name = config["index_name"]
+        self.embedding_dim = config["embedding_dim"]
+        self.model_name = config.get("model_name")
+
         # Recreate client if needed
         _ensure_elasticsearch_available()
         elasticsearch_cls = cast(Any, Elasticsearch)
-            
-        if config.get('cloud_id') and config.get('api_key'):
-            self.client = elasticsearch_cls(
-                cloud_id=config['cloud_id'],
-                api_key=config['api_key']
-            )
-        elif config.get('hosts') and config.get('api_key'):
-            self.client = elasticsearch_cls(
-                hosts=config['hosts'],
-                api_key=config['api_key']
-            )
-        
+
+        if config.get("cloud_id") and config.get("api_key"):
+            self.client = elasticsearch_cls(cloud_id=config["cloud_id"], api_key=config["api_key"])
+        elif config.get("hosts") and config.get("api_key"):
+            self.client = elasticsearch_cls(hosts=config["hosts"], api_key=config["api_key"])
+
         logger.info(f"Loaded Elasticsearch retriever from {path}")
-    
+
     @classmethod
     def load_from_config(cls, path: str) -> "ElasticsearchRetriever":
         """Load retriever from configuration.
@@ -369,7 +316,7 @@ class ElasticsearchRetriever(DenseRetriever):
         Returns:
             Loaded ElasticsearchRetriever instance
         """
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             config = json.load(f)
 
         if config.get("type") != "elasticsearch":
@@ -381,7 +328,7 @@ class ElasticsearchRetriever(DenseRetriever):
             cloud_id=config.get("cloud_id"),
             embedding_model=config["model_name"],
             text_boost=config.get("text_boost", 1.0),
-            vector_boost=config.get("vector_boost", 1.0)
+            vector_boost=config.get("vector_boost", 1.0),
         )
 
     def delete_index(self):
@@ -463,10 +410,10 @@ class NumpyElasticsearchFallback(DenseRetriever):
             "model_name": self.model_name,
             "documents": self.documents,
             "embeddings": self.embeddings.tolist(),
-            "metadata": self.metadata
+            "metadata": self.metadata,
         }
 
-        with open(path, 'w') as f:
+        with open(path, "w") as f:
             json.dump(data, f, indent=2)
 
         logger.info(f"Saved numpy fallback retriever to {path}")
@@ -477,22 +424,22 @@ class NumpyElasticsearchFallback(DenseRetriever):
         Args:
             path: Path to configuration file
         """
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             config = json.load(f)
-        
+
         # Update instance attributes from loaded config
-        self.corpus = config.get('corpus', [])
-        self.embeddings = config.get('embeddings')
-        self.index_name = config['index_name'] 
-        self.embedding_dim = config['embedding_dim']
-        self.model_name = config.get('model_name')
-        
+        self.corpus = config.get("corpus", [])
+        self.embeddings = config.get("embeddings")
+        self.index_name = config["index_name"]
+        self.embedding_dim = config["embedding_dim"]
+        self.model_name = config.get("model_name")
+
         logger.info(f"Loaded NumpyElasticsearchFallback from {path}")
-    
+
     @classmethod
     def load_from_config(cls, path: str) -> "NumpyElasticsearchFallback":
         """Load retriever from file."""
-        with open(path, 'r') as f:
+        with open(path, "r") as f:
             data = json.load(f)
 
         if data.get("type") != "numpy_elasticsearch_fallback":
@@ -506,7 +453,9 @@ class NumpyElasticsearchFallback(DenseRetriever):
         return retriever
 
 
-def create_elasticsearch_retriever(**kwargs) -> Union[ElasticsearchRetriever, NumpyElasticsearchFallback]:
+def create_elasticsearch_retriever(
+    **kwargs,
+) -> Union[ElasticsearchRetriever, NumpyElasticsearchFallback]:
     """Factory function to create Elasticsearch retriever with fallback."""
     if ELASTICSEARCH_AVAILABLE:
         return ElasticsearchRetriever(**kwargs)

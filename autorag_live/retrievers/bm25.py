@@ -1,16 +1,18 @@
 from typing import Any, Dict, List, Tuple
+
 import numpy as np
 
 try:  # pragma: no cover - optional dependency guard
     from rank_bm25 import BM25Okapi  # type: ignore
+
     BM25_AVAILABLE = True
 except ImportError:  # pragma: no cover - fallback when rank_bm25 missing
     BM25_AVAILABLE = False
     BM25Okapi = None  # type: ignore
 
+from ..types.types import DocumentText, QueryText, RetrievalResult, RetrieverError
+from ..utils import get_logger, monitor_performance
 from .base import BaseRetriever
-from ..types.types import QueryText, DocumentText, RetrievalResult, RetrieverError
-from ..utils import monitor_performance, get_logger
 
 logger = get_logger(__name__)
 

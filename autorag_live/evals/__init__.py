@@ -8,10 +8,10 @@ This module provides evaluation and benchmarking components for:
 - Performance benchmarks: System performance testing
 """
 
-from .small import run_small_suite
-from .advanced_metrics import comprehensive_evaluation, aggregate_metrics
-from .llm_judge import LLMJudge, DeterministicJudge
+from .advanced_metrics import aggregate_metrics, comprehensive_evaluation
+from .llm_judge import DeterministicJudge, LLMJudge
 from .performance_benchmarks import run_full_benchmark_suite
+from .small import run_small_suite
 
 __all__ = [
     "run_small_suite",
@@ -19,5 +19,5 @@ __all__ = [
     "aggregate_metrics",
     "LLMJudge",
     "DeterministicJudge",
-    "run_full_benchmark_suite"
+    "run_full_benchmark_suite",
 ]

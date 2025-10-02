@@ -1,4 +1,5 @@
 from typing import List
+
 import numpy as np
 
 # Try to import heavy deps; fall back to simple embedding if unavailable
@@ -9,7 +10,10 @@ except Exception:  # pragma: no cover - offline fallback
     SentenceTransformer = None  # type: ignore
     cosine_similarity = None  # type: ignore
 
-def dense_retrieve(query: str, corpus: List[str], k: int, model_name: str = 'all-MiniLM-L6-v2') -> List[str]:
+
+def dense_retrieve(
+    query: str, corpus: List[str], k: int, model_name: str = "all-MiniLM-L6-v2"
+) -> List[str]:
     """
     Retrieves top-k documents from the corpus using a dense retriever.
     """
