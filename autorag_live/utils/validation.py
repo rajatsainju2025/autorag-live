@@ -32,10 +32,21 @@ def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
         
         schema_fields = cast(Dict[str, Field], getattr(schema_cls, '__dataclass_fields__'))
 
-        # Get required fields
+        # Get type hints to check for Optional types
+        type_hints = get_type_hints(schema_cls)
+        
+        # Get required fields (not Optional and no default)
         required_fields: Set[str] = set()
         for field_name, field in schema_fields.items():
-            if field.default is None or field.default is Ellipsis:
+            # Check if field is Optional (Union with None)
+            field_type = type_hints.get(field_name)
+            is_optional = False
+            if field_type and hasattr(field_type, '__origin__'):
+                if field_type.__origin__ is Union and hasattr(field_type, '__args__'):
+                    is_optional = type(None) in field_type.__args__
+            
+            # Field is required if it has no default and is not Optional
+            if not is_optional and (field.default is field.default_factory or field.default is None):
                 required_fields.add(field_name)
 
         # Check required fields
@@ -89,14 +100,16 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
                 validate_field(f"{name}[{i}]", item, item_type)
             return
 
-        # Handle Dicts
+        # Handle Dicts (including OmegaConf DictConfig)
         if getattr(expected_type, "__origin__", None) is dict:
-            if not isinstance(value, dict):
-                raise ConfigurationError(f"Field '{name}' must be a dict")
-            key_type, value_type = expected_type.__args__
-            for k, v in value.items():
-                validate_field(f"{name}.key", k, key_type)
-                validate_field(f"{name}.{k}", v, value_type)
+            from omegaconf import DictConfig
+            if not isinstance(value, (dict, DictConfig)):
+                raise ConfigurationError(f"Field '{name}' must be a dict or DictConfig")
+            if hasattr(expected_type, '__args__') and len(expected_type.__args__) >= 2:
+                key_type, value_type = expected_type.__args__
+                for k, v in value.items():
+                    validate_field(f"{name}.key", k, key_type)
+                    validate_field(f"{name}.{k}", v, value_type)
             return
 
         # Handle nested configs
