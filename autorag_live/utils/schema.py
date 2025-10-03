@@ -2,7 +2,7 @@
 Configuration schemas for validation.
 """
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, Dict, List, Optional
 
 from omegaconf import MISSING
 
@@ -97,8 +97,8 @@ class EvaluationConfig:
 class AutoRAGConfig:
     name: str = "autorag-live"
     version: str = MISSING
-    paths: dict = MISSING
+    paths: Dict[str, Any] = MISSING
     logging: LoggingConfig = field(default_factory=LoggingConfig)
-    cache: dict = MISSING
+    cache: Dict[str, Any] = MISSING
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
     evaluation: EvaluationConfig = field(default_factory=EvaluationConfig)

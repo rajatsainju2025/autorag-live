@@ -3,6 +3,7 @@ Configuration validation utilities.
 
 This module provides schema validation and version migration tools for configuration management.
 """
+import collections.abc
 from dataclasses import Field
 from typing import Any, Dict, List, Set, Type, TypeVar, Union, cast, get_type_hints
 
@@ -97,7 +98,7 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
 
         # Handle Lists
         if getattr(expected_type, "__origin__", None) is list:
-            if not isinstance(value, (list, tuple)):
+            if not isinstance(value, collections.abc.Sequence):
                 raise ConfigurationError(f"Field '{name}' must be a list")
             item_type = expected_type.__args__[0]
             for i, item in enumerate(value):
@@ -106,9 +107,7 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
 
         # Handle Dicts (including OmegaConf DictConfig)
         if getattr(expected_type, "__origin__", None) is dict:
-            from omegaconf import DictConfig
-
-            if not isinstance(value, (dict, DictConfig)):
+            if not isinstance(value, collections.abc.Mapping):
                 raise ConfigurationError(f"Field '{name}' must be a dict or DictConfig")
             if hasattr(expected_type, "__args__") and len(expected_type.__args__) >= 2:
                 key_type, value_type = expected_type.__args__
@@ -120,6 +119,12 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
         # Handle nested configs
         if hasattr(expected_type, "__dataclass_fields__"):
             validate_config(value, expected_type)
+            return
+
+        # Skip validation for typing.Any
+        from typing import Any as TypingAny
+
+        if expected_type is TypingAny:
             return
 
         # Basic type checking

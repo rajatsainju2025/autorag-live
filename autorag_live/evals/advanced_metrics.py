@@ -153,7 +153,11 @@ def robustness_score(retrieved_docs_list: List[List[str]], relevant_docs: List[s
     Returns:
         Robustness score (consistency across runs)
     """
-    if len(retrieved_docs_list) < 2:
+    if not retrieved_docs_list:
+        return 0.0
+
+    # For single run, robustness is perfect (no variation)
+    if len(retrieved_docs_list) == 1:
         return 1.0
 
     # Calculate precision for each run
