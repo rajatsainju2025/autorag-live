@@ -17,6 +17,9 @@ def dense_retrieve(
     """
     Retrieves top-k documents from the corpus using a dense retriever.
     """
+    if not corpus:
+        return []
+
     if SentenceTransformer is not None and cosine_similarity is not None:
         model = SentenceTransformer(model_name)
         query_embedding = model.encode([query])

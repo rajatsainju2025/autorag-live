@@ -3,7 +3,6 @@
 import os
 import tempfile
 from datetime import datetime, timedelta
-from unittest.mock import patch
 
 import pytest
 
@@ -108,19 +107,15 @@ class TestEvaluationIntegration:
         """Test small evaluation suite with retriever results."""
         # This would normally run the full evaluation suite
         # For integration testing, we'll mock the expensive parts
-        with patch("autorag_live.evals.small.dense_retrieve") as mock_dense, patch(
-            "autorag_live.evals.small.bm25_retrieve"
-        ) as mock_bm25:
-            mock_dense.return_value = sample_corpus[:3]
-            mock_bm25.return_value = sample_corpus[:3]
+        # Note: run_small_suite doesn't actually use retrievers, it uses simple_qa_answer
 
-            # This should not raise an exception
-            summary = run_small_suite(judge_type="deterministic")
+        # This should not raise an exception
+        summary = run_small_suite(judge_type="deterministic")
 
-            assert "metrics" in summary
-            assert "run_id" in summary
-            assert "em" in summary["metrics"]
-            assert "f1" in summary["metrics"]
+        assert "metrics" in summary
+        assert "run_id" in summary
+        assert "em" in summary["metrics"]
+        assert "f1" in summary["metrics"]
 
     def test_advanced_metrics_comprehensive(self, sample_corpus, sample_queries):
         """Test comprehensive evaluation with advanced metrics."""
@@ -167,9 +162,11 @@ class TestOptimizationIntegration:
         assert abs(weights.bm25_weight + weights.dense_weight - 1.0) < 0.01  # Should sum to ~1
         assert isinstance(score, float)
 
-    def test_acceptance_policy_integration(self, sample_corpus):
+    def test_acceptance_policy_integration(self, sample_corpus, tmp_path):
         """Test acceptance policy with file operations."""
-        policy = AcceptancePolicy(threshold=0.01)
+        # Use a unique best runs file for this test
+        best_runs_file = tmp_path / "test_best_runs.json"
+        policy = AcceptancePolicy(threshold=0.01, best_runs_file=str(best_runs_file))
 
         # Create a temporary file to test with
         with tempfile.NamedTemporaryFile(mode="w", delete=False) as f:
@@ -211,14 +208,15 @@ class TestAugmentationIntegration:
         # Mine synonyms
         synonyms = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
 
-        # Should return a list (may be empty if no synonyms found)
-        assert isinstance(synonyms, list)
+        # Should return a dict (may be empty if no synonyms found)
+        assert isinstance(synonyms, dict)
 
-        # If synonyms found, they should be dictionaries with term mappings
-        for synonym_group in synonyms:
-            assert isinstance(synonym_group, dict)
-            assert "term" in synonym_group
-            assert "synonyms" in synonym_group
+        # If synonyms found, they should be dictionaries with term -> synonym_list mappings
+        for term, synonym_list in synonyms.items():
+            assert isinstance(term, str)
+            assert isinstance(synonym_list, list)
+            for synonym in synonym_list:
+                assert isinstance(synonym, str)
 
 
 class TestRerankerIntegration:
@@ -333,15 +331,11 @@ class TestEndToEndIntegration:
 
         # Mine synonyms from disagreements
         synonyms = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
-        assert isinstance(synonyms, list)
+        assert isinstance(synonyms, dict)
 
-    @patch("autorag_live.evals.small.dense_retrieve")
-    @patch("autorag_live.evals.small.bm25_retrieve")
-    def test_evaluation_pipeline_with_mocking(self, mock_bm25, mock_dense, sample_corpus):
+    def test_evaluation_pipeline_with_mocking(self, sample_corpus):
         """Test evaluation pipeline with mocked retrievers."""
-        # Setup mocks
-        mock_bm25.return_value = sample_corpus[:3]
-        mock_dense.return_value = sample_corpus[:3]
+        # Note: run_small_suite doesn't use retrievers, so no mocking needed
 
         # Run evaluation
         summary = run_small_suite(judge_type="deterministic")
@@ -350,10 +344,6 @@ class TestEndToEndIntegration:
         assert "metrics" in summary
         assert "run_id" in summary
         assert all(key in summary["metrics"] for key in ["em", "f1", "relevance", "faithfulness"])
-
-        # Verify mocks were called
-        mock_bm25.assert_called()
-        mock_dense.assert_called()
 
 
 class TestErrorHandlingIntegration:
