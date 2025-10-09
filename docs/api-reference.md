@@ -499,78 +499,166 @@ class TimeSeriesNote:
     embedding: Optional[np.ndarray] = None
 ```
 
-## 🔌 Configuration
+## 🔧 Utilities
 
-### Environment Variables
-
-```bash
-# OpenAI API (for advanced evaluation)
-export OPENAI_API_KEY="your-key-here"
-
-# Elasticsearch
-export ELASTICSEARCH_HOST="localhost"
-export ELASTICSEARCH_PORT="9200"
-
-# Qdrant
-export QDRANT_URL="localhost:6333"
-
-# Logging
-export AUTORAG_LOG_LEVEL="INFO"
-```
-
-### Configuration Files
-
-- `hybrid_config.json`: Hybrid retriever weights
-- `terms.yaml`: Synonym database
-- `best_runs.json`: Best evaluation results
-
-## 🚨 Error Handling
-
-AutoRAG-Live provides comprehensive error handling:
+### Configuration Management
 
 ```python
-try:
-    results = hybrid_retrieve(query, corpus, k=10)
-except ValueError as e:
-    print(f"Invalid parameters: {e}")
-except ConnectionError as e:
-    print(f"Connection failed: {e}")
-except Exception as e:
-    print(f"Unexpected error: {e}")
+from autorag_live.utils.config import load_config, save_config, update_config
+
+def load_config(config_path: str) -> Dict[str, Any]:
+    """Load configuration from YAML/JSON file."""
+
+def save_config(config: Dict[str, Any], config_path: str) -> None:
+    """Save configuration to file."""
+
+def update_config(updates: Dict[str, Any], config_path: str) -> None:
+    """Update configuration file with new values."""
 ```
 
-## 🔧 Extending AutoRAG-Live
-
-### Custom Retriever
+### Caching
 
 ```python
-from autorag_live.retrievers.base import BaseRetriever
+from autorag_live.utils.cache import Cache, cached
 
-class CustomRetriever(BaseRetriever):
+class Cache:
+    """LRU cache with TTL support."""
+
+    def __init__(self, max_size: int = 1000, ttl_seconds: int = 3600):
+        """Initialize cache."""
+
+    def get(self, key: str) -> Optional[Any]:
+        """Get value from cache."""
+
+    def set(self, key: str, value: Any) -> None:
+        """Set value in cache."""
+
+    def clear(self) -> None:
+        """Clear all cached values."""
+
+@cached(ttl_seconds=300)
+def expensive_function(param: str) -> Any:
+    """Decorator for caching function results."""
+```
+
+### Validation
+
+```python
+from autorag_live.utils.validation import validate_config, validate_query
+
+def validate_config(config: Dict[str, Any]) -> bool:
+    """Validate configuration dictionary."""
+
+def validate_query(query: str) -> bool:
+    """Validate search query."""
+```
+
+### Logging
+
+```python
+from autorag_live.utils.logging_config import setup_logging, get_logger
+
+def setup_logging(
+    level: str = "INFO",
+    log_file: Optional[str] = None,
+    format_string: Optional[str] = None
+) -> None:
+    """Setup logging configuration."""
+
+def get_logger(name: str) -> logging.Logger:
+    """Get configured logger instance."""
+```
+
+### Performance Monitoring
+
+```python
+from autorag_live.utils.performance import PerformanceMonitor
+
+class PerformanceMonitor:
+    """Monitor function performance."""
+
+    def __init__(self):
+        """Initialize monitor."""
+
+    def start_monitoring(self, operation: str) -> None:
+        """Start monitoring an operation."""
+
+    def stop_monitoring(self, operation: str) -> Dict[str, float]:
+        """Stop monitoring and return metrics."""
+```
+
+### Error Handling
+
+```python
+from autorag_live.utils.error_handling import safe_execute, retry_on_failure
+
+def safe_execute(func: Callable, *args, **kwargs) -> Any:
+    """Execute function with error handling."""
+
+@retry_on_failure(max_attempts=3, delay=1.0)
+def unreliable_function() -> Any:
+    """Decorator for retrying failed operations."""
+```
+
+## 📝 Type Definitions
+
+### Core Types
+
+```python
+from autorag_live.types import (
+    DocumentId, QueryText, DocumentText, Score,
+    MetricsDict, ConfigDict, VectorArray
+)
+
+# Type aliases
+DocumentId = str        # Document identifier
+QueryText = str         # Search query text
+DocumentText = str      # Document content
+Score = float          # Relevance score
+MetricsDict = Dict[str, float]  # Evaluation metrics
+ConfigDict = Dict[str, Any]     # Configuration dictionary
+VectorArray = npt.NDArray[np.float32]  # Vector embeddings
+```
+
+### Protocols
+
+```python
+from autorag_live.types import RetrieverProtocol, OptimizerProtocol
+
+@runtime_checkable
+class RetrieverProtocol(Protocol):
+    """Protocol for retriever implementations."""
+
     def retrieve(self, query: str, corpus: List[str], k: int) -> List[str]:
-        # Implement custom retrieval logic
-        pass
-```
+        """Retrieve top-k documents for query."""
+        ...
 
-### Custom Metric
+@runtime_checkable
+class OptimizerProtocol(Protocol):
+    """Protocol for optimizer implementations."""
 
-```python
-def custom_metric(retrieved: List[str], relevant: List[str]) -> float:
-    # Implement custom evaluation metric
-    pass
-```
-
-### Custom Optimizer
-
-```python
-from autorag_live.pipeline.base_optimizer import BaseOptimizer
-
-class CustomOptimizer(BaseOptimizer):
     def optimize(self, queries: List[str], corpus: List[str]) -> Dict[str, Any]:
-        # Implement custom optimization logic
-        pass
+        """Optimize retrieval parameters."""
+        ...
 ```
 
----
+### Data Classes
 
-This API reference covers all major components. For more details, see the source code or use `help()` on any function or class.
+```python
+from autorag_live.types import RetrievalResult, EvaluationResult
+
+@dataclass
+class RetrievalResult:
+    """Result of a retrieval operation."""
+    query: str
+    documents: List[str]
+    scores: List[float]
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+@dataclass
+class EvaluationResult:
+    """Result of an evaluation."""
+    metrics: MetricsDict
+    details: Dict[str, Any] = field(default_factory=dict)
+    timestamp: datetime = field(default_factory=datetime.now)
+```
