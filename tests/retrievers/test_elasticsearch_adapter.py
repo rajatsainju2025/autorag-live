@@ -43,7 +43,7 @@ class TestElasticsearchRetriever:
         mock_client.ping.return_value = True
         mock_es.return_value = mock_client
 
-        retriever = ElasticsearchRetriever(cloud_id="test:cloud", api_key="test_key")
+        ElasticsearchRetriever(cloud_id="test:cloud", api_key="test_key")
 
         mock_es.assert_called_once_with(cloud_id="test:cloud", api_key="test_key")
 

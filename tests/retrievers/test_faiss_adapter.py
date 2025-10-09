@@ -1,5 +1,3 @@
-
-
 from autorag_live.retrievers.faiss_adapter import (
     DenseRetriever,
     SentenceTransformerRetriever,

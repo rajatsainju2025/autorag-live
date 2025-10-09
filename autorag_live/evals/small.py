@@ -50,10 +50,15 @@ SMALL_QA: List[QAItem] = [
 
 
 def exact_match(pred: str, gold: str) -> float:
+    if not isinstance(pred, str) or not isinstance(gold, str):
+        raise TypeError("Both pred and gold must be strings")
     return 1.0 if pred.strip().lower() == gold.strip().lower() else 0.0
 
 
 def token_f1(pred: str, gold: str) -> float:
+    if not isinstance(pred, str) or not isinstance(gold, str):
+        raise TypeError("Both pred and gold must be strings")
+
     p = pred.strip().lower().split()
     g = gold.strip().lower().split()
     if not p and not g:
@@ -74,6 +79,11 @@ def token_f1(pred: str, gold: str) -> float:
 
 
 def simple_qa_answer(q: str, docs: List[str]) -> str:
+    if not isinstance(q, str):
+        raise TypeError("Query must be a string")
+    if not isinstance(docs, list) or not all(isinstance(doc, str) for doc in docs):
+        raise TypeError("Docs must be a list of strings")
+
     # extremely naive: if a token from canonical answers is found in docs, return it
     canonical = {"blue", "mammal"}
     blob = " ".join(docs).lower()
@@ -84,6 +94,11 @@ def simple_qa_answer(q: str, docs: List[str]) -> str:
 
 
 def run_small_suite(runs_dir: str = "runs", judge_type: str = "deterministic") -> Dict[str, Any]:
+    if not isinstance(runs_dir, str) or not runs_dir.strip():
+        raise ValueError("runs_dir must be a non-empty string")
+    if not isinstance(judge_type, str) or not judge_type.strip():
+        raise ValueError("judge_type must be a non-empty string")
+
     logger.info(f"Starting small evaluation suite with judge_type: {judge_type}")
     os.makedirs(runs_dir, exist_ok=True)
     ts = int(time.time())

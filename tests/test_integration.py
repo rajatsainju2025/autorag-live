@@ -103,14 +103,14 @@ class TestRetrieverIntegration:
 class TestEvaluationIntegration:
     """Test integration of evaluation components."""
 
-    def test_small_suite_with_retrievers(self, sample_corpus, sample_queries):
+    def test_small_suite_with_retrievers(self, sample_corpus, sample_queries, tmp_path):
         """Test small evaluation suite with retriever results."""
         # This would normally run the full evaluation suite
         # For integration testing, we'll mock the expensive parts
         # Note: run_small_suite doesn't actually use retrievers, it uses simple_qa_answer
 
         # This should not raise an exception
-        summary = run_small_suite(judge_type="deterministic")
+        summary = run_small_suite(runs_dir=str(tmp_path / "runs"), judge_type="deterministic")
 
         assert "metrics" in summary
         assert "run_id" in summary
@@ -179,7 +179,7 @@ class TestOptimizationIntegration:
                 with open(temp_file, "w") as f:
                     f.write('{"test": "updated"}')
 
-            accepted = safe_config_update(update_func, [temp_file], policy)
+            accepted = safe_config_update(update_func, [temp_file], policy, runs_dir=str(tmp_path))
 
             # Should accept the first change
             assert accepted
@@ -333,12 +333,12 @@ class TestEndToEndIntegration:
         synonyms = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
         assert isinstance(synonyms, dict)
 
-    def test_evaluation_pipeline_with_mocking(self, sample_corpus):
+    def test_evaluation_pipeline_with_mocking(self, sample_corpus, tmp_path):
         """Test evaluation pipeline with mocked retrievers."""
         # Note: run_small_suite doesn't use retrievers, so no mocking needed
 
         # Run evaluation
-        summary = run_small_suite(judge_type="deterministic")
+        summary = run_small_suite(runs_dir=str(tmp_path / "runs"), judge_type="deterministic")
 
         # Verify results structure
         assert "metrics" in summary
@@ -364,18 +364,31 @@ class TestErrorHandlingIntegration:
 
     def test_malformed_query_handling(self, sample_corpus):
         """Test behavior with malformed queries."""
-        malformed_queries = ["", "   ", "!@#$%"]
+        # Empty and whitespace-only queries should raise ValueError
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            bm25.bm25_retrieve("", sample_corpus, 5)
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            dense.dense_retrieve("", sample_corpus, 5)
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            hybrid.hybrid_retrieve("", sample_corpus, 5)
 
-        for query in malformed_queries:
-            # Should not raise exceptions
-            bm25_results = bm25.bm25_retrieve(query, sample_corpus, 5)
-            dense_results = dense.dense_retrieve(query, sample_corpus, 5)
-            hybrid_results = hybrid.hybrid_retrieve(query, sample_corpus, 5)
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            bm25.bm25_retrieve("   ", sample_corpus, 5)
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            dense.dense_retrieve("   ", sample_corpus, 5)
+        with pytest.raises(ValueError, match="Query cannot be empty"):
+            hybrid.hybrid_retrieve("   ", sample_corpus, 5)
 
-            # Should return some results (or empty list)
-            assert isinstance(bm25_results, list)
-            assert isinstance(dense_results, list)
-            assert isinstance(hybrid_results, list)
+        # Special characters should work (may return empty results)
+        special_query = "!@#$%"
+        bm25_results = bm25.bm25_retrieve(special_query, sample_corpus, 5)
+        dense_results = dense.dense_retrieve(special_query, sample_corpus, 5)
+        hybrid_results = hybrid.hybrid_retrieve(special_query, sample_corpus, 5)
+
+        # Should return lists (may be empty)
+        assert isinstance(bm25_results, list)
+        assert isinstance(dense_results, list)
+        assert isinstance(hybrid_results, list)
 
     def test_file_operation_error_handling(self):
         """Test error handling in file operations."""

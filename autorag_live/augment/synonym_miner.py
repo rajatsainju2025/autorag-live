@@ -12,6 +12,17 @@ def mine_synonyms_from_disagreements(
     Mines potential synonyms from disagreement patterns.
     Looks for n-grams that appear frequently in one retriever but not others.
     """
+    if (
+        not isinstance(bm25_results, list)
+        or not isinstance(dense_results, list)
+        or not isinstance(hybrid_results, list)
+    ):
+        raise TypeError("All result parameters must be lists")
+    if not all(isinstance(doc, str) for doc in bm25_results + dense_results + hybrid_results):
+        raise TypeError("All documents must be strings")
+    if min_freq < 1:
+        raise ValueError("min_freq must be at least 1")
+
     all_docs = bm25_results + dense_results + hybrid_results
 
     # Extract n-grams (1-3 tokens)

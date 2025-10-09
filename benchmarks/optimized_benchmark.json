@@ -1,0 +1,213 @@
+{
+  "timestamp": 1759787122.607111,
+  "results": [
+    {
+      "operation": "BM25 Retrieval (function)",
+      "iterations": 20,
+      "total_time": 0.0015171640552580357,
+      "avg_time": 7.585820276290178e-05,
+      "min_time": 6.087496876716614e-05,
+      "max_time": 0.00021191599080339074,
+      "std_time": 3.6898278974657616e-05,
+      "memory_usage_mb": 0.015625,
+      "throughput": 13182.49000870143,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "list"
+      }
+    },
+    {
+      "operation": "BM25 Retrieval (class)",
+      "iterations": 20,
+      "total_time": 0.000431876047514379,
+      "avg_time": 2.1593802375718952e-05,
+      "min_time": 2.0249979570508003e-05,
+      "max_time": 2.504198346287012e-05,
+      "std_time": 1.656504699590986e-06,
+      "memory_usage_mb": 0.0,
+      "throughput": 46309.58376855598,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "list"
+      }
+    },
+    {
+      "operation": "Dense Retrieval (function)",
+      "iterations": 5,
+      "total_time": 2.7475514170364477,
+      "avg_time": 0.5495102834072896,
+      "min_time": 0.4836194170056842,
+      "max_time": 0.5908720419974998,
+      "std_time": 0.043234922627908005,
+      "memory_usage_mb": 30.046875,
+      "throughput": 1.819802158750164,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "list"
+      }
+    },
+    {
+      "operation": "Dense Retrieval (class+cached)",
+      "iterations": 20,
+      "total_time": 0.0031747050816193223,
+      "avg_time": 0.0001587352540809661,
+      "min_time": 0.0001485830289311707,
+      "max_time": 0.0001865000231191516,
+      "std_time": 8.89700475813318e-06,
+      "memory_usage_mb": 0.0,
+      "throughput": 6299.797772018117,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "list"
+      }
+    },
+    {
+      "operation": "Hybrid Retrieval (function)",
+      "iterations": 5,
+      "total_time": 2.670921541051939,
+      "avg_time": 0.5341843082103879,
+      "min_time": 0.5107951660174876,
+      "max_time": 0.560119541012682,
+      "std_time": 0.02072447609283916,
+      "memory_usage_mb": 14.703125,
+      "throughput": 1.8720130573475238,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "list"
+      }
+    },
+    {
+      "operation": "Hybrid Retrieval (class)",
+      "iterations": 20,
+      "total_time": 0.005439833912532777,
+      "avg_time": 0.00027199169562663883,
+      "min_time": 0.00021712499437853694,
+      "max_time": 0.0005649999948218465,
+      "std_time": 8.045251815412893e-05,
+      "memory_usage_mb": 0.0,
+      "throughput": 3676.5828371932844,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "list"
+      }
+    },
+    {
+      "operation": "Small Evaluation Suite",
+      "iterations": 5,
+      "total_time": 0.0007278750417754054,
+      "avg_time": 0.0001455750083550811,
+      "min_time": 0.00013437500456348062,
+      "max_time": 0.00015787500888109207,
+      "std_time": 8.769873502208193e-06,
+      "memory_usage_mb": 0.0,
+      "throughput": 6869.310957282157,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "dict"
+      }
+    },
+    {
+      "operation": "Comprehensive Evaluation (optimized)",
+      "iterations": 10,
+      "total_time": 0.0031625009141862392,
+      "avg_time": 0.00031625009141862394,
+      "min_time": 0.0002494999789632857,
+      "max_time": 0.0006426670006476343,
+      "std_time": 0.00011925728912918213,
+      "memory_usage_mb": 0.03125,
+      "throughput": 3162.054421910944,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "dict"
+      }
+    },
+    {
+      "operation": "Grid Search Optimization",
+      "iterations": 3,
+      "total_time": 31.704638457973488,
+      "avg_time": 10.568212819324495,
+      "min_time": 10.320836625003722,
+      "max_time": 10.82902737497352,
+      "std_time": 0.2543617537192024,
+      "memory_usage_mb": 102.421875,
+      "throughput": 0.09462337834183761,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "tuple"
+      }
+    },
+    {
+      "operation": "Synonym Mining",
+      "iterations": 10,
+      "total_time": 0.0006727080326527357,
+      "avg_time": 6.727080326527358e-05,
+      "min_time": 6.049999501556158e-05,
+      "max_time": 7.60830007493496e-05,
+      "std_time": 5.794203110223023e-06,
+      "memory_usage_mb": 0.0,
+      "throughput": 14865.290013806309,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "dict"
+      }
+    },
+    {
+      "operation": "Simple Reranking",
+      "iterations": 15,
+      "total_time": 0.0006649189745076001,
+      "avg_time": 4.4327931633840004e-05,
+      "min_time": 4.191702464595437e-05,
+      "max_time": 6.237498018890619e-05,
+      "std_time": 5.11517529333617e-06,
+      "memory_usage_mb": 0.0,
+      "throughput": 22559.13964721509,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "list"
+      }
+    },
+    {
+      "operation": "Time-Series Search",
+      "iterations": 10,
+      "total_time": 0.0009536659927107394,
+      "avg_time": 9.536659927107393e-05,
+      "min_time": 8.916598744690418e-05,
+      "max_time": 0.00010545802069827914,
+      "std_time": 7.10014924137589e-06,
+      "memory_usage_mb": 0.0,
+      "throughput": 10485.851520798797,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "list"
+      }
+    },
+    {
+      "operation": "Disagreement Metrics",
+      "iterations": 20,
+      "total_time": 0.007529248890932649,
+      "avg_time": 0.00037646244454663246,
+      "min_time": 0.00031762500293552876,
+      "max_time": 0.0005612919921986759,
+      "std_time": 6.207132614086183e-05,
+      "memory_usage_mb": 0.0,
+      "throughput": 2656.3074603743903,
+      "metadata": {
+        "args_count": 0,
+        "kwargs_count": 0,
+        "result_type": "dict"
+      }
+    }
+  ]
+}

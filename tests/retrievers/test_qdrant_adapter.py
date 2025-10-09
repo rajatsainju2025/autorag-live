@@ -72,7 +72,7 @@ class TestQdrantRetriever:
         """Test Qdrant retriever initialization with URL."""
         mock_client, mock_distance, mock_vector_params = mock_qdrant_imports
 
-        retriever = QdrantRetriever(url="https://qdrant.example.com", api_key="test_key")
+        QdrantRetriever(url="https://qdrant.example.com", api_key="test_key")
 
         mock_client.assert_called_once_with(url="https://qdrant.example.com", api_key="test_key")
 

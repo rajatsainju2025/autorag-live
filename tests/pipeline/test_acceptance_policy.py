@@ -60,7 +60,7 @@ def test_safe_config_update(tmp_path):
     policy = AcceptancePolicy(best_runs_file=str(tmp_path / "best.json"))
 
     # Should accept (first run)
-    result = safe_config_update(update_func, [str(config_file)], policy)
+    result = safe_config_update(update_func, [str(config_file)], policy, runs_dir=str(tmp_path))
     assert result is True
 
     # Config should be updated

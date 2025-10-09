@@ -24,6 +24,12 @@ def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
     if not corpus:
         return []
 
+    if not query or not query.strip():
+        raise ValueError("Query cannot be empty")
+
+    if k <= 0:
+        raise ValueError("k must be positive")
+
     if not BM25_AVAILABLE or BM25Okapi is None:
         raise ImportError("rank_bm25 is required for bm25_retrieve but is not installed")
 

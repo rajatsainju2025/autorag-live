@@ -55,5 +55,44 @@ conda run -n autorag-live poetry run streamlit run app/streamlit_app.py
 - `autorag eval --suite small`
 - `autorag optimize --queries "sun" "sky"` (auto-tune hybrid weights with acceptance policy)
 
+## Advanced Usage
+
+### Customizing Retrieval
+You can customize the retrieval process by specifying the retriever type and parameters. For example:
+```bash
+conda run -n autorag-live poetry run python -m autorag_live.cli eval --suite small --retriever dense --top_k 5
+```
+
+### Adding New Queries
+To evaluate new queries, simply pass them as arguments:
+```bash
+conda run -n autorag-live poetry run python -m autorag_live.cli eval --suite small --queries "What is AI?" "Explain deep learning."
+```
+
+### Using LLM Judges
+For advanced evaluation, you can use LLM judges:
+```bash
+conda run -n autorag-live poetry run python -m autorag_live.cli eval --suite small --judge openai
+```
+
+### Optimizing Hybrid Weights
+Auto-tune hybrid weights for better performance:
+```bash
+conda run -n autorag-live poetry run python -m autorag_live.cli optimize --queries "sun" "sky"
+```
+
+### Generating Disagreement Reports
+Generate detailed disagreement reports for analysis:
+```bash
+conda run -n autorag-live poetry run python -m autorag_live.cli disagree --query "the sun" --report reports/disagreement.html
+```
+
+## Feature Highlights
+- **Tri-View Retrieval**: Combines BM25, dense, and hybrid retrieval for robust performance.
+- **Disagreement Metrics**: Identifies areas of improvement through disagreement analysis.
+- **Self-Optimization**: Automatically tunes parameters to improve evaluation metrics.
+- **Streamlit Dashboard**: Visualize results and insights interactively.
+- **Extensible Architecture**: Easily add new retrievers, metrics, and evaluation suites.
+
 ## Roadmap
 - FAISS/Qdrant adapters, bandit hybrid tuning, LLM judges, PyPI release.

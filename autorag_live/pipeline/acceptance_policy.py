@@ -114,7 +114,9 @@ def create_config_backup(file_path: str) -> str:
     return backup_path
 
 
-def safe_config_update(update_func, config_files: list, policy: AcceptancePolicy):
+def safe_config_update(
+    update_func, config_files: list, policy: AcceptancePolicy, runs_dir: str = "runs"
+):
     """
     Safely update configuration files with automatic revert on failure.
 
@@ -122,6 +124,7 @@ def safe_config_update(update_func, config_files: list, policy: AcceptancePolicy
         update_func: Function that performs the config updates
         config_files: List of config file paths that will be modified
         policy: AcceptancePolicy instance for evaluation
+        runs_dir: Directory containing evaluation runs
     """
     logger.info(f"Starting safe config update for {len(config_files)} files")
 
@@ -139,7 +142,7 @@ def safe_config_update(update_func, config_files: list, policy: AcceptancePolicy
         logger.debug("Config updates applied successfully")
 
         # Evaluate and potentially revert
-        accepted = policy.evaluate_change(backups)
+        accepted = policy.evaluate_change(backups, runs_dir)
         logger.info(f"Config update evaluation result: {'accepted' if accepted else 'reverted'}")
         return accepted
 

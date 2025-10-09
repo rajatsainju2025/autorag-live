@@ -10,7 +10,6 @@ import sys
 from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Type, TypeVar
 
-
 # Type variable for decorated functions
 F = TypeVar("F", bound=Callable[..., Any])
 

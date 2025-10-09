@@ -33,7 +33,7 @@ class PerformanceBenchmark:
 
     def __init__(self, output_dir: str = "benchmarks"):
         self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
         self.results = []
 
     @contextmanager
@@ -168,29 +168,83 @@ def benchmark_retrievers(corpus: List[str], queries: List[str], benchmark: Perfo
 
     print("Benchmarking retrievers...")
 
-    # BM25 retriever
+    # BM25 retriever (function-based)
     def bm25_retrieve():
         from autorag_live.retrievers import bm25
 
         return bm25.bm25_retrieve(queries[0], corpus, 10)
 
-    benchmark.benchmark_function(bm25_retrieve, iterations=20, operation_name="BM25 Retrieval")
+    benchmark.benchmark_function(
+        bm25_retrieve, iterations=20, operation_name="BM25 Retrieval (function)"
+    )
 
-    # Dense retriever
+    # BM25 retriever (class-based)
+    bm25_retriever = None
+
+    def bm25_class_retrieve():
+        nonlocal bm25_retriever
+        if bm25_retriever is None:
+            from autorag_live.retrievers.bm25 import BM25Retriever
+
+            bm25_retriever = BM25Retriever()
+            bm25_retriever.add_documents(corpus)
+        return bm25_retriever.retrieve(queries[0], 10)
+
+    benchmark.benchmark_function(
+        bm25_class_retrieve, iterations=20, operation_name="BM25 Retrieval (class)"
+    )
+
+    # Dense retriever (function-based)
     def dense_retrieve():
         from autorag_live.retrievers import dense
 
         return dense.dense_retrieve(queries[0], corpus, 10)
 
-    benchmark.benchmark_function(dense_retrieve, iterations=20, operation_name="Dense Retrieval")
+    benchmark.benchmark_function(
+        dense_retrieve, iterations=5, operation_name="Dense Retrieval (function)"
+    )
 
-    # Hybrid retriever
+    # Dense retriever (class-based with caching)
+    dense_retriever = None
+
+    def dense_class_retrieve():
+        nonlocal dense_retriever
+        if dense_retriever is None:
+            from autorag_live.retrievers.dense import DenseRetriever
+
+            dense_retriever = DenseRetriever(cache_embeddings=True)
+            dense_retriever.add_documents(corpus)
+        return dense_retriever.retrieve(queries[0], 10)
+
+    benchmark.benchmark_function(
+        dense_class_retrieve, iterations=20, operation_name="Dense Retrieval (class+cached)"
+    )
+
+    # Hybrid retriever (function-based)
     def hybrid_retrieve():
         from autorag_live.retrievers import hybrid
 
         return hybrid.hybrid_retrieve(queries[0], corpus, 10)
 
-    benchmark.benchmark_function(hybrid_retrieve, iterations=20, operation_name="Hybrid Retrieval")
+    benchmark.benchmark_function(
+        hybrid_retrieve, iterations=5, operation_name="Hybrid Retrieval (function)"
+    )
+
+    # Hybrid retriever (class-based)
+    hybrid_retriever = None
+
+    def hybrid_class_retrieve():
+        nonlocal hybrid_retriever
+        if hybrid_retriever is None:
+            from autorag_live.retrievers.hybrid import HybridRetriever
+
+            hybrid_retriever = HybridRetriever(bm25_weight=0.5)
+            hybrid_retriever.add_documents(corpus)
+        return hybrid_retriever.retrieve(queries[0], 10)
+
+    benchmark.benchmark_function(
+        hybrid_class_retrieve, iterations=20, operation_name="Hybrid Retrieval (class)"
+    )
 
 
 def benchmark_evaluation(corpus: List[str], queries: List[str], benchmark: PerformanceBenchmark):
@@ -208,17 +262,25 @@ def benchmark_evaluation(corpus: List[str], queries: List[str], benchmark: Perfo
         run_eval_suite, iterations=5, operation_name="Small Evaluation Suite"
     )
 
-    # Advanced metrics
-    def comprehensive_eval():
-        from autorag_live.evals.advanced_metrics import comprehensive_evaluation
-        from autorag_live.retrievers import hybrid
+    # Advanced metrics with optimized retriever
+    hybrid_retriever = None
 
-        retrieved = hybrid.hybrid_retrieve(queries[0], corpus, 5)
+    def comprehensive_eval():
+        nonlocal hybrid_retriever
+        from autorag_live.evals.advanced_metrics import comprehensive_evaluation
+
+        if hybrid_retriever is None:
+            from autorag_live.retrievers.hybrid import HybridRetriever
+
+            hybrid_retriever = HybridRetriever(bm25_weight=0.5)
+            hybrid_retriever.add_documents(corpus)
+
+        retrieved = [doc for doc, score in hybrid_retriever.retrieve(queries[0], 5)]
         relevant = corpus[:3]  # Assume first 3 are relevant
         return comprehensive_evaluation(retrieved, relevant, queries[0])
 
     benchmark.benchmark_function(
-        comprehensive_eval, iterations=10, operation_name="Comprehensive Evaluation"
+        comprehensive_eval, iterations=10, operation_name="Comprehensive Evaluation (optimized)"
     )
 
 

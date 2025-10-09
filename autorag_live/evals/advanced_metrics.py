@@ -18,6 +18,11 @@ def ndcg_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) 
     Returns:
         NDCG@k score
     """
+    if not isinstance(retrieved_docs, list) or not isinstance(relevant_docs, list):
+        raise TypeError("retrieved_docs and relevant_docs must be lists")
+    if k <= 0:
+        raise ValueError("k must be positive")
+
     if not retrieved_docs or not relevant_docs:
         return 0.0
 
@@ -49,11 +54,23 @@ def mean_reciprocal_rank(retrieved_docs: List[List[str]], relevant_docs: List[Li
         relevant_docs: List of relevant document lists for each query
 
     Returns:
-        MRR score
+        Mean Reciprocal Rank score
     """
+    if not isinstance(retrieved_docs, list) or not isinstance(relevant_docs, list):
+        raise TypeError("retrieved_docs and relevant_docs must be lists of lists")
+    if len(retrieved_docs) != len(relevant_docs):
+        raise ValueError("retrieved_docs and relevant_docs must have the same length")
+
+    if not retrieved_docs:
+        return 0.0
+
     reciprocal_ranks = []
 
     for ret_docs, rel_docs in zip(retrieved_docs, relevant_docs):
+        if not isinstance(ret_docs, list) or not isinstance(rel_docs, list):
+            raise TypeError("Each element must be a list")
+
+        # Find first relevant document
         rr = 0.0
         for i, doc in enumerate(ret_docs):
             if doc in rel_docs:
