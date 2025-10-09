@@ -12,7 +12,14 @@ from .cache import (
     get_cache,
 )
 from .config import ConfigManager
-from .logging_config import get_logger, setup_logging
+from .logging_config import (
+    get_audit_logger,
+    get_logger,
+    get_performance_logger,
+    get_structured_logger,
+    logging_context,
+    setup_logging,
+)
 from .performance import (
     PerformanceMonitor,
     SystemMonitor,
@@ -40,7 +47,11 @@ __all__ = [
     # Configuration
     "ConfigManager",
     # Logging
+    "get_audit_logger",
     "get_logger",
+    "get_performance_logger",
+    "get_structured_logger",
+    "logging_context",
     "setup_logging",
     # Performance monitoring
     "PerformanceMonitor",
