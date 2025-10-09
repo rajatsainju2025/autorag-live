@@ -554,3 +554,300 @@ def pytest_collection_modifyitems(config, items):
             if "slow" in item.keywords:
                 item.add_marker(skip_slow)
 ```
+
+## 🔬 Advanced Testing Techniques
+
+### Property-Based Testing
+
+Use hypothesis for testing with generated inputs.
+
+```python
+# tests/test_property_based.py
+import pytest
+from hypothesis import given, strategies as st
+from autorag_live.retrievers import bm25
+
+@given(
+    corpus=st.lists(st.text(min_size=1, max_size=100), min_size=1, max_size=50),
+    query=st.text(min_size=1, max_size=50),
+    k=st.integers(min_value=1, max_value=10)
+)
+def test_bm25_retrieve_properties(corpus, query, k):
+    """Property-based test for BM25 retrieval."""
+    k = min(k, len(corpus))  # Ensure k doesn't exceed corpus size
+
+    results = bm25.bm25_retrieve(query, corpus, k=k)
+
+    # Properties that should always hold
+    assert len(results) <= k
+    assert len(results) <= len(corpus)
+    assert all(doc in corpus for doc in results)
+
+@given(st.lists(st.text(), min_size=1))
+def test_retrieval_consistency(corpus):
+    """Test that retrieval is deterministic."""
+    query = "test query"
+    k = min(5, len(corpus))
+
+    results1 = bm25.bm25_retrieve(query, corpus, k=k)
+    results2 = bm25.bm25_retrieve(query, corpus, k=k)
+
+    assert results1 == results2
+```
+
+### Performance Testing
+
+Test performance characteristics and benchmarks.
+
+```python
+# tests/performance/test_retrieval_performance.py
+import pytest
+import time
+from autorag_live.utils.performance import PerformanceMonitor
+
+class TestRetrievalPerformance:
+    @pytest.fixture
+    def large_corpus(self):
+        """Generate a large test corpus."""
+        return [f"Document number {i} with some content" for i in range(1000)]
+
+    def test_bm25_performance_scaling(self, large_corpus, benchmark):
+        """Test BM25 performance with different corpus sizes."""
+        def bm25_search():
+            return bm25.bm25_retrieve "test query", large_corpus, k=10
+
+        # Benchmark the function
+        result = benchmark(bm25_search)
+
+        assert len(result) == 10
+        # Check that performance is reasonable
+        assert benchmark.stats.mean < 1.0  # Should complete in < 1 second
+
+    def test_memory_usage_bounds(self, large_corpus):
+        """Test memory usage stays within bounds."""
+        monitor = PerformanceMonitor()
+
+        with monitor.memory_monitor():
+            results = bm25.bm25_retrieve("query", large_corpus, k=50)
+
+        memory_mb = monitor.current_memory_usage
+        assert memory_mb < 500  # Less than 500MB for this operation
+
+    @pytest.mark.parametrize("corpus_size", [100, 1000, 10000])
+    def test_scalability(self, corpus_size):
+        """Test how performance scales with corpus size."""
+        corpus = [f"doc {i}" for i in range(corpus_size)]
+
+        start_time = time.time()
+        results = bm25.bm25_retrieve("test", corpus, k=10)
+        duration = time.time() - start_time
+
+        # Performance should scale roughly linearly
+        # (allowing some overhead for larger data structures)
+        assert duration < corpus_size / 1000  # Rough heuristic
+```
+
+### Load Testing
+
+Test system behavior under load.
+
+```python
+# tests/load/test_concurrent_retrieval.py
+import pytest
+import asyncio
+import concurrent.futures
+from autorag_live.retrievers import bm25
+
+class TestConcurrentRetrieval:
+    @pytest.fixture
+    def corpus(self):
+        return [f"Document {i} with searchable content" for i in range(100)]
+
+    def test_concurrent_queries(self, corpus):
+        """Test handling multiple concurrent queries."""
+        queries = [f"query {i}" for i in range(10)]
+
+        def run_query(query):
+            return bm25.bm25_retrieve(query, corpus, k=5)
+
+        # Run queries concurrently
+        with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
+            futures = [executor.submit(run_query, q) for q in queries]
+            results = [f.result() for f in concurrent.futures.as_completed(futures)]
+
+        assert len(results) == 10
+        assert all(len(r) == 5 for r in results)
+
+    @pytest.mark.asyncio
+    async def test_async_retrieval(self, corpus):
+        """Test async retrieval patterns."""
+        async def async_retrieve(query):
+            # Simulate async operation
+            await asyncio.sleep(0.01)
+            return bm25.bm25_retrieve(query, corpus, k=3)
+
+        queries = [f"async query {i}" for i in range(5)]
+        tasks = [async_retrieve(q) for q in queries]
+        results = await asyncio.gather(*tasks)
+
+        assert len(results) == 5
+        assert all(len(r) == 3 for r in results)
+```
+
+### Fuzz Testing
+
+Test with random or malformed inputs.
+
+```python
+# tests/fuzz/test_input_fuzzing.py
+import pytest
+from autorag_live.retrievers import bm25
+
+class TestInputFuzzing:
+    @pytest.mark.parametrize("malformed_input", [
+        "",  # Empty string
+        "a" * 10000,  # Very long string
+        "🚀🔥💯",  # Unicode emojis
+        "<script>alert('xss')</script>",  # Potentially dangerous input
+        "query\nwith\nnewlines",  # Multi-line input
+        "query\twith\ttabs",  # Tab characters
+        "query\x00with\x00nulls",  # Null bytes
+    ])
+    def test_malformed_queries(self, malformed_input):
+        """Test retrieval with various malformed inputs."""
+        corpus = ["normal document", "another document"]
+
+        # Should not crash
+        results = bm25.bm25_retrieve(malformed_input, corpus, k=2)
+
+        # Should return some results or empty list
+        assert isinstance(results, list)
+        assert len(results) <= 2
+
+    def test_extreme_corpus_sizes(self):
+        """Test with extreme corpus sizes."""
+        # Empty corpus
+        results = bm25.bm25_retrieve("query", [], k=1)
+        assert results == []
+
+        # Single document corpus
+        results = bm25.bm25_retrieve("query", ["single doc"], k=5)
+        assert len(results) == 1
+
+        # Very large k
+        corpus = ["doc1", "doc2"]
+        results = bm25.bm25_retrieve("query", corpus, k=100)
+        assert len(results) == 2  # Should not exceed corpus size
+```
+
+### Integration Testing with External Services
+
+Test interactions with external dependencies.
+
+```python
+# tests/integration/test_external_services.py
+import pytest
+from unittest.mock import Mock, patch
+from autorag_live.retrievers.elasticsearch_adapter import ElasticsearchRetriever
+
+class TestElasticsearchIntegration:
+    @patch('autorag_live.retrievers.elasticsearch_adapter.Elasticsearch')
+    def test_elasticsearch_connection(self, mock_es):
+        """Test Elasticsearch connection handling."""
+        # Mock successful connection
+        mock_client = Mock()
+        mock_client.ping.return_value = True
+        mock_client.search.return_value = {
+            'hits': {'hits': [{'_source': {'content': 'test doc'}}]}
+        }
+        mock_es.return_value = mock_client
+
+        retriever = ElasticsearchRetriever(host="localhost", port=9200)
+        results = retriever.retrieve("test query", index_name="test", k=1)
+
+        assert len(results) == 1
+        assert results[0] == "test doc"
+        mock_client.search.assert_called_once()
+
+    @patch('autorag_live.retrievers.elasticsearch_adapter.Elasticsearch')
+    def test_elasticsearch_connection_failure(self, mock_es):
+        """Test graceful handling of connection failures."""
+        mock_es.side_effect = ConnectionError("Connection refused")
+
+        with pytest.raises(ConnectionError):
+            ElasticsearchRetriever(host="invalid-host", port=9200)
+```
+
+### CI/CD Testing
+
+Ensure tests work in automated environments.
+
+```yaml
+# .github/workflows/test.yml
+name: Tests
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install poetry
+        poetry install
+
+    - name: Run tests
+      run: |
+        poetry run pytest --cov=autorag_live --cov-report=xml
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+```
+
+### Test Data Management
+
+Manage test data effectively.
+
+```python
+# tests/conftest.py
+import pytest
+import tempfile
+from pathlib import Path
+
+@pytest.fixture(scope="session")
+def test_data_dir():
+    """Create a temporary directory for test data."""
+    with tempfile.TemporaryDirectory() as tmpdir:
+        yield Path(tmpdir)
+
+@pytest.fixture
+def sample_corpus():
+    """Provide a standard test corpus."""
+    return [
+        "The quick brown fox jumps over the lazy dog",
+        "Machine learning is fascinating",
+        "Natural language processing with transformers",
+        "Retrieval augmented generation combines retrieval and generation",
+        "Vector databases store high-dimensional embeddings"
+    ]
+
+@pytest.fixture
+def mock_embeddings():
+    """Provide mock embeddings for testing."""
+    import numpy as np
+    np.random.seed(42)  # For reproducible tests
+    return np.random.randn(5, 384)  # 5 docs, 384 dimensions
+```
