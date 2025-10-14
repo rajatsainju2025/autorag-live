@@ -4,7 +4,7 @@ from typing import Dict, List
 
 def generate_disagreement_report(
     query: str, results: Dict[str, List[str]], metrics: Dict[str, float], output_path: str
-):
+) -> None:
     """
     Generates an HTML report for the disagreement analysis.
     """

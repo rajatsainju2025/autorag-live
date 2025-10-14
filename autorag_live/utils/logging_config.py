@@ -13,7 +13,7 @@ import time
 from contextlib import contextmanager
 from contextvars import ContextVar
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, Generator, Optional, Union
 
 # Context variables for structured logging
 request_id: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
@@ -42,27 +42,27 @@ class StructuredLogger:
             context["operation_id"] = operation_id.get()
         return context
 
-    def info(self, message: str, **kwargs):
+    def info(self, message: str, **kwargs: Any) -> None:
         """Log info message with structured data."""
         self._log("INFO", message, **kwargs)
 
-    def error(self, message: str, **kwargs):
+    def error(self, message: str, **kwargs: Any) -> None:
         """Log error message with structured data."""
         self._log("ERROR", message, **kwargs)
 
-    def warning(self, message: str, **kwargs):
+    def warning(self, message: str, **kwargs: Any) -> None:
         """Log warning message with structured data."""
         self._log("WARNING", message, **kwargs)
 
-    def debug(self, message: str, **kwargs):
+    def debug(self, message: str, **kwargs: Any) -> None:
         """Log debug message with structured data."""
         self._log("DEBUG", message, **kwargs)
 
-    def critical(self, message: str, **kwargs):
+    def critical(self, message: str, **kwargs: Any) -> None:
         """Log critical message with structured data."""
         self._log("CRITICAL", message, **kwargs)
 
-    def _log(self, level: str, message: str, **kwargs):
+    def _log(self, level: str, message: str, **kwargs: Any) -> None:
         """Internal logging method."""
         context = self._get_context()
         if kwargs:
@@ -85,7 +85,7 @@ class PerformanceLogger:
         self._counters: Dict[str, int] = {}
 
     @contextmanager
-    def timer(self, operation: str, **context):
+    def timer(self, operation: str, **context: Any) -> Generator[None, None, None]:
         """Context manager for timing operations."""
         start_time = time.time()
         operation_id.set(operation)  # Set operation context
@@ -102,7 +102,7 @@ class PerformanceLogger:
             )
             operation_id.set(None)  # Clear context
 
-    def increment_counter(self, name: str, value: int = 1, **context):
+    def increment_counter(self, name: str, value: int = 1, **context: Any) -> None:
         """Increment a performance counter."""
         if name not in self._counters:
             self._counters[name] = 0
@@ -116,7 +116,7 @@ class PerformanceLogger:
             **context,
         )
 
-    def gauge(self, name: str, value: Union[int, float], **context):
+    def gauge(self, name: str, value: Union[int, float], **context: Any) -> None:
         """Record a gauge metric."""
         self.logger.info(
             f"Gauge recorded: {name}={value}", gauge_name=name, gauge_value=value, **context
@@ -129,7 +129,9 @@ class AuditLogger:
     def __init__(self, name: str = "autorag_live.audit"):
         self.logger = StructuredLogger(name)
 
-    def log_access(self, resource: str, action: str, user: Optional[str] = None, **context):
+    def log_access(
+        self, resource: str, action: str, user: Optional[str] = None, **context: Any
+    ) -> None:
         """Log resource access events."""
         self.logger.info(
             f"Access: {action} on {resource}",
@@ -140,7 +142,7 @@ class AuditLogger:
             **context,
         )
 
-    def log_security_event(self, event: str, severity: str = "INFO", **context):
+    def log_security_event(self, event: str, severity: str = "INFO", **context: Any) -> None:
         """Log security-related events."""
         self.logger.info(
             f"Security event: {event}", event_type="security", severity=severity, **context
@@ -148,7 +150,7 @@ class AuditLogger:
 
     def log_config_change(
         self, component: str, old_value: Any, new_value: Any, user: Optional[str] = None
-    ):
+    ) -> None:
         """Log configuration changes."""
         self.logger.warning(
             f"Configuration changed: {component}",
