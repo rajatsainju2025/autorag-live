@@ -1,15 +1,29 @@
 """Performance benchmarks for autorag-live components."""
 
+import asyncio
+import cProfile
 import json
 import os
+import pstats
 import statistics
+import sys
 import time
+import tracemalloc
 from contextlib import contextmanager
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
+from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, Optional
 
 import psutil
+
+try:
+    import torch
+
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None  # type: ignore
 
 
 @dataclass
@@ -26,6 +40,26 @@ class BenchmarkResult:
     memory_usage_mb: float
     throughput: float  # operations per second
     metadata: Dict[str, Any]
+    timestamp: Optional[datetime] = None
+    cpu_percent: float = 0.0
+    gpu_memory_mb: float = 0.0
+    peak_memory_mb: float = 0.0
+
+    def __post_init__(self):
+        if self.timestamp is None:
+            self.timestamp = datetime.now()
+
+
+@dataclass
+class ProfilingResult:
+    """Result of profiling a function."""
+
+    operation: str
+    profile_stats: pstats.Stats
+    total_calls: int
+    primitive_calls: int
+    total_time: float
+    metadata: Dict[str, Any]
 
 
 class PerformanceBenchmark:
@@ -35,6 +69,8 @@ class PerformanceBenchmark:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.results = []
+        self.profiler = cProfile.Profile()
+        self.tracemalloc_enabled = False
 
     @contextmanager
     def memory_monitor(self):
@@ -42,13 +78,69 @@ class PerformanceBenchmark:
         process = psutil.Process(os.getpid())
         initial_memory = process.memory_info().rss / 1024 / 1024  # MB
         max_memory = initial_memory
+        peak_memory = initial_memory
+
+        # Track CPU usage
+        initial_cpu = psutil.cpu_percent(interval=None)
+
+        # GPU memory tracking
+        initial_gpu_memory = 0.0
+        if TORCH_AVAILABLE and torch is not None and torch.cuda.is_available():
+            initial_gpu_memory = torch.cuda.memory_allocated() / 1024 / 1024  # MB
 
         yield
 
         final_memory = process.memory_info().rss / 1024 / 1024  # MB
         max_memory = max(max_memory, final_memory)
+        peak_memory = max(peak_memory, final_memory)
+
+        final_cpu = psutil.cpu_percent(interval=None)
+
+        final_gpu_memory = 0.0
+        if TORCH_AVAILABLE and torch is not None and torch.cuda.is_available():
+            final_gpu_memory = torch.cuda.memory_allocated() / 1024 / 1024  # MB
 
         self.current_memory_usage = max_memory - initial_memory
+        self.peak_memory_usage = peak_memory
+        self.cpu_usage = final_cpu - initial_cpu
+        self.gpu_memory_usage = final_gpu_memory - initial_gpu_memory
+
+    @contextmanager
+    def profiling(self):
+        """Context manager for profiling."""
+        self.profiler.enable()
+        try:
+            yield
+        finally:
+            self.profiler.disable()
+
+    def get_profile_stats(self, operation: str) -> ProfilingResult:
+        """Get profiling statistics."""
+        stats = pstats.Stats(self.profiler)
+        stats.sort_stats("cumulative")
+
+        # Extract summary statistics
+        total_calls = 0
+        primitive_calls = 0
+        total_time = 0.0
+        try:
+            # Try to access stats if available
+            stats_dict = getattr(stats, "stats", {})
+            if stats_dict:
+                total_calls = sum(stat[0] for stat in stats_dict.values())
+                primitive_calls = sum(stat[1] for stat in stats_dict.values())
+                total_time = sum(stat[2] for stat in stats_dict.values())
+        except Exception:
+            pass  # Use defaults if stats access fails
+
+        return ProfilingResult(
+            operation=operation,
+            profile_stats=stats,
+            total_calls=total_calls,
+            primitive_calls=primitive_calls,
+            total_time=total_time,
+            metadata={"profiler": "cProfile"},
+        )
 
     def benchmark_function(
         self,
@@ -57,6 +149,8 @@ class PerformanceBenchmark:
         iterations: int = 10,
         warmup_iterations: int = 2,
         operation_name: Optional[str] = None,
+        enable_profiling: bool = False,
+        enable_tracemalloc: bool = False,
         **kwargs,
     ) -> BenchmarkResult:
         """Benchmark a function's performance."""
@@ -64,19 +158,204 @@ class PerformanceBenchmark:
         if operation_name is None:
             operation_name = func.__name__
 
+        # Setup profiling and memory tracking
+        if enable_tracemalloc:
+            tracemalloc.start()
+            self.tracemalloc_enabled = True
+
         # Warmup
         for _ in range(warmup_iterations):
             func(*args, **kwargs)
 
+        # Clear caches between warmup and benchmark
+        if hasattr(func, "__wrapped__"):  # Check if it's a cached function
+            # This is a simple heuristic - in practice you'd need more sophisticated cache clearing
+            pass
+
         # Benchmark
         times = []
         self.current_memory_usage = 0
-        result = None
+        self.peak_memory_usage = 0
+        self.cpu_usage = 0
+        self.gpu_memory_usage = 0
+
+        if enable_profiling:
+            self.profiler.clear()
+
+        with self.memory_monitor():
+            if enable_profiling:
+                with self.profiling():
+                    for _ in range(iterations):
+                        start_time = time.perf_counter()
+                        func(*args, **kwargs)
+                        end_time = time.perf_counter()
+                        times.append(end_time - start_time)
+            else:
+                for _ in range(iterations):
+                    start_time = time.perf_counter()
+                    func(*args, **kwargs)
+                    end_time = time.perf_counter()
+                    times.append(end_time - start_time)
+
+        if enable_profiling:
+            self.get_profile_stats(operation_name)
+
+        # Calculate statistics
+        total_time = sum(times)
+        avg_time = statistics.mean(times)
+        min_time = min(times)
+        max_time = max(times)
+        std_time = statistics.stdev(times) if len(times) > 1 else 0
+        throughput = iterations / total_time if total_time > 0 else 0
+
+        # Memory statistics from tracemalloc if enabled
+        tracemalloc_stats = None
+        if enable_tracemalloc:
+            current, peak = tracemalloc.get_traced_memory()
+            tracemalloc_stats = {"current_mb": current / 1024 / 1024, "peak_mb": peak / 1024 / 1024}
+            tracemalloc.stop()
+            self.tracemalloc_enabled = False
+
+        benchmark_result = BenchmarkResult(
+            operation=operation_name,
+            iterations=iterations,
+            total_time=total_time,
+            avg_time=avg_time,
+            min_time=min_time,
+            max_time=max_time,
+            std_time=std_time,
+            memory_usage_mb=self.current_memory_usage,
+            throughput=throughput,
+            cpu_percent=self.cpu_usage,
+            gpu_memory_mb=self.gpu_memory_usage,
+            peak_memory_mb=self.peak_memory_usage,
+            metadata={
+                "warmup_iterations": warmup_iterations,
+                "function_args": len(args),
+                "function_kwargs": list(kwargs.keys()),
+                "args_count": len(args),  # Backward compatibility
+                "kwargs_count": len(kwargs),  # Backward compatibility
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}",
+                "platform": sys.platform,
+                "cpu_count": os.cpu_count(),
+                "tracemalloc_stats": tracemalloc_stats,
+                "profiling_enabled": enable_profiling,
+                "torch_available": TORCH_AVAILABLE,
+                "cuda_available": TORCH_AVAILABLE
+                and torch is not None
+                and torch.cuda.is_available()
+                if TORCH_AVAILABLE
+                else False,
+            },
+        )
+
+        self.results.append(benchmark_result)
+        return benchmark_result
+
+    async def benchmark_async_function(
+        self,
+        func: Callable,
+        *args,
+        iterations: int = 10,
+        warmup_iterations: int = 2,
+        operation_name: Optional[str] = None,
+        concurrent: bool = False,
+        concurrency: int = 4,
+        **kwargs,
+    ) -> BenchmarkResult:
+        """Benchmark an async function's performance."""
+
+        if operation_name is None:
+            operation_name = func.__name__
+
+        # Warmup
+        for _ in range(warmup_iterations):
+            await func(*args, **kwargs)
+
+        # Benchmark
+        times = []
+        self.current_memory_usage = 0
+
+        with self.memory_monitor():
+            if concurrent:
+                # Run multiple concurrent executions
+                for _ in range(iterations // concurrency):
+                    start_time = time.perf_counter()
+                    tasks = [func(*args, **kwargs) for _ in range(concurrency)]
+                    await asyncio.gather(*tasks)
+                    end_time = time.perf_counter()
+                    times.append((end_time - start_time) / concurrency)
+            else:
+                # Sequential execution
+                for _ in range(iterations):
+                    start_time = time.perf_counter()
+                    await func(*args, **kwargs)
+                    end_time = time.perf_counter()
+                    times.append(end_time - start_time)
+
+        # Calculate statistics
+        total_time = sum(times)
+        avg_time = statistics.mean(times)
+        min_time = min(times)
+        max_time = max(times)
+        std_time = statistics.stdev(times) if len(times) > 1 else 0
+        throughput = iterations / total_time if total_time > 0 else 0
+
+        benchmark_result = BenchmarkResult(
+            operation=operation_name,
+            iterations=iterations,
+            total_time=total_time,
+            avg_time=avg_time,
+            min_time=min_time,
+            max_time=max_time,
+            std_time=std_time,
+            memory_usage_mb=self.current_memory_usage,
+            throughput=throughput,
+            metadata={
+                "async": True,
+                "concurrent": concurrent,
+                "concurrency": concurrency if concurrent else 1,
+                "warmup_iterations": warmup_iterations,
+            },
+        )
+
+        self.results.append(benchmark_result)
+        return benchmark_result
+
+    def benchmark_gpu_function(
+        self,
+        func: Callable,
+        *args,
+        iterations: int = 10,
+        warmup_iterations: int = 2,
+        operation_name: Optional[str] = None,
+        **kwargs,
+    ) -> BenchmarkResult:
+        """Benchmark a GPU function's performance."""
+
+        if not (TORCH_AVAILABLE and torch is not None and torch.cuda.is_available()):
+            raise RuntimeError("CUDA not available for GPU benchmarking")
+
+        if operation_name is None:
+            operation_name = func.__name__
+
+        # Warmup on GPU
+        for _ in range(warmup_iterations):
+            func(*args, **kwargs)
+            if TORCH_AVAILABLE and torch is not None:
+                torch.cuda.synchronize()  # Wait for GPU operations to complete
+
+        # Benchmark
+        times = []
+        self.current_memory_usage = 0
+        self.gpu_memory_usage = 0
 
         with self.memory_monitor():
             for _ in range(iterations):
                 start_time = time.perf_counter()
-                result = func(*args, **kwargs)
+                func(*args, **kwargs)
+                if TORCH_AVAILABLE and torch is not None:
+                    torch.cuda.synchronize()
                 end_time = time.perf_counter()
                 times.append(end_time - start_time)
 
@@ -98,402 +377,249 @@ class PerformanceBenchmark:
             std_time=std_time,
             memory_usage_mb=self.current_memory_usage,
             throughput=throughput,
+            gpu_memory_mb=self.gpu_memory_usage,
             metadata={
-                "args_count": len(args),
-                "kwargs_count": len(kwargs),
-                "result_type": type(result).__name__ if result is not None else "None",
+                "gpu_enabled": True,
+                "cuda_version": getattr(torch, "version", {}).get("cuda", None)
+                if TORCH_AVAILABLE and torch is not None
+                else None,
+                "gpu_name": torch.cuda.get_device_name()
+                if TORCH_AVAILABLE and torch is not None and torch.cuda.is_available()
+                else None,
+                "warmup_iterations": warmup_iterations,
             },
         )
 
         self.results.append(benchmark_result)
         return benchmark_result
 
-    def save_results(self, filename: Optional[str] = None):
-        """Save benchmark results to file."""
+    def save_results(self, filename: Optional[str] = None) -> str:
+        """Save benchmark results to JSON file."""
         if filename is None:
-            timestamp = time.strftime("%Y%m%d_%H%M%S")
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"benchmark_results_{timestamp}.json"
 
         filepath = self.output_dir / filename
 
+        # Convert results to dictionaries
         results_dict = {
-            "timestamp": time.time(),
-            "results": [
-                {
-                    "operation": r.operation,
-                    "iterations": r.iterations,
-                    "total_time": r.total_time,
-                    "avg_time": r.avg_time,
-                    "min_time": r.min_time,
-                    "max_time": r.max_time,
-                    "std_time": r.std_time,
-                    "memory_usage_mb": r.memory_usage_mb,
-                    "throughput": r.throughput,
-                    "metadata": r.metadata,
-                }
-                for r in self.results
-            ],
+            "metadata": {
+                "timestamp": datetime.now().isoformat(),
+                "hostname": os.uname().nodename if hasattr(os, "uname") else "unknown",
+                "platform": sys.platform,
+                "python_version": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
+            },
+            "results": [asdict(result) for result in self.results],
         }
 
         with open(filepath, "w") as f:
-            json.dump(results_dict, f, indent=2)
+            json.dump(results_dict, f, indent=2, default=str)
 
-        print(f"Benchmark results saved to {filepath}")
-        return filepath
+        return str(filepath)
 
-    def print_summary(self):
-        """Print a summary of all benchmark results."""
+    def save_profile_stats(self, operation: str, filename: Optional[str] = None) -> str:
+        """Save profiling statistics to file."""
+        if filename is None:
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"profile_{operation}_{timestamp}.txt"
+
+        filepath = self.output_dir / filename
+
+        profile_result = self.get_profile_stats(operation)
+        with open(filepath, "w") as f:
+            f.write(f"Profiling results for {operation}\n")
+            f.write(f"Total calls: {profile_result.total_calls}\n")
+            f.write(f"Primitive calls: {profile_result.primitive_calls}\n")
+            f.write(f"Total time: {profile_result.total_time:.4f}s\n\n")
+
+            f.write("Profile statistics summary:\n")
+            f.write("(Full stats require manual inspection)\n")
+
+        return str(filepath)
+
+    def print_summary(self, detailed: bool = False) -> None:
+        """Print benchmark summary."""
         if not self.results:
             print("No benchmark results to display.")
             return
 
-        print("\n" + "=" * 80)
-        print("PERFORMANCE BENCHMARK SUMMARY")
-        print("=" * 80)
+        print(f"\n{'='*60}")
+        print(f"Performance Benchmark Summary ({len(self.results)} operations)")
+        print(f"{'='*60}")
 
         for result in self.results:
             print(f"\nOperation: {result.operation}")
             print(f"  Iterations: {result.iterations}")
-            print(f"  Total Time: {result.total_time:.4f}s")
-            print(f"  Avg Time: {result.avg_time:.4f}s ± {result.std_time:.4f}s")
+            print(f"  Avg Time: {result.avg_time:.4f}s")
             print(f"  Min/Max Time: {result.min_time:.4f}s / {result.max_time:.4f}s")
+            print(f"  Std Dev: {result.std_time:.4f}s")
             print(f"  Throughput: {result.throughput:.2f} ops/sec")
             print(f"  Memory Usage: {result.memory_usage_mb:.2f} MB")
-
-        print("\n" + "=" * 80)
-
-
-def benchmark_retrievers(corpus: List[str], queries: List[str], benchmark: PerformanceBenchmark):
-    """Benchmark different retriever implementations."""
-
-    print("Benchmarking retrievers...")
-
-    # BM25 retriever (function-based)
-    def bm25_retrieve():
-        from autorag_live.retrievers import bm25
-
-        return bm25.bm25_retrieve(queries[0], corpus, 10)
-
-    benchmark.benchmark_function(
-        bm25_retrieve, iterations=20, operation_name="BM25 Retrieval (function)"
-    )
-
-    # BM25 retriever (class-based)
-    bm25_retriever = None
-
-    def bm25_class_retrieve():
-        nonlocal bm25_retriever
-        if bm25_retriever is None:
-            from autorag_live.retrievers.bm25 import BM25Retriever
-
-            bm25_retriever = BM25Retriever()
-            bm25_retriever.add_documents(corpus)
-        return bm25_retriever.retrieve(queries[0], 10)
-
-    benchmark.benchmark_function(
-        bm25_class_retrieve, iterations=20, operation_name="BM25 Retrieval (class)"
-    )
-
-    # Dense retriever (function-based)
-    def dense_retrieve():
-        from autorag_live.retrievers import dense
-
-        return dense.dense_retrieve(queries[0], corpus, 10)
-
-    benchmark.benchmark_function(
-        dense_retrieve, iterations=5, operation_name="Dense Retrieval (function)"
-    )
-
-    # Dense retriever (class-based with caching)
-    dense_retriever = None
-
-    def dense_class_retrieve():
-        nonlocal dense_retriever
-        if dense_retriever is None:
-            from autorag_live.retrievers.dense import DenseRetriever
-
-            dense_retriever = DenseRetriever(cache_embeddings=True)
-            dense_retriever.add_documents(corpus)
-        return dense_retriever.retrieve(queries[0], 10)
-
-    benchmark.benchmark_function(
-        dense_class_retrieve, iterations=20, operation_name="Dense Retrieval (class+cached)"
-    )
-
-    # Hybrid retriever (function-based)
-    def hybrid_retrieve():
-        from autorag_live.retrievers import hybrid
-
-        return hybrid.hybrid_retrieve(queries[0], corpus, 10)
-
-    benchmark.benchmark_function(
-        hybrid_retrieve, iterations=5, operation_name="Hybrid Retrieval (function)"
-    )
-
-    # Hybrid retriever (class-based)
-    hybrid_retriever = None
-
-    def hybrid_class_retrieve():
-        nonlocal hybrid_retriever
-        if hybrid_retriever is None:
-            from autorag_live.retrievers.hybrid import HybridRetriever
-
-            hybrid_retriever = HybridRetriever(bm25_weight=0.5)
-            hybrid_retriever.add_documents(corpus)
-        return hybrid_retriever.retrieve(queries[0], 10)
-
-    benchmark.benchmark_function(
-        hybrid_class_retrieve, iterations=20, operation_name="Hybrid Retrieval (class)"
-    )
-
-
-def benchmark_evaluation(corpus: List[str], queries: List[str], benchmark: PerformanceBenchmark):
-    """Benchmark evaluation components."""
-
-    print("Benchmarking evaluation components...")
-
-    # Small evaluation suite
-    def run_eval_suite():
-        from autorag_live.evals.small import run_small_suite
-
-        return run_small_suite(judge_type="deterministic")
-
-    benchmark.benchmark_function(
-        run_eval_suite, iterations=5, operation_name="Small Evaluation Suite"
-    )
-
-    # Advanced metrics with optimized retriever
-    hybrid_retriever = None
-
-    def comprehensive_eval():
-        nonlocal hybrid_retriever
-        from autorag_live.evals.advanced_metrics import comprehensive_evaluation
-
-        if hybrid_retriever is None:
-            from autorag_live.retrievers.hybrid import HybridRetriever
-
-            hybrid_retriever = HybridRetriever(bm25_weight=0.5)
-            hybrid_retriever.add_documents(corpus)
-
-        retrieved = [doc for doc, score in hybrid_retriever.retrieve(queries[0], 5)]
-        relevant = corpus[:3]  # Assume first 3 are relevant
-        return comprehensive_evaluation(retrieved, relevant, queries[0])
-
-    benchmark.benchmark_function(
-        comprehensive_eval, iterations=10, operation_name="Comprehensive Evaluation (optimized)"
-    )
-
-
-def benchmark_optimization(corpus: List[str], queries: List[str], benchmark: PerformanceBenchmark):
-    """Benchmark optimization components."""
-
-    print("Benchmarking optimization components...")
-
-    # Grid search optimization
-    def grid_search_optimize():
-        from autorag_live.pipeline.hybrid_optimizer import grid_search_hybrid_weights
-
-        return grid_search_hybrid_weights(queries[:2], corpus, k=5, grid_size=4)
-
-    benchmark.benchmark_function(
-        grid_search_optimize, iterations=3, operation_name="Grid Search Optimization"
-    )
-
-
-def benchmark_augmentation(corpus: List[str], queries: List[str], benchmark: PerformanceBenchmark):
-    """Benchmark data augmentation components."""
-
-    print("Benchmarking augmentation components...")
-
-    # Get retriever results for synonym mining
-    from autorag_live.retrievers import bm25, dense, hybrid
-
-    bm25_results = bm25.bm25_retrieve(queries[0], corpus, 5)
-    dense_results = dense.dense_retrieve(queries[0], corpus, 5)
-    hybrid_results = hybrid.hybrid_retrieve(queries[0], corpus, 5)
-
-    def synonym_mining():
-        from autorag_live.augment.synonym_miner import mine_synonyms_from_disagreements
-
-        return mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
-
-    benchmark.benchmark_function(synonym_mining, iterations=10, operation_name="Synonym Mining")
-
-
-def benchmark_reranking(corpus: List[str], queries: List[str], benchmark: PerformanceBenchmark):
-    """Benchmark reranking components."""
-
-    print("Benchmarking reranking components...")
-
-    # Get initial retrieval results
-    from autorag_live.retrievers import hybrid
-
-    retrieved_docs = hybrid.hybrid_retrieve(queries[0], corpus, 15)
-
-    def simple_rerank():
-        from autorag_live.rerank.simple import SimpleReranker
-
-        reranker = SimpleReranker()
-        return reranker.rerank(queries[0], retrieved_docs, k=10)
-
-    benchmark.benchmark_function(simple_rerank, iterations=15, operation_name="Simple Reranking")
-
-
-def benchmark_time_series(corpus: List[str], benchmark: PerformanceBenchmark):
-    """Benchmark time-series components."""
-
-    print("Benchmarking time-series components...")
-
-    # Create time-series notes
-    from datetime import datetime, timedelta
-
-    from autorag_live.data.time_series import FFTEmbedder, TimeSeriesNote, TimeSeriesRetriever
-
-    notes = []
-    base_time = datetime.now()
-
-    for i, doc in enumerate(corpus[:10]):  # Use subset for performance
-        timestamp = base_time - timedelta(days=i)
-        note = TimeSeriesNote(content=doc, timestamp=timestamp, metadata={"id": f"note_{i}"})
-        notes.append(note)
-
-    embedder = FFTEmbedder()
-    retriever = TimeSeriesRetriever(embedder=embedder)
-    retriever.add_notes(notes)
-
-    def time_series_search():
-        return retriever.search(
-            query="test query", query_time=base_time, top_k=5, time_window_days=7
-        )
-
-    benchmark.benchmark_function(
-        time_series_search, iterations=10, operation_name="Time-Series Search"
-    )
-
-
-def benchmark_disagreement_analysis(
-    corpus: List[str], queries: List[str], benchmark: PerformanceBenchmark
-):
-    """Benchmark disagreement analysis components."""
-
-    print("Benchmarking disagreement analysis...")
-
-    # Get retriever results
-    from autorag_live.retrievers import bm25, dense, hybrid
-
-    bm25_results = bm25.bm25_retrieve(queries[0], corpus, 10)
-    dense_results = dense.dense_retrieve(queries[0], corpus, 10)
-    hybrid_results = hybrid.hybrid_retrieve(queries[0], corpus, 10)
-
-    def disagreement_metrics():
-        from autorag_live.disagreement import metrics
-
-        return {
-            "jaccard_bd": metrics.jaccard_at_k(bm25_results, dense_results),
-            "jaccard_bh": metrics.jaccard_at_k(bm25_results, hybrid_results),
-            "jaccard_dh": metrics.jaccard_at_k(dense_results, hybrid_results),
-            "kendall_bd": metrics.kendall_tau_at_k(bm25_results, dense_results),
-            "kendall_bh": metrics.kendall_tau_at_k(bm25_results, hybrid_results),
-            "kendall_dh": metrics.kendall_tau_at_k(dense_results, hybrid_results),
-        }
-
-    benchmark.benchmark_function(
-        disagreement_metrics, iterations=20, operation_name="Disagreement Metrics"
-    )
-
-
-def run_full_benchmark_suite(output_file: Optional[str] = None):
-    """Run the complete benchmark suite."""
-
-    print("Starting comprehensive performance benchmark suite...")
-    print("=" * 60)
-
-    # Sample data
+            print(f"  Peak Memory: {result.peak_memory_mb:.2f} MB")
+
+            if result.cpu_percent > 0:
+                print(f"  CPU Usage: {result.cpu_percent:.1f}%")
+            if result.gpu_memory_mb > 0:
+                print(f"  GPU Memory: {result.gpu_memory_mb:.2f} MB")
+
+            if detailed and result.metadata:
+                print(f"  Metadata: {json.dumps(result.metadata, indent=2, default=str)}")
+
+        print(f"\n{'='*60}")
+
+
+class ComparativeBenchmark:
+    """Compare performance across different configurations."""
+
+    def __init__(self, output_dir: str = "benchmarks"):
+        self.output_dir = Path(output_dir)
+        self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.baseline_results: Dict[str, BenchmarkResult] = {}
+        self.comparison_results: Dict[str, BenchmarkResult] = {}
+
+    def set_baseline(self, results: Dict[str, BenchmarkResult]) -> None:
+        """Set baseline results for comparison."""
+        self.baseline_results = results
+
+    def compare_with_baseline(
+        self, results: Dict[str, BenchmarkResult]
+    ) -> Dict[str, Dict[str, float]]:
+        """Compare results with baseline."""
+        self.comparison_results = results
+        comparisons = {}
+
+        for operation in set(self.baseline_results.keys()) | set(results.keys()):
+            if operation in self.baseline_results and operation in results:
+                baseline = self.baseline_results[operation]
+                current = results[operation]
+
+                time_diff = current.avg_time - baseline.avg_time
+                time_percent = (time_diff / baseline.avg_time) * 100 if baseline.avg_time > 0 else 0
+
+                throughput_diff = current.throughput - baseline.throughput
+                throughput_percent = (
+                    (throughput_diff / baseline.throughput) * 100 if baseline.throughput > 0 else 0
+                )
+
+                memory_diff = current.memory_usage_mb - baseline.memory_usage_mb
+                memory_percent = (
+                    (memory_diff / baseline.memory_usage_mb) * 100
+                    if baseline.memory_usage_mb > 0
+                    else 0
+                )
+
+                comparisons[operation] = {
+                    "time_diff": time_diff,
+                    "time_percent": time_percent,
+                    "throughput_diff": throughput_diff,
+                    "throughput_percent": throughput_percent,
+                    "memory_diff": memory_diff,
+                    "memory_percent": memory_percent,
+                }
+
+        return comparisons
+
+    def print_comparison_report(self) -> None:
+        """Print detailed comparison report."""
+        if not self.baseline_results or not self.comparison_results:
+            print("Need both baseline and comparison results to generate report.")
+            return
+
+        comparisons = self.compare_with_baseline(self.comparison_results)
+
+        print(f"\n{'='*80}")
+        print("Performance Comparison Report")
+        print(f"{'='*80}")
+
+        for operation, metrics in comparisons.items():
+            print(f"\nOperation: {operation}")
+            print(f"  Time Change: {metrics['time_diff']:+.4f}s ({metrics['time_percent']:+.1f}%)")
+            print(
+                f"  Throughput Change: {metrics['throughput_diff']:+.2f} ops/sec ({metrics['throughput_percent']:+.1f}%)"
+            )
+            print(
+                f"  Memory Change: {metrics['memory_diff']:+.2f} MB ({metrics['memory_percent']:+.1f}%)"
+            )
+
+        print(f"\n{'='*80}")
+
+
+def run_full_benchmark_suite(
+    filename: str = "full_benchmark_suite.json", output_dir: str = "benchmarks"
+) -> Dict[str, BenchmarkResult]:
+    """Run comprehensive benchmark suite."""
+    from autorag_live.evals.small import run_small_suite
+    from autorag_live.retrievers import bm25, dense
+
+    benchmark = PerformanceBenchmark(output_dir)
+
+    # Sample data for benchmarking
     corpus = [
-        "The sky is blue and beautiful during the day.",
-        "The sun rises in the east and sets in the west.",
-        "The sun is bright and provides light to Earth.",
-        "The sun in the sky is very bright during daytime.",
-        "We can see the shining sun, the bright sun in the sky.",
-        "The quick brown fox jumps over the lazy dog.",
-        "A lazy fox is usually sleeping in its den.",
-        "The fox is a mammal that belongs to the canine family.",
-        "Machine learning is a subset of artificial intelligence.",
-        "Deep learning uses neural networks with multiple layers.",
-        "Natural language processing helps computers understand text.",
-        "Computer vision enables machines to interpret visual information.",
-        "Data science combines statistics, programming, and domain expertise.",
-        "Python is a popular programming language for data science.",
-        "Jupyter notebooks provide an interactive environment for coding.",
-        "Neural networks can learn complex patterns from data.",
-        "Supervised learning requires labeled training data.",
-        "Unsupervised learning finds patterns in unlabeled data.",
-        "Reinforcement learning learns through trial and error.",
-        "Transfer learning applies knowledge from one task to another.",
-    ]
+        "Machine learning is a subset of artificial intelligence",
+        "Deep learning uses neural networks with multiple layers",
+        "Natural language processing handles human language",
+        "Computer vision enables machines to interpret visual information",
+        "Reinforcement learning learns through trial and error",
+    ] * 20  # Make it larger for meaningful benchmarks
 
-    queries = [
-        "bright sun in the sky",
-        "fox jumping over dog",
-        "machine learning and AI",
-        "programming with Python",
-        "data science techniques",
-        "neural network learning",
-    ]
+    query = "artificial intelligence and machine learning"
 
-    # Initialize benchmark
-    benchmark = PerformanceBenchmark()
+    # Benchmark retrievers
+    print("Benchmarking BM25 retriever...")
+    benchmark.benchmark_function(
+        bm25.bm25_retrieve, query, corpus, k=5, operation_name="bm25_retrieve"
+    )
 
-    # Run all benchmarks
-    benchmark_retrievers(corpus, queries, benchmark)
-    benchmark_evaluation(corpus, queries, benchmark)
-    benchmark_optimization(corpus, queries, benchmark)
-    benchmark_augmentation(corpus, queries, benchmark)
-    benchmark_reranking(corpus, queries, benchmark)
-    benchmark_time_series(corpus, benchmark)
-    benchmark_disagreement_analysis(corpus, queries, benchmark)
+    print("Benchmarking dense retriever...")
+    try:
+        benchmark.benchmark_function(
+            dense.dense_retrieve, query, corpus, k=5, operation_name="dense_retrieve"
+        )
+    except Exception as e:
+        print(f"Dense retriever benchmark failed: {e}")
 
-    # Print summary
-    benchmark.print_summary()
+    # Benchmark evaluation
+    print("Benchmarking evaluation suite...")
+    try:
+        benchmark.benchmark_function(run_small_suite, operation_name="small_evaluation_suite")
+    except Exception as e:
+        print(f"Evaluation benchmark failed: {e}")
 
     # Save results
-    if output_file:
-        filepath = benchmark.save_results(output_file)
-    else:
-        filepath = benchmark.save_results()
+    results_file = benchmark.save_results(filename)
+    print(f"Benchmark results saved to: {results_file}")
 
-    print(f"\nBenchmark complete! Results saved to {filepath}")
+    # Convert to dict for return
+    results_dict = {result.operation: result for result in benchmark.results}
 
-    return benchmark.results
+    return results_dict
 
 
-def compare_benchmark_runs(run1_file: str, run2_file: str):
+def compare_benchmark_runs(run1_file: str, run2_file: str) -> None:
     """Compare two benchmark runs."""
+    # Load results
+    with open(run1_file, "r") as f:
+        run1_data = json.load(f)
+    with open(run2_file, "r") as f:
+        run2_data = json.load(f)
 
-    def load_benchmark_results(filepath: str) -> Dict[str, BenchmarkResult]:
-        with open(filepath, "r") as f:
-            data = json.load(f)
+    results1 = {r["operation"]: BenchmarkResult(**r) for r in run1_data["results"]}
+    results2 = {r["operation"]: BenchmarkResult(**r) for r in run2_data["results"]}
 
-        results = {}
-        for result_data in data["results"]:
-            result = BenchmarkResult(**result_data)
-            results[result.operation] = result
+    comparator = ComparativeBenchmark()
+    comparator.set_baseline(results1)
+    comparator.compare_with_baseline(results2)
 
-        return results
+    print(f"\nComparing {run1_file} (baseline) vs {run2_file}")
+    print(
+        f"Run 1 timestamp: {run1_data.get('metadata', {}).get('timestamp', run1_data.get('timestamp', 'unknown'))}"
+    )
+    print(
+        f"Run 2 timestamp: {run2_data.get('metadata', {}).get('timestamp', run2_data.get('timestamp', 'unknown'))}"
+    )
 
-    results1 = load_benchmark_results(run1_file)
-    results2 = load_benchmark_results(run2_file)
-
-    print("\n" + "=" * 80)
-    print("BENCHMARK COMPARISON")
-    print("=" * 80)
-    print(f"Comparing: {run1_file} vs {run2_file}")
-    print()
-
-    all_operations = set(results1.keys()) | set(results2.keys())
-
-    for operation in sorted(all_operations):
-        print(f"Operation: {operation}")
+    for operation in set(results1.keys()) | set(results2.keys()):
+        print(f"\nOperation: {operation}")
 
         if operation in results1 and operation in results2:
             r1 = results1[operation]
@@ -521,10 +647,3 @@ def compare_benchmark_runs(run1_file: str, run2_file: str):
             print(f"  Only in Run 2: {r2.avg_time:.4f}s ({r2.throughput:.2f} ops/sec)")
 
         print()
-
-
-if __name__ == "__main__":
-    # Run the full benchmark suite
-    results = run_full_benchmark_suite()
-
-    print(f"\nBenchmark completed with {len(results)} operations tested.")

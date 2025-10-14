@@ -84,13 +84,14 @@ class TestPerformanceBenchmark:
             benchmark.benchmark_function(dummy_func, iterations=3)
 
             filepath = benchmark.save_results("test_results.json")
-            assert filepath.exists()
+            assert os.path.exists(filepath)
 
             # Verify JSON structure
             with open(filepath, "r") as f:
                 data = json.load(f)
 
-            assert "timestamp" in data
+            assert "metadata" in data
+            assert "timestamp" in data["metadata"]
             assert "results" in data
             assert len(data["results"]) == 1
             assert data["results"][0]["operation"] == "dummy_func"
@@ -108,7 +109,7 @@ class TestPerformanceBenchmark:
             benchmark.print_summary()
             captured = capsys.readouterr()
 
-            assert "PERFORMANCE BENCHMARK SUMMARY" in captured.out
+            assert "Performance Benchmark Summary" in captured.out
             assert "dummy_func" in captured.out
 
 
@@ -123,7 +124,7 @@ class TestBenchmarkSuite:
             results = run_full_benchmark_suite("test_full_suite.json")
 
             assert len(results) > 0
-            assert all(isinstance(r, BenchmarkResult) for r in results)
+            assert all(isinstance(r, BenchmarkResult) for r in results.values())
 
             # Check that results file was created
             results_file = Path("benchmarks/test_full_suite.json")
