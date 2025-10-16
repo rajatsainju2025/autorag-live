@@ -1,6 +1,49 @@
-# AutoRAG-Live Project Critique and 20-Commit Improvement Plan
+# AutoRAG-Live Project Critique and Improvement Roadmap
 
-**Date**: September 30, 2025
+> This document now includes a focused 5-push roadmap to ship high-impact improvements quickly, alongside the original 20-commit plan for longer-term work.
+
+## 🚀 Five-Push Roadmap (Short-Term)
+
+These five pushes are designed to improve contributor experience, code reliability, and testing rigor with minimal risk and fast value.
+
+1) Push 1 – Focused Critique + Roadmap
+	- Add a short, actionable critique (below) and this 5-push roadmap to the repo.
+	- Establish clear near-term goals and success metrics.
+
+2) Push 2 – GitHub Workflow Hygiene
+	- Add .github templates: PR template, bug report, feature request.
+	- Add CODEOWNERS to clarify review paths.
+	- Outcome: faster, better contributions with consistent context.
+
+3) Push 3 – Tighten Typing in Core Utils
+	- Improve type annotations and generics in `autorag_live/utils/error_handling.py` and `autorag_live/types/__init__.py`.
+	- Outcome: safer decorators, clearer public types, fewer runtime surprises.
+
+4) Push 4 – Raise Test Coverage for Low-Coverage Utils
+	- Add tests for `utils/field_validators.py` and `utils/compatibility.py`.
+	- Outcome: better safety net and higher coverage for critical glue code.
+
+5) Push 5 – Enhance Testing Docs for Performance/GPU
+	- Update `docs/testing.md` with guidance for the new benchmarking suite, GPU markers, and skip patterns.
+	- Outcome: easier local/CI runs, documented performance workflows.
+
+### Quick Critique (Targeted at Next 5 Pushes)
+
+- Strengths
+  - Solid modular architecture; strong retrieval/eval foundations; logging/benchmarks improving.
+- Gaps to address now
+  - Missing contributor templates slow reviews and quality.
+  - Duplication in error types across modules can confuse consumers; begin tightening types.
+  - Low coverage in validators/compat risks regressions; add focused tests.
+  - Docs don’t yet explain the new benchmarking/GPU testing flows.
+
+### Acceptance Checklist per Push
+
+- Pre-commit passes (black, isort, ruff).
+- Unit tests green locally; no CI regressions.
+- Docs updated where behavior or dev UX changes.
+
+**Date**: September 30, 2025 (updated with 5-push roadmap on Oct 15, 2025)
 **Current Test Coverage**: 56% (Goal: >90%)
 **Critical Issues**: 27 failed tests, 7 errors
 

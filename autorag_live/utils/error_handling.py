@@ -7,76 +7,22 @@ strategies across the entire codebase.
 import functools
 import logging
 import sys
-from datetime import datetime
 from typing import Any, Callable, Dict, Optional, Type, TypeVar
+
+from autorag_live.types import (
+    AutoRAGError,
+    DataError,
+    EvaluationError,
+    ModelError,
+    PipelineError,
+    RetrieverError,
+    ValidationError,
+)
 
 # Type variable for decorated functions
 F = TypeVar("F", bound=Callable[..., Any])
-
-
-class AutoRAGError(Exception):
-    """Base exception class for AutoRAG-Live."""
-
-    def __init__(
-        self,
-        message: str,
-        error_code: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None,
-        cause: Optional[Exception] = None,
-    ):
-        super().__init__(message)
-        self.message = message
-        self.error_code = error_code or self.__class__.__name__
-        self.context = context or {}
-        self.cause = cause
-        self.timestamp = datetime.now()
-
-    def to_dict(self) -> Dict[str, Any]:
-        """Convert error to dictionary for logging/serialization."""
-        return {
-            "error_type": self.__class__.__name__,
-            "error_code": self.error_code,
-            "message": self.message,
-            "context": self.context,
-            "timestamp": self.timestamp.isoformat(),
-            "cause": str(self.cause) if self.cause else None,
-        }
-
-
-class RetrievalError(AutoRAGError):
-    """Errors related to document retrieval operations."""
-
-    pass
-
-
-class EvaluationError(AutoRAGError):
-    """Errors related to evaluation operations."""
-
-    pass
-
-
-class PipelineError(AutoRAGError):
-    """Errors related to pipeline execution."""
-
-    pass
-
-
-class ModelError(AutoRAGError):
-    """Errors related to model operations."""
-
-    pass
-
-
-class DataError(AutoRAGError):
-    """Errors related to data processing."""
-
-    pass
-
-
-class ValidationError(AutoRAGError):
-    """Errors related to input/output validation."""
-
-    pass
+# Type variable for function return types
+T = TypeVar("T")
 
 
 def get_logger(name: str) -> logging.Logger:
@@ -112,7 +58,7 @@ def handle_errors(
     reraise: bool = True,
     log_errors: bool = True,
     return_value: Any = None,
-):
+) -> Callable[[F], F]:
     """
     Decorator for standardized error handling.
 
@@ -126,7 +72,7 @@ def handle_errors(
         Decorated function
     """
 
-    def decorator(func):
+    def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             logger = get_logger(func.__module__)
@@ -163,7 +109,7 @@ def handle_errors(
                 else:
                     return return_value
 
-        return wrapper
+        return wrapper  # type: ignore
 
     return decorator
 
@@ -172,9 +118,9 @@ def with_retry(
     max_attempts: int = 3,
     delay: float = 1.0,
     backoff_factor: float = 2.0,
-    exceptions: tuple = (Exception,),
+    exceptions: tuple[Type[Exception], ...] = (Exception,),
     log_attempts: bool = True,
-):
+) -> Callable[[F], F]:
     """
     Decorator for automatic retry with exponential backoff.
 
@@ -189,7 +135,7 @@ def with_retry(
         Decorated function
     """
 
-    def decorator(func):
+    def decorator(func: F) -> F:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             logger = get_logger(func.__module__)
@@ -228,19 +174,19 @@ def with_retry(
                     cause=last_exception,
                 )
 
-        return wrapper
+        return wrapper  # type: ignore
 
     return decorator
 
 
 def safe_execute(
-    func: Callable,
+    func: Callable[..., T],
     *args,
     error_type: Type[AutoRAGError] = AutoRAGError,
-    default_value: Any = None,
+    default_value: Optional[T] = None,
     log_errors: bool = True,
     **kwargs,
-) -> Any:
+) -> T:
     """
     Safely execute a function with error handling.
 
@@ -380,9 +326,9 @@ def configure_error_logging(
 
 
 # Convenience functions for common error types
-def retrieval_error(message: str, **kwargs) -> RetrievalError:
-    """Create a RetrievalError with standard formatting."""
-    return RetrievalError(message, **kwargs)
+def retrieval_error(message: str, **kwargs) -> RetrieverError:
+    """Create a RetrieverError with standard formatting."""
+    return RetrieverError(message, **kwargs)
 
 
 def evaluation_error(message: str, **kwargs) -> EvaluationError:

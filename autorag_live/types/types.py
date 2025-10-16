@@ -286,7 +286,32 @@ class BenchmarkResult:
 
 # Exception Hierarchy
 class AutoRAGError(Exception):
-    """Base exception for all AutoRAG-Live errors."""
+    """Base exception class for AutoRAG-Live."""
+
+    def __init__(
+        self,
+        message: str,
+        error_code: Optional[str] = None,
+        context: Optional[Dict[str, Any]] = None,
+        cause: Optional[Exception] = None,
+    ):
+        super().__init__(message)
+        self.message = message
+        self.error_code = error_code or self.__class__.__name__
+        self.context = context or {}
+        self.cause = cause
+        self.timestamp = datetime.now()
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert error to dictionary for logging/serialization."""
+        return {
+            "error_type": self.__class__.__name__,
+            "error_code": self.error_code,
+            "message": self.message,
+            "context": self.context,
+            "timestamp": self.timestamp.isoformat(),
+            "cause": str(self.cause) if self.cause else None,
+        }
 
 
 class RetrieverError(AutoRAGError):
@@ -331,3 +356,19 @@ class OptimizerError(AutoRAGError):
         - Optimization divergence
         - Search space error
     """
+
+
+class PipelineError(AutoRAGError):
+    """Errors related to pipeline execution."""
+
+
+class ModelError(AutoRAGError):
+    """Errors related to model operations."""
+
+
+class DataError(AutoRAGError):
+    """Errors related to data processing."""
+
+
+class ValidationError(AutoRAGError):
+    """Errors related to input/output validation."""
