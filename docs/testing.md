@@ -778,38 +778,151 @@ class TestElasticsearchIntegration:
             ElasticsearchRetriever(host="invalid-host", port=9200)
 ```
 
-### CI/CD Testing
-
-Ensure tests work in automated environments.
+### CI Benchmark Integration
 
 ```yaml
-# .github/workflows/test.yml
-name: Tests
-on: [push, pull_request]
+# .github/workflows/benchmark.yml
+name: Performance Benchmarks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Run weekly benchmarks
+    - cron: '0 0 * * 0'
 
 jobs:
-  test:
+  benchmark:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        python-version: ["3.10", "3.11", "3.12"]
-
     steps:
     - uses: actions/checkout@v4
-    - name: Set up Python ${{ matrix.python-version }}
+    - name: Set up Python
       uses: actions/setup-python@v4
       with:
-        python-version: ${{ matrix.python-version }}
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install -e .[benchmark,test]
+
+    - name: Run benchmarks
+      run: |
+        python -c "
+        from autorag_live.evals.performance_benchmarks import run_full_benchmark_suite
+        results = run_full_benchmark_suite()
+        results.save_to_json('benchmark_results.json')
+        print('Benchmarks completed')
+        "
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results
+        path: benchmark_results.json
+
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const results = JSON.parse(fs.readFileSync('benchmark_results.json', 'utf8'));
+
+          // Generate summary comment
+          let comment = '## 🚀 Performance Benchmark Results\n\n';
+          // Add summary logic here
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+```
+
+## 🎯 GPU Testing
+
+### GPU Test Markers
+
+AutoRAG-Live includes GPU-accelerated components that require special testing considerations.
+
+```python
+# Mark GPU-required tests
+@pytest.mark.gpu
+def test_dense_retrieval_gpu():
+    """Test dense retrieval with GPU acceleration."""
+    # This test requires CUDA-compatible GPU
+    pass
+
+# Skip GPU tests when GPU unavailable
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="GPU not available")
+def test_gpu_accelerated_features():
+    """Test GPU-accelerated features."""
+    pass
+```
+
+### Running GPU Tests
+
+```bash
+# Run only GPU tests
+pytest -m gpu
+
+# Skip GPU tests
+pytest -m "not gpu"
+
+# Run all tests except GPU (default for CI without GPU)
+pytest -m "not gpu"
+```
+
+### GPU Test Configuration
+
+```python
+# tests/conftest.py
+import torch
+
+def pytest_configure(config):
+    """Configure GPU test markers."""
+    config.addinivalue_line("markers", "gpu: mark test as requiring GPU")
+
+def pytest_collection_modifyitems(config, items):
+    """Skip GPU tests if no GPU available."""
+    if not torch.cuda.is_available():
+        skip_gpu = pytest.mark.skip(reason="GPU not available")
+        for item in items:
+            if "gpu" in item.keywords:
+                item.add_marker(skip_gpu)
+```
+
+### GPU CI Configuration
+
+```yaml
+# .github/workflows/gpu-tests.yml
+name: GPU Tests
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'autorag_live/retrievers/dense.py'
+      - 'tests/**/test_dense*.py'
+
+jobs:
+  gpu-test:
+    runs-on: gpu-enabled  # Requires self-hosted GPU runner
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
 
     - name: Install dependencies
       run: |
-        python -m pip install --upgrade pip
-        pip install poetry
-        poetry install
+        pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+        pip install -e .[gpu,test]
 
-    - name: Run tests
+    - name: Run GPU tests
       run: |
-        poetry run pytest --cov=autorag_live --cov-report=xml
+        pytest -m gpu --cov=autorag_live --cov-report=xml
 
     - name: Upload coverage
       uses: codecov/codecov-action@v3
@@ -817,37 +930,191 @@ jobs:
         file: ./coverage.xml
 ```
 
-### Test Data Management
+## 📊 Performance Benchmarking Suite
 
-Manage test data effectively.
+### Overview
+
+AutoRAG-Live includes a comprehensive benchmarking suite for measuring and tracking performance across different components.
+
+### Running Benchmarks
+
+```bash
+# Run full benchmark suite
+python -m autorag_live.evals.performance_benchmarks
+
+# Run specific component benchmarks
+python -c "from autorag_live.evals.performance_benchmarks import run_retrieval_benchmark; run_retrieval_benchmark()"
+
+# Run memory benchmarks
+python -c "from autorag_live.evals.performance_benchmarks import run_memory_benchmark; run_memory_benchmark()"
+
+# CLI benchmark command
+autorag benchmark --components retrievers evaluation
+autorag benchmark  # Run full suite
+```
+
+### Benchmark Test Integration
 
 ```python
-# tests/conftest.py
+# tests/performance/test_benchmark_integration.py
 import pytest
-import tempfile
-from pathlib import Path
+from autorag_live.evals.performance_benchmarks import (
+    RetrievalBenchmark,
+    MemoryBenchmark,
+    LatencyBenchmark
+)
 
-@pytest.fixture(scope="session")
-def test_data_dir():
-    """Create a temporary directory for test data."""
-    with tempfile.TemporaryDirectory() as tmpdir:
-        yield Path(tmpdir)
+class TestBenchmarkIntegration:
+    def test_retrieval_benchmark_basic(self):
+        """Test basic retrieval benchmark functionality."""
+        benchmark = RetrievalBenchmark(
+            corpus_size=100,
+            queries=["test query"],
+            retrievers=["bm25", "dense"]
+        )
 
-@pytest.fixture
-def sample_corpus():
-    """Provide a standard test corpus."""
-    return [
-        "The quick brown fox jumps over the lazy dog",
-        "Machine learning is fascinating",
-        "Natural language processing with transformers",
-        "Retrieval augmented generation combines retrieval and generation",
-        "Vector databases store high-dimensional embeddings"
-    ]
+        results = benchmark.run()
+        assert "bm25" in results
+        assert "dense" in results
+        assert "latency" in results["bm25"]
+        assert "throughput" in results["bm25"]
 
-@pytest.fixture
-def mock_embeddings():
-    """Provide mock embeddings for testing."""
-    import numpy as np
-    np.random.seed(42)  # For reproducible tests
-    return np.random.randn(5, 384)  # 5 docs, 384 dimensions
+    def test_memory_benchmark_monitoring(self):
+        """Test memory usage monitoring."""
+        benchmark = MemoryBenchmark()
+
+        benchmark.start_monitoring()
+
+        # Simulate memory-intensive operation
+        large_data = ["large document"] * 1000
+        _ = [doc * 100 for doc in large_data]  # Memory intensive
+
+        stats = benchmark.stop_monitoring()
+
+        assert "peak_memory_mb" in stats
+        assert "average_memory_mb" in stats
+        assert stats["peak_memory_mb"] > 0
+
+    def test_latency_benchmark_precision(self):
+        """Test latency measurement precision."""
+        benchmark = LatencyBenchmark()
+
+        @benchmark.measure_latency
+        def sample_operation():
+            import time
+            time.sleep(0.01)  # 10ms operation
+            return "result"
+
+        result, latency = sample_operation()
+        assert result == "result"
+        assert 0.009 < latency < 0.02  # Allow some timing variance
+```
+
+### Benchmark Result Analysis
+
+```python
+# tests/performance/test_benchmark_analysis.py
+import pytest
+from autorag_live.evals.performance_benchmarks import BenchmarkResult
+
+class TestBenchmarkAnalysis:
+    def test_benchmark_result_serialization(self):
+        """Test benchmark results can be serialized."""
+        result = BenchmarkResult(
+            component="bm25",
+            metric="latency",
+            value=0.15,
+            unit="seconds",
+            metadata={"queries": 100, "corpus_size": 1000}
+        )
+
+        # Test JSON serialization
+        json_data = result.to_json()
+        assert "component" in json_data
+        assert json_data["value"] == 0.15
+
+        # Test deserialization
+        restored = BenchmarkResult.from_json(json_data)
+        assert restored.component == result.component
+        assert restored.value == result.value
+
+    def test_performance_regression_detection(self):
+        """Test detection of performance regressions."""
+        # This would integrate with historical benchmark data
+        pass
+```
+
+### Benchmark Configuration
+
+```python
+# benchmark_config.yaml
+benchmark:
+  corpus_sizes: [100, 1000, 10000]
+  query_counts: [10, 100, 1000]
+  retrievers:
+    - bm25
+    - dense
+    - hybrid
+  metrics:
+    - latency
+    - throughput
+    - memory_usage
+    - accuracy
+
+# Run benchmarks with config
+from autorag_live.evals.performance_benchmarks import BenchmarkSuite
+
+suite = BenchmarkSuite.from_config("benchmark_config.yaml")
+results = suite.run_all()
+results.save_to_json("benchmark_results.json")
+```
+
+## 🔄 Skip Patterns and Test Filtering
+
+### Common Skip Patterns
+
+```python
+# Skip slow tests
+@pytest.mark.slow
+def test_expensive_operation():
+    """Test that takes a long time."""
+    pass
+
+# Skip on specific Python versions
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Requires Python 3.11+")
+def test_python311_feature():
+    """Test Python 3.11+ specific features."""
+    pass
+
+# Skip on specific platforms
+@pytest.mark.skipif(platform.system() != "Linux", reason="Linux-specific test")
+def test_linux_specific():
+    """Test Linux-specific functionality."""
+    pass
+
+# Conditional skip based on dependencies
+torch_available = pytest.importorskip("torch")
+@pytest.mark.skipif(not torch_available.cuda.is_available(), reason="CUDA not available")
+def test_cuda_features():
+    """Test CUDA-specific features."""
+    pass
+```
+
+### Running Tests with Filters
+
+```bash
+# Skip slow tests
+pytest -m "not slow"
+
+# Run only fast tests
+pytest -m "not (slow or gpu)"
+
+# Skip integration tests
+pytest -m "not integration"
+
+# Run tests for specific Python version features
+pytest -k "python311"
+
+# Run tests matching pattern
+pytest -k "retrieval and not gpu"
 ```
