@@ -1,4 +1,4 @@
-from typing import List, Optional
+from typing import Any, List, Optional
 
 import numpy as np
 
@@ -9,6 +9,12 @@ try:  # pragma: no cover - import guard
 except Exception:  # pragma: no cover - offline fallback
     SentenceTransformer = None  # type: ignore
     cosine_similarity = None  # type: ignore
+
+from ..types.types import DocumentText, QueryText, RetrievalResult, RetrieverError
+from ..utils import get_logger
+from .base import BaseRetriever
+
+logger = get_logger(__name__)
 
 
 def dense_retrieve(
@@ -46,22 +52,22 @@ def dense_retrieve(
     return [corpus[i] for i in top_k_indices]
 
 
-class DenseRetriever:
+class DenseRetriever(BaseRetriever):
     """Dense retriever implementation with caching and lazy loading."""
 
     # Global model cache to avoid reloading the same model
-    _model_cache = {}
-    _embedding_cache = {}  # Cache embeddings by (model_name, text) tuples
+    _model_cache: dict = {}
+    _embedding_cache: dict = {}  # Cache embeddings by (model_name, text) tuples
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_embeddings: bool = True):
+        super().__init__()
         self.model_name = model_name
         self.cache_embeddings = cache_embeddings
         self.corpus: List[str] = []
         self.corpus_embeddings: Optional[np.ndarray] = None
-        self.model = None
-        self._is_initialized = False
+        self.model: Optional[Any] = None
 
-    def add_documents(self, documents: List[str]) -> None:
+    def add_documents(self, documents: List[DocumentText]) -> None:
         """Add documents to the retriever's index."""
         from ..utils import monitor_performance
 
@@ -83,28 +89,24 @@ class DenseRetriever:
                     self.corpus_embeddings = DenseRetriever._embedding_cache[cache_key]
                 else:
                     # Batch encode for better performance
-                    self.corpus_embeddings = self.model.encode(
-                        documents, batch_size=32, show_progress_bar=False
-                    )
-                    if self.cache_embeddings:
-                        DenseRetriever._embedding_cache[cache_key] = self.corpus_embeddings
+                    if self.model is not None:
+                        self.corpus_embeddings = self.model.encode(
+                            documents, batch_size=32, show_progress_bar=False
+                        )
+                        if self.cache_embeddings:
+                            DenseRetriever._embedding_cache[cache_key] = self.corpus_embeddings
             else:
                 # Fallback mode - no embeddings needed
                 self.corpus_embeddings = None
 
             self._is_initialized = True
 
-    @property
-    def is_initialized(self) -> bool:
-        """Check if retriever is initialized."""
-        return self._is_initialized
-
-    def retrieve(self, query: str, k: int = 5) -> List[tuple]:
+    def retrieve(self, query: QueryText, k: int = 5) -> RetrievalResult:
         """Retrieve documents for a query."""
         from ..utils import monitor_performance
 
         if not self.is_initialized:
-            raise ValueError("Retriever not initialized. Call add_documents() first.")
+            raise RetrieverError("Retriever not initialized. Call add_documents() first.")
 
         with monitor_performance("DenseRetriever.retrieve", {"query_length": len(query), "k": k}):
             if (
