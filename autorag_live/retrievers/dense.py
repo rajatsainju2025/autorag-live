@@ -1,9 +1,9 @@
-from typing import Any, Dict, List, Optional, Tuple
-import time
-import threading
-from collections import OrderedDict
-import pickle
 import os
+import pickle
+import threading
+import time
+from collections import OrderedDict
+from typing import Any, Dict, List, Optional
 
 import numpy as np
 
@@ -17,14 +17,16 @@ logger = get_logger(__name__)
 
 # Try to import heavy deps; fall back to simple embedding if unavailable
 try:  # pragma: no cover - import guard
-    from sentence_transformers import SentenceTransformer  # type: ignore
-    from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
-
     # Version checks for better compatibility
     import sentence_transformers
     import sklearn
+    from sentence_transformers import SentenceTransformer  # type: ignore
+    from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+
     _SENTENCE_TRANSFORMERS_AVAILABLE = True
-    logger.debug(f"SentenceTransformers {sentence_transformers.__version__} and sklearn {sklearn.__version__} available")
+    logger.debug(
+        f"SentenceTransformers {sentence_transformers.__version__} and sklearn {sklearn.__version__} available"
+    )
 except ImportError as e:  # pragma: no cover - offline fallback
     logger.warning(f"Optional dependencies not available: {e}. Using fallback mode.")
     SentenceTransformer = None  # type: ignore
@@ -86,7 +88,8 @@ class TTLCache:
         """Remove expired entries."""
         current_time = time.time()
         expired_keys = [
-            key for key, timestamp in self.timestamps.items()
+            key
+            for key, timestamp in self.timestamps.items()
             if current_time - timestamp > self.ttl_seconds
         ]
         for key in expired_keys:
@@ -118,22 +121,53 @@ def dense_retrieve(
     if SentenceTransformer is not None and cosine_similarity is not None:
         try:
             model = SentenceTransformer(model_name)
-            query_embedding = model.encode([query])
+            query_embedding = model.encode([query])[0]
             corpus_embeddings = model.encode(corpus)
-            sims = cosine_similarity(query_embedding, corpus_embeddings)[0]
+
+            # Optimized similarity computation
+            query_norm = query_embedding / np.linalg.norm(query_embedding)
+            corpus_norms = corpus_embeddings / np.linalg.norm(corpus_embeddings, axis=1, keepdims=True)
+            sims = np.dot(corpus_norms, query_norm)
         except Exception as e:
             logger.error(f"Error during dense retrieval with model {model_name}: {e}")
             raise RetrieverError(f"Dense retrieval failed: {e}")
     else:
-        # Deterministic lightweight fallback: Jaccard on tokens as a proxy
-        q_set = set(query.lower().split())
-        sims = []
-        for doc in corpus:
-            d_set = set(doc.lower().split())
-            inter = len(q_set & d_set)
-            union = len(q_set | d_set) or 1
-            sims.append(inter / union)
-        sims = np.array(sims, dtype=float)
+        # Improved fallback: TF-IDF like scoring
+        query_terms = query.lower().split()
+        if not query_terms:
+            sims = np.zeros(len(corpus), dtype=float)
+        else:
+            sims = []
+            for doc in corpus:
+                doc_terms = doc.lower().split()
+                if not doc_terms:
+                    sims.append(0.0)
+                    continue
+
+                # Calculate term frequency similarity
+                query_tf = {}
+                for term in query_terms:
+                    query_tf[term] = query_tf.get(term, 0) + 1
+
+                doc_tf = {}
+                for term in doc_terms:
+                    doc_tf[term] = doc_tf.get(term, 0) + 1
+
+                # Compute cosine similarity between TF vectors
+                common_terms = set(query_tf.keys()) & set(doc_tf.keys())
+                if not common_terms:
+                    sims.append(0.0)
+                else:
+                    # Dot product of TF vectors
+                    dot_product = sum(query_tf[term] * doc_tf[term] for term in common_terms)
+                    # Magnitudes
+                    query_mag = sum(tf**2 for tf in query_tf.values()) ** 0.5
+                    doc_mag = sum(tf**2 for tf in doc_tf.values()) ** 0.5
+
+                    similarity = dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
+                    sims.append(similarity)
+
+            sims = np.array(sims, dtype=float)
 
     top_k_indices = np.argsort(sims)[-k:][::-1]
     return [corpus[i] for i in top_k_indices]
@@ -146,10 +180,11 @@ class DenseRetriever(BaseRetriever):
     _model_cache: dict = {}  # Simple dict for models (no TTL needed)
     _embedding_cache = TTLCache(max_size=100, ttl_seconds=3600)  # 1 hour TTL, 100 items max
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_embeddings: bool = True):
+    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_embeddings: bool = True, batch_size: int = 32):
         super().__init__()
         self.model_name = model_name
         self.cache_embeddings = cache_embeddings
+        self.batch_size = batch_size
         self.corpus: List[str] = []
         self.corpus_embeddings: Optional[np.ndarray] = None
         self.model: Optional[Any] = None
@@ -175,7 +210,9 @@ class DenseRetriever(BaseRetriever):
                             self.model_name
                         )
                     except Exception as e:
-                        logger.error(f"Failed to load SentenceTransformer model {self.model_name}: {e}")
+                        logger.error(
+                            f"Failed to load SentenceTransformer model {self.model_name}: {e}"
+                        )
                         raise RetrieverError(f"Model loading failed: {e}")
 
                 self.model = DenseRetriever._model_cache[self.model_name]
@@ -191,9 +228,11 @@ class DenseRetriever(BaseRetriever):
                         if self.model is not None:
                             try:
                                 self.corpus_embeddings = self.model.encode(
-                                    documents, batch_size=32, show_progress_bar=False
+                                    documents, batch_size=self.batch_size, show_progress_bar=False
                                 )
-                                DenseRetriever._embedding_cache.put(cache_key, self.corpus_embeddings)
+                                DenseRetriever._embedding_cache.put(
+                                    cache_key, self.corpus_embeddings
+                                )
                             except Exception as e:
                                 logger.error(f"Failed to encode documents: {e}")
                                 raise RetrieverError(f"Document encoding failed: {e}")
@@ -202,7 +241,7 @@ class DenseRetriever(BaseRetriever):
                     if self.model is not None:
                         try:
                             self.corpus_embeddings = self.model.encode(
-                                documents, batch_size=32, show_progress_bar=False
+                                documents, batch_size=self.batch_size, show_progress_bar=False
                             )
                         except Exception as e:
                             logger.error(f"Failed to encode documents: {e}")
@@ -250,21 +289,53 @@ class DenseRetriever(BaseRetriever):
                         logger.error(f"Failed to encode query '{query}': {e}")
                         raise RetrieverError(f"Query encoding failed: {e}")
 
-                # Compute similarities
+                # Compute similarities using optimized numpy operations
                 try:
-                    sims = cosine_similarity(query_embedding.reshape(1, -1), self.corpus_embeddings)[0]
+                    # Normalize embeddings for cosine similarity
+                    query_norm = query_embedding / np.linalg.norm(query_embedding)
+                    corpus_norms = self.corpus_embeddings / np.linalg.norm(self.corpus_embeddings, axis=1, keepdims=True)
+
+                    # Compute cosine similarities using dot product (faster than sklearn)
+                    sims = np.dot(corpus_norms, query_norm)
                 except Exception as e:
                     logger.error(f"Failed to compute similarities: {e}")
                     raise RetrieverError(f"Similarity computation failed: {e}")
             else:
-                # Fallback: Jaccard similarity
-                q_set = set(query.lower().split())
-                sims = []
-                for doc in self.corpus:
-                    d_set = set(doc.lower().split())
-                    inter = len(q_set & d_set)
-                    union = len(q_set | d_set) or 1
-                    sims.append(inter / union)
+                # Fallback: TF-IDF like scoring for better similarity
+                query_terms = query.lower().split()
+                if not query_terms:
+                    sims = np.zeros(len(self.corpus), dtype=float)
+                else:
+                    sims = []
+                    for doc in self.corpus:
+                        doc_terms = doc.lower().split()
+                        if not doc_terms:
+                            sims.append(0.0)
+                            continue
+
+                        # Calculate term frequency similarity
+                        query_tf = {}
+                        for term in query_terms:
+                            query_tf[term] = query_tf.get(term, 0) + 1
+
+                        doc_tf = {}
+                        for term in doc_terms:
+                            doc_tf[term] = doc_tf.get(term, 0) + 1
+
+                        # Compute cosine similarity between TF vectors
+                        common_terms = set(query_tf.keys()) & set(doc_tf.keys())
+                        if not common_terms:
+                            sims.append(0.0)
+                        else:
+                            # Dot product of TF vectors
+                            dot_product = sum(query_tf[term] * doc_tf[term] for term in common_terms)
+                            # Magnitudes
+                            query_mag = sum(tf**2 for tf in query_tf.values()) ** 0.5
+                            doc_mag = sum(tf**2 for tf in doc_tf.values()) ** 0.5
+
+                            similarity = dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
+                            sims.append(similarity)
+
                 sims = np.array(sims, dtype=float)
 
             # Get top-k results
@@ -283,24 +354,26 @@ class DenseRetriever(BaseRetriever):
             raise FileNotFoundError(f"Retriever state file not found: {path}")
 
         try:
-            with open(path, 'rb') as f:
+            with open(path, "rb") as f:
                 state = pickle.load(f)
 
             # Validate state structure
-            required_keys = ['model_name', 'corpus', 'corpus_embeddings', 'cache_embeddings']
+            required_keys = ["model_name", "corpus", "corpus_embeddings", "cache_embeddings"]
             if not all(key in state for key in required_keys):
-                raise ValueError(f"Invalid state file: missing required keys")
+                raise ValueError("Invalid state file: missing required keys")
 
             # Restore state
-            self.model_name = state['model_name']
-            self.cache_embeddings = state['cache_embeddings']
-            self.corpus = state['corpus']
-            self.corpus_embeddings = state['corpus_embeddings']
+            self.model_name = state["model_name"]
+            self.cache_embeddings = state["cache_embeddings"]
+            self.corpus = state["corpus"]
+            self.corpus_embeddings = state["corpus_embeddings"]
 
             # Recreate model if embeddings exist (lazy loading)
             if self.corpus_embeddings is not None and SentenceTransformer is not None:
                 if self.model_name not in DenseRetriever._model_cache:
-                    DenseRetriever._model_cache[self.model_name] = SentenceTransformer(self.model_name)
+                    DenseRetriever._model_cache[self.model_name] = SentenceTransformer(
+                        self.model_name
+                    )
                 self.model = DenseRetriever._model_cache[self.model_name]
 
             self._is_initialized = True
@@ -321,13 +394,13 @@ class DenseRetriever(BaseRetriever):
 
             # Prepare state for serialization
             state = {
-                'model_name': self.model_name,
-                'corpus': self.corpus,
-                'corpus_embeddings': self.corpus_embeddings,
-                'cache_embeddings': self.cache_embeddings,
+                "model_name": self.model_name,
+                "corpus": self.corpus,
+                "corpus_embeddings": self.corpus_embeddings,
+                "cache_embeddings": self.cache_embeddings,
             }
 
-            with open(path, 'wb') as f:
+            with open(path, "wb") as f:
                 pickle.dump(state, f)
 
             logger.info(f"Saved retriever state to {path}")
