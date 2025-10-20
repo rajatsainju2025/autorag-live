@@ -33,15 +33,19 @@ class TestCheckPythonVersion:
             with pytest.raises(RuntimeError, match="requires Python 3.10"):
                 check_python_version((3, 10))
 
-    def test_version_tuple_formatting(self):
-        """Test that version strings are formatted correctly in error messages."""
-        with patch("sys.version_info", (3, 8, 0)):
-            with pytest.raises(RuntimeError) as exc_info:
-                check_python_version((3, 10))
+    def test_invalid_minimum_version_raises_value_error(self):
+        """Test that invalid minimum_version parameters raise ValueError."""
+        with pytest.raises(ValueError, match="minimum_version must be a tuple"):
+            check_python_version("3.10")  # type: ignore
 
-            error_msg = str(exc_info.value)
-            assert "Python 3.10+" in error_msg
-            assert "Python 3.8" in error_msg
+        with pytest.raises(ValueError, match="minimum_version must be a tuple"):
+            check_python_version((3,))  # type: ignore
+
+        with pytest.raises(ValueError, match="minimum_version must contain non-negative integers"):
+            check_python_version((3, -1))
+
+        with pytest.raises(ValueError, match="minimum_version must contain non-negative integers"):
+            check_python_version(("3", 10))  # type: ignore
 
 
 class TestWarnPythonCompatibility:

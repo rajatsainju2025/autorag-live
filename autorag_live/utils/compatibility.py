@@ -16,7 +16,14 @@ def check_python_version(minimum_version: Tuple[int, int] = (3, 10)) -> bool:
 
     Raises:
         RuntimeError: If Python version is too old
+        ValueError: If minimum_version is invalid
     """
+    if not isinstance(minimum_version, tuple) or len(minimum_version) != 2:
+        raise ValueError("minimum_version must be a tuple of (major, minor)")
+
+    if not all(isinstance(v, int) and v >= 0 for v in minimum_version):
+        raise ValueError("minimum_version must contain non-negative integers")
+
     current_version = sys.version_info[:2]
 
     if current_version < minimum_version:

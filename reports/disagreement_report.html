@@ -1,0 +1,27 @@
+
+    <html>
+    <head>
+        <title>Disagreement Report for "test query"</title>
+        <style>
+            body { font-family: sans-serif; }
+            h1, h2 { color: #333; }
+            table { border-collapse: collapse; width: 100%; }
+            th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+            th { background-color: #f2f2f2; }
+        </style>
+    </head>
+    <body>
+        <h1>Disagreement Report</h1>
+        <p><strong>Query:</strong> test query</p>
+        <p><strong>Generated on:</strong> 2025-10-19 19:14:36</p>
+
+        <h2>Metrics</h2>
+        <table>
+            <tr><th>Metric</th><th>Value</th></tr>
+    <tr><td>jaccard_bm25_vs_dense</td><td>0.0000</td></tr><tr><td>kendall_tau_bm25_vs_dense</td><td>-0.8000</td></tr><tr><td>jaccard_bm25_vs_hybrid</td><td>0.3333</td></tr><tr><td>kendall_tau_bm25_vs_hybrid</td><td>0.3333</td></tr><tr><td>jaccard_dense_vs_hybrid</td><td>0.3333</td></tr><tr><td>kendall_tau_dense_vs_hybrid</td><td>-0.3333</td></tr>
+        </table>
+
+        <h2>Retrieval Results</h2>
+    <h3>BM25</h3><table><tr><th>Rank</th><th>Document</th></tr><tr><td>1</td><td>The fox is a mammal.</td></tr><tr><td>2</td><td>The sun is bright.</td></tr></table><h3>Dense</h3><table><tr><th>Rank</th><th>Document</th></tr><tr><td>1</td><td>The quick brown fox jumps over the lazy dog.</td></tr><tr><td>2</td><td>A lazy fox is a sleeping fox.</td></tr></table><h3>Hybrid</h3><table><tr><th>Rank</th><th>Document</th></tr><tr><td>1</td><td>The fox is a mammal.</td></tr><tr><td>2</td><td>The quick brown fox jumps over the lazy dog.</td></tr></table>
+    </body>
+    </html>

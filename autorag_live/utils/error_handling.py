@@ -57,7 +57,7 @@ def handle_errors(
     error_type: Type[AutoRAGError] = AutoRAGError,
     reraise: bool = True,
     log_errors: bool = True,
-    return_value: Any = None,
+    return_value: Optional[Any] = None,
 ) -> Callable[[F], F]:
     """
     Decorator for standardized error handling.
