@@ -1,20 +1,103 @@
-from typing import Any, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
+import time
+import threading
+from collections import OrderedDict
+import pickle
+import os
 
 import numpy as np
-
-# Try to import heavy deps; fall back to simple embedding if unavailable
-try:  # pragma: no cover - import guard
-    from sentence_transformers import SentenceTransformer  # type: ignore
-    from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
-except Exception:  # pragma: no cover - offline fallback
-    SentenceTransformer = None  # type: ignore
-    cosine_similarity = None  # type: ignore
 
 from ..types.types import DocumentText, QueryText, RetrievalResult, RetrieverError
 from ..utils import get_logger
 from .base import BaseRetriever
 
 logger = get_logger(__name__)
+
+logger = get_logger(__name__)
+
+# Try to import heavy deps; fall back to simple embedding if unavailable
+try:  # pragma: no cover - import guard
+    from sentence_transformers import SentenceTransformer  # type: ignore
+    from sklearn.metrics.pairwise import cosine_similarity  # type: ignore
+
+    # Version checks for better compatibility
+    import sentence_transformers
+    import sklearn
+    _SENTENCE_TRANSFORMERS_AVAILABLE = True
+    logger.debug(f"SentenceTransformers {sentence_transformers.__version__} and sklearn {sklearn.__version__} available")
+except ImportError as e:  # pragma: no cover - offline fallback
+    logger.warning(f"Optional dependencies not available: {e}. Using fallback mode.")
+    SentenceTransformer = None  # type: ignore
+    cosine_similarity = None  # type: ignore
+    _SENTENCE_TRANSFORMERS_AVAILABLE = False
+except Exception as e:  # pragma: no cover - unexpected error
+    logger.error(f"Unexpected error importing dependencies: {e}. Using fallback mode.")
+    SentenceTransformer = None  # type: ignore
+    cosine_similarity = None  # type: ignore
+    _SENTENCE_TRANSFORMERS_AVAILABLE = False
+
+
+class TTLCache:
+    """Thread-safe TTL cache with size-based eviction."""
+
+    def __init__(self, max_size: int = 100, ttl_seconds: int = 3600):  # 1 hour default TTL
+        self.max_size = max_size
+        self.ttl_seconds = ttl_seconds
+        self.cache: OrderedDict = OrderedDict()
+        self.timestamps: Dict[Any, float] = {}
+        self.lock = threading.RLock()
+
+    def get(self, key: Any) -> Optional[Any]:
+        """Get value from cache if it exists and hasn't expired."""
+        with self.lock:
+            self._cleanup_expired()
+            if key in self.cache:
+                # Move to end (most recently used)
+                self.cache.move_to_end(key)
+                return self.cache[key]
+            return None
+
+    def put(self, key: Any, value: Any) -> None:
+        """Put value in cache with current timestamp."""
+        with self.lock:
+            self._cleanup_expired()
+
+            # Remove if already exists
+            if key in self.cache:
+                del self.cache[key]
+                del self.timestamps[key]
+
+            # Evict oldest if at capacity (after cleanup)
+            while len(self.cache) >= self.max_size:
+                oldest_key, _ = self.cache.popitem(last=False)
+                del self.timestamps[oldest_key]
+
+            # Add new item
+            self.cache[key] = value
+            self.timestamps[key] = time.time()
+
+    def clear(self) -> None:
+        """Clear all cache entries."""
+        with self.lock:
+            self.cache.clear()
+            self.timestamps.clear()
+
+    def _cleanup_expired(self) -> None:
+        """Remove expired entries."""
+        current_time = time.time()
+        expired_keys = [
+            key for key, timestamp in self.timestamps.items()
+            if current_time - timestamp > self.ttl_seconds
+        ]
+        for key in expired_keys:
+            del self.cache[key]
+            del self.timestamps[key]
+
+    def __len__(self) -> int:
+        """Return number of valid (non-expired) entries."""
+        with self.lock:
+            self._cleanup_expired()
+            return len(self.cache)
 
 
 def dense_retrieve(
@@ -27,16 +110,20 @@ def dense_retrieve(
         return []
 
     if not query or not query.strip():
-        raise ValueError("Query cannot be empty")
+        raise RetrieverError("Query cannot be empty")
 
     if k <= 0:
-        raise ValueError("k must be positive")
+        raise RetrieverError("k must be positive")
 
     if SentenceTransformer is not None and cosine_similarity is not None:
-        model = SentenceTransformer(model_name)
-        query_embedding = model.encode([query])
-        corpus_embeddings = model.encode(corpus)
-        sims = cosine_similarity(query_embedding, corpus_embeddings)[0]
+        try:
+            model = SentenceTransformer(model_name)
+            query_embedding = model.encode([query])
+            corpus_embeddings = model.encode(corpus)
+            sims = cosine_similarity(query_embedding, corpus_embeddings)[0]
+        except Exception as e:
+            logger.error(f"Error during dense retrieval with model {model_name}: {e}")
+            raise RetrieverError(f"Dense retrieval failed: {e}")
     else:
         # Deterministic lightweight fallback: Jaccard on tokens as a proxy
         q_set = set(query.lower().split())
@@ -55,9 +142,9 @@ def dense_retrieve(
 class DenseRetriever(BaseRetriever):
     """Dense retriever implementation with caching and lazy loading."""
 
-    # Global model cache to avoid reloading the same model
-    _model_cache: dict = {}
-    _embedding_cache: dict = {}  # Cache embeddings by (model_name, text) tuples
+    # Global caches with TTL and size limits
+    _model_cache: dict = {}  # Simple dict for models (no TTL needed)
+    _embedding_cache = TTLCache(max_size=100, ttl_seconds=3600)  # 1 hour TTL, 100 items max
 
     def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_embeddings: bool = True):
         super().__init__()
@@ -71,30 +158,55 @@ class DenseRetriever(BaseRetriever):
         """Add documents to the retriever's index."""
         from ..utils import monitor_performance
 
+        if not documents:
+            raise RetrieverError("Documents list cannot be empty")
+
+        if not all(isinstance(doc, str) and doc.strip() for doc in documents):
+            raise RetrieverError("All documents must be non-empty strings")
+
         with monitor_performance("DenseRetriever.add_documents", {"num_docs": len(documents)}):
             self.corpus = documents
 
             if SentenceTransformer is not None and cosine_similarity is not None:
                 # Lazy load model
                 if self.model_name not in DenseRetriever._model_cache:
-                    DenseRetriever._model_cache[self.model_name] = SentenceTransformer(
-                        self.model_name
-                    )
+                    try:
+                        DenseRetriever._model_cache[self.model_name] = SentenceTransformer(
+                            self.model_name
+                        )
+                    except Exception as e:
+                        logger.error(f"Failed to load SentenceTransformer model {self.model_name}: {e}")
+                        raise RetrieverError(f"Model loading failed: {e}")
 
                 self.model = DenseRetriever._model_cache[self.model_name]
 
                 # Check cache for embeddings
                 cache_key = (self.model_name, tuple(documents))
-                if self.cache_embeddings and cache_key in DenseRetriever._embedding_cache:
-                    self.corpus_embeddings = DenseRetriever._embedding_cache[cache_key]
+                if self.cache_embeddings:
+                    cached_embeddings = DenseRetriever._embedding_cache.get(cache_key)
+                    if cached_embeddings is not None:
+                        self.corpus_embeddings = cached_embeddings
+                    else:
+                        # Batch encode for better performance
+                        if self.model is not None:
+                            try:
+                                self.corpus_embeddings = self.model.encode(
+                                    documents, batch_size=32, show_progress_bar=False
+                                )
+                                DenseRetriever._embedding_cache.put(cache_key, self.corpus_embeddings)
+                            except Exception as e:
+                                logger.error(f"Failed to encode documents: {e}")
+                                raise RetrieverError(f"Document encoding failed: {e}")
                 else:
-                    # Batch encode for better performance
+                    # Batch encode for better performance (no caching)
                     if self.model is not None:
-                        self.corpus_embeddings = self.model.encode(
-                            documents, batch_size=32, show_progress_bar=False
-                        )
-                        if self.cache_embeddings:
-                            DenseRetriever._embedding_cache[cache_key] = self.corpus_embeddings
+                        try:
+                            self.corpus_embeddings = self.model.encode(
+                                documents, batch_size=32, show_progress_bar=False
+                            )
+                        except Exception as e:
+                            logger.error(f"Failed to encode documents: {e}")
+                            raise RetrieverError(f"Document encoding failed: {e}")
             else:
                 # Fallback mode - no embeddings needed
                 self.corpus_embeddings = None
@@ -116,17 +228,34 @@ class DenseRetriever(BaseRetriever):
             ):
                 # Check query embedding cache
                 query_cache_key = (self.model_name, query)
-                if self.cache_embeddings and query_cache_key in DenseRetriever._embedding_cache:
-                    query_embedding = DenseRetriever._embedding_cache[query_cache_key]
+                if self.cache_embeddings:
+                    cached_query_embedding = DenseRetriever._embedding_cache.get(query_cache_key)
+                    if cached_query_embedding is not None:
+                        query_embedding = cached_query_embedding
+                    else:
+                        try:
+                            query_embedding = self.model.encode(
+                                [query], batch_size=1, show_progress_bar=False
+                            )[0]
+                            DenseRetriever._embedding_cache.put(query_cache_key, query_embedding)
+                        except Exception as e:
+                            logger.error(f"Failed to encode query '{query}': {e}")
+                            raise RetrieverError(f"Query encoding failed: {e}")
                 else:
-                    query_embedding = self.model.encode(
-                        [query], batch_size=1, show_progress_bar=False
-                    )[0]
-                    if self.cache_embeddings:
-                        DenseRetriever._embedding_cache[query_cache_key] = query_embedding
+                    try:
+                        query_embedding = self.model.encode(
+                            [query], batch_size=1, show_progress_bar=False
+                        )[0]
+                    except Exception as e:
+                        logger.error(f"Failed to encode query '{query}': {e}")
+                        raise RetrieverError(f"Query encoding failed: {e}")
 
                 # Compute similarities
-                sims = cosine_similarity(query_embedding.reshape(1, -1), self.corpus_embeddings)[0]
+                try:
+                    sims = cosine_similarity(query_embedding.reshape(1, -1), self.corpus_embeddings)[0]
+                except Exception as e:
+                    logger.error(f"Failed to compute similarities: {e}")
+                    raise RetrieverError(f"Similarity computation failed: {e}")
             else:
                 # Fallback: Jaccard similarity
                 q_set = set(query.lower().split())
@@ -150,11 +279,62 @@ class DenseRetriever(BaseRetriever):
 
     def load(self, path: str) -> None:
         """Load retriever state from disk."""
-        raise NotImplementedError("Dense retriever persistence not implemented")
+        if not os.path.exists(path):
+            raise FileNotFoundError(f"Retriever state file not found: {path}")
+
+        try:
+            with open(path, 'rb') as f:
+                state = pickle.load(f)
+
+            # Validate state structure
+            required_keys = ['model_name', 'corpus', 'corpus_embeddings', 'cache_embeddings']
+            if not all(key in state for key in required_keys):
+                raise ValueError(f"Invalid state file: missing required keys")
+
+            # Restore state
+            self.model_name = state['model_name']
+            self.cache_embeddings = state['cache_embeddings']
+            self.corpus = state['corpus']
+            self.corpus_embeddings = state['corpus_embeddings']
+
+            # Recreate model if embeddings exist (lazy loading)
+            if self.corpus_embeddings is not None and SentenceTransformer is not None:
+                if self.model_name not in DenseRetriever._model_cache:
+                    DenseRetriever._model_cache[self.model_name] = SentenceTransformer(self.model_name)
+                self.model = DenseRetriever._model_cache[self.model_name]
+
+            self._is_initialized = True
+            logger.info(f"Loaded retriever state from {path}")
+
+        except Exception as e:
+            logger.error(f"Failed to load retriever state from {path}: {e}")
+            raise RetrieverError(f"Failed to load retriever state: {e}")
 
     def save(self, path: str) -> None:
         """Save retriever state to disk."""
-        raise NotImplementedError("Dense retriever persistence not implemented")
+        if not self.is_initialized:
+            raise RetrieverError("Cannot save uninitialized retriever")
+
+        try:
+            # Create directory if it doesn't exist
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+
+            # Prepare state for serialization
+            state = {
+                'model_name': self.model_name,
+                'corpus': self.corpus,
+                'corpus_embeddings': self.corpus_embeddings,
+                'cache_embeddings': self.cache_embeddings,
+            }
+
+            with open(path, 'wb') as f:
+                pickle.dump(state, f)
+
+            logger.info(f"Saved retriever state to {path}")
+
+        except Exception as e:
+            logger.error(f"Failed to save retriever state to {path}: {e}")
+            raise RetrieverError(f"Failed to save retriever state: {e}")
 
     @classmethod
     def clear_cache(cls):

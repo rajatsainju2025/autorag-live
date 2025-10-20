@@ -8,6 +8,7 @@ from omegaconf import OmegaConf
 
 from autorag_live.evals.small import exact_match, run_small_suite, simple_qa_answer, token_f1
 from autorag_live.retrievers import bm25, dense, hybrid
+from autorag_live.types.types import RetrieverError
 from autorag_live.utils.validation import ConfigurationError, validate_config
 
 
@@ -43,13 +44,13 @@ class TestRetrieverEdgeCases:
     def test_dense_empty_query(self):
         """Test dense retrieval with empty query."""
         corpus = ["test document"]
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             dense.dense_retrieve("", corpus, 1)
 
     def test_dense_invalid_k(self):
         """Test dense retrieval with invalid k values."""
         corpus = ["test document"]
-        with pytest.raises(ValueError, match="k must be positive"):
+        with pytest.raises(RetrieverError, match="k must be positive"):
             dense.dense_retrieve("test", corpus, 0)
 
     def test_dense_empty_corpus(self):

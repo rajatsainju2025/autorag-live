@@ -15,6 +15,7 @@ from autorag_live.pipeline.acceptance_policy import AcceptancePolicy, safe_confi
 from autorag_live.pipeline.hybrid_optimizer import grid_search_hybrid_weights
 from autorag_live.rerank.simple import SimpleReranker
 from autorag_live.retrievers import bm25, dense, hybrid
+from autorag_live.types.types import RetrieverError
 
 
 @pytest.fixture
@@ -367,14 +368,14 @@ class TestErrorHandlingIntegration:
         # Empty and whitespace-only queries should raise ValueError
         with pytest.raises(ValueError, match="Query cannot be empty"):
             bm25.bm25_retrieve("", sample_corpus, 5)
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             dense.dense_retrieve("", sample_corpus, 5)
         with pytest.raises(ValueError, match="Query cannot be empty"):
             hybrid.hybrid_retrieve("", sample_corpus, 5)
 
         with pytest.raises(ValueError, match="Query cannot be empty"):
             bm25.bm25_retrieve("   ", sample_corpus, 5)
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             dense.dense_retrieve("   ", sample_corpus, 5)
         with pytest.raises(ValueError, match="Query cannot be empty"):
             hybrid.hybrid_retrieve("   ", sample_corpus, 5)
