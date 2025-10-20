@@ -1,21 +1,44 @@
-# Synonym terms discovered from disagreement analysis
-# Format: key -> list of synonymous terms/phrases
-
-sun:
-  - bright
-  - shining
-  - brilliant
-
-sky:
-  - blue
-  - clear
-  - bright
-
+a:
+- a
+- a mammal.
+brown:
+- brown
+- brown fox
 fox:
-  - mammal
-  - animal
-
+- mammal
+- fox is
+- fox
+- animal
+- fox jumps
+is:
+- is
+- is a
+jumps:
+- jumps
+- jumps over
+lazy:
+- lazy
+- lazy dog.
+over:
+- over
+- over the
+quick:
+- quick
+- quick brown
+sky:
+- blue
+- clear
+- bright
+sun:
+- bright
+- shining
+- brilliant
+the:
+- the
+- the fox
+- the quick
+- the lazy
 weather:
-  - clear
-  - sunny
-  - bright
+- clear
+- sunny
+- bright

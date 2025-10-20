@@ -7,6 +7,9 @@ with built-in disagreement analysis, automatic optimization, and self-improvemen
 
 __version__ = "0.1.0"
 
+# CLI
+from . import cli
+
 # Augmentation
 from .augment.hard_negatives import sample_hard_negatives
 from .augment.query_rewrites import rewrite_query
@@ -52,9 +55,7 @@ from .retrievers.faiss_adapter import (
 from .retrievers.hybrid import hybrid_retrieve
 from .retrievers.qdrant_adapter import QdrantRetriever
 
-# CLI - import will be fixed later
-# from . import cli
-# app = cli.app
+app = cli.app
 
 __all__ = [
     # Version
@@ -104,4 +105,5 @@ __all__ = [
     "FFTEmbedder",
     # CLI - will be added back
     # "app"
+    "app",
 ]
