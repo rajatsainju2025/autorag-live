@@ -901,6 +901,174 @@ on:
   push:
     branches: [main]
   pull_request:
+
+jobs:
+  gpu-test:
+    runs-on: gpu-enabled-runner  # Requires self-hosted runner with GPU
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install -e .[gpu,test]
+
+    - name: Run GPU tests
+      run: pytest -m gpu --cov=autorag_live --cov-report=xml
+
+    - name: Upload coverage
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+```
+
+## 📊 Performance Benchmarking Suite
+
+AutoRAG-Live includes a comprehensive benchmarking suite for measuring and tracking performance across different components.
+
+### Running Benchmarks
+
+```bash
+# Run full benchmark suite
+python -m autorag_live.cli benchmark
+
+# Run specific component benchmarks
+python -m autorag_live.cli benchmark --component bm25 --component dense
+
+# Run with custom configuration
+python -m autorag_live.cli benchmark --config benchmark_config.yaml
+
+# Generate performance report
+python -m autorag_live.cli benchmark --report benchmark_report.html
+```
+
+### Benchmark Configuration
+
+```yaml
+# benchmark_config.yaml
+benchmark:
+  corpus_sizes: [100, 1000, 10000]
+  query_counts: [10, 100, 1000]
+  components:
+    - bm25
+    - dense
+    - hybrid
+    - rerank
+  metrics:
+    - latency
+    - throughput
+    - memory_usage
+    - accuracy
+  output:
+    format: json
+    file: benchmark_results.json
+```
+
+### Benchmark Results Analysis
+
+```python
+# Load and analyze benchmark results
+from autorag_live.evals.performance_benchmarks import BenchmarkResults
+
+results = BenchmarkResults.load_from_json("benchmark_results.json")
+
+# Get summary statistics
+summary = results.get_summary()
+print(f"Average latency: {summary['latency']['mean']:.3f}s")
+print(f"Memory usage: {summary['memory']['max']:.1f}MB")
+
+# Compare with baseline
+baseline = BenchmarkResults.load_from_json("baseline_results.json")
+comparison = results.compare_with_baseline(baseline)
+print(f"Performance change: {comparison['latency_change']:.1f}%")
+```
+
+### Custom Benchmark Implementation
+
+```python
+# tests/performance/test_custom_benchmark.py
+import pytest
+from autorag_live.evals.performance_benchmarks import LatencyBenchmark
+
+class TestCustomBenchmark:
+    def test_custom_operation_performance(self, benchmark):
+        """Test custom operation with benchmarking."""
+        @benchmark
+        def custom_operation():
+            # Your operation here
+            return "result"
+
+        result = custom_operation()
+        assert result == "result"
+
+        # Check performance constraints
+        assert benchmark.stats.mean < 1.0  # Must complete in < 1 second
+```
+
+### Benchmark Integration in CI
+
+```yaml
+# .github/workflows/benchmark.yml
+name: Performance Benchmarks
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Run weekly benchmarks
+    - cron: '0 0 * * 0'
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v4
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.11'
+
+    - name: Install dependencies
+      run: pip install -e .[benchmark,test]
+
+    - name: Run benchmarks
+      run: |
+        autorag benchmark --config .github/benchmark_config.yaml --output benchmark_results.json
+
+    - name: Upload benchmark results
+      uses: actions/upload-artifact@v3
+      with:
+        name: benchmark-results
+        path: benchmark_results.json
+
+    - name: Comment PR with results
+      if: github.event_name == 'pull_request'
+      uses: actions/github-script@v6
+      with:
+        script: |
+          const fs = require('fs');
+          const results = JSON.parse(fs.readFileSync('benchmark_results.json', 'utf8'));
+
+          let comment = '## 🚀 Performance Benchmark Results\n\n';
+          comment += '| Component | Latency (ms) | Memory (MB) | Throughput |\n';
+          comment += '|-----------|--------------|-------------|------------|\n';
+
+          for (const [component, metrics] of Object.entries(results)) {
+            comment += `| ${component} | ${metrics.latency || 'N/A'} | ${metrics.memory || 'N/A'} | ${metrics.throughput || 'N/A'} |\n`;
+          }
+
+          github.rest.issues.createComment({
+            issue_number: context.issue.number,
+            owner: context.repo.owner,
+            repo: context.repo.repo,
+            body: comment
+          });
+```
+  push:
+    branches: [main]
+  pull_request:
     paths:
       - 'autorag_live/retrievers/dense.py'
       - 'tests/**/test_dense*.py'
