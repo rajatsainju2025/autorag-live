@@ -3,7 +3,7 @@ import pickle
 import threading
 import time
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
 
@@ -472,8 +472,18 @@ class DenseRetriever(BaseRetriever):
                 # Fallback: process queries individually
                 return [self.retrieve(query, k) for query in queries]
 
-    def load(self, path: str) -> None:
-        """Load retriever state from disk."""
+    def load(self, path: str, mmap_mode: Optional[Literal["r", "r+", "w+", "c"]] = "r") -> None:
+        """Load retriever state from disk.
+
+        Args:
+            path: Path to the saved retriever state
+            mmap_mode: Memory-map mode for loading embeddings. Options:
+                      - None: Load into memory (default for non-mmap saves)
+                      - 'r': Read-only memory-mapped (recommended for large files)
+                      - 'r+': Read-write memory-mapped
+                      - 'w+': Write mode memory-mapped
+                      - 'c': Copy-on-write memory-mapped
+        """
         if not os.path.exists(path):
             raise FileNotFoundError(f"Retriever state file not found: {path}")
 
@@ -485,7 +495,6 @@ class DenseRetriever(BaseRetriever):
             required_keys = [
                 "model_name",
                 "corpus",
-                "corpus_embeddings",
                 "cache_embeddings",
             ]
             if not all(key in state for key in required_keys):
@@ -495,7 +504,20 @@ class DenseRetriever(BaseRetriever):
             self.model_name = state["model_name"]
             self.cache_embeddings = state["cache_embeddings"]
             self.corpus = state["corpus"]
-            self.corpus_embeddings = state["corpus_embeddings"]
+
+            # Handle memory-mapped or regular embeddings
+            if state.get("use_mmap", False) and "embeddings_path" in state:
+                # Load embeddings via memory-mapping
+                embeddings_path = state["embeddings_path"]
+                if not os.path.exists(embeddings_path):
+                    raise FileNotFoundError(f"Embeddings file not found: {embeddings_path}")
+
+                self.corpus_embeddings = np.load(embeddings_path, mmap_mode=mmap_mode)
+                logger.info(f"Loaded embeddings via memory-mapping (mode={mmap_mode})")
+            else:
+                # Regular pickle loading
+                self.corpus_embeddings = state.get("corpus_embeddings")
+
             self._corpus_embeddings_normalized = None  # Reset normalized cache on load
 
             # Recreate model if embeddings exist (lazy loading)
@@ -513,8 +535,14 @@ class DenseRetriever(BaseRetriever):
             logger.error(f"Failed to load retriever state from {path}: {e}")
             raise RetrieverError(f"Failed to load retriever state: {e}")
 
-    def save(self, path: str) -> None:
-        """Save retriever state to disk."""
+    def save(self, path: str, use_mmap: bool = False) -> None:
+        """Save retriever state to disk.
+
+        Args:
+            path: Path to save the retriever state
+            use_mmap: If True, save embeddings separately for memory-mapped loading.
+                     Useful for large corpora (> 100MB embeddings).
+        """
         if not self.is_initialized:
             raise RetrieverError("Cannot save uninitialized retriever")
 
@@ -522,18 +550,38 @@ class DenseRetriever(BaseRetriever):
             # Create directory if it doesn't exist
             os.makedirs(os.path.dirname(path), exist_ok=True)
 
-            # Prepare state for serialization
-            state = {
-                "model_name": self.model_name,
-                "corpus": self.corpus,
-                "corpus_embeddings": self.corpus_embeddings,
-                "cache_embeddings": self.cache_embeddings,
-            }
+            embeddings_path = None
+            if use_mmap and self.corpus_embeddings is not None:
+                # Save embeddings separately for memory-mapped loading
+                embeddings_path = path.replace(".pkl", "_embeddings.npy")
+                np.save(embeddings_path, self.corpus_embeddings)
+
+                # Save state without embeddings
+                state = {
+                    "model_name": self.model_name,
+                    "corpus": self.corpus,
+                    "corpus_embeddings": None,  # Not saved in pickle
+                    "cache_embeddings": self.cache_embeddings,
+                    "use_mmap": True,
+                    "embeddings_path": embeddings_path,
+                }
+            else:
+                # Traditional pickle save with embeddings
+                state = {
+                    "model_name": self.model_name,
+                    "corpus": self.corpus,
+                    "corpus_embeddings": self.corpus_embeddings,
+                    "cache_embeddings": self.cache_embeddings,
+                    "use_mmap": False,
+                }
 
             with open(path, "wb") as f:
                 pickle.dump(state, f)
 
-            logger.info(f"Saved retriever state to {path}")
+            log_msg = f"Saved retriever state to {path}"
+            if embeddings_path:
+                log_msg += f" (mmap mode: {embeddings_path})"
+            logger.info(log_msg)
 
         except Exception as e:
             logger.error(f"Failed to save retriever state to {path}: {e}")
