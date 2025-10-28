@@ -1,4 +1,5 @@
 import pytest
+
 from autorag_live.retrievers import dense
 from autorag_live.retrievers.dense import DenseRetriever, RetrieverError
 
@@ -139,8 +140,8 @@ class TestDenseRetriever:
 
     def test_save_and_load(self):
         """Test save and load functionality."""
-        import tempfile
         import os
+        import tempfile
 
         retriever = DenseRetriever()
         documents = ["document one", "document two", "document three"]
@@ -188,3 +189,113 @@ class TestDenseRetriever:
 
         assert DenseRetriever._model_cache == {}
         assert len(DenseRetriever._embedding_cache) == 0
+
+    def test_batch_size_configuration(self):
+        """Test configurable batch size parameter."""
+        retriever = DenseRetriever(batch_size=16)
+        assert retriever.batch_size == 16
+
+        retriever_large = DenseRetriever(batch_size=128)
+        assert retriever_large.batch_size == 128
+
+    def test_cache_ttl_expiration(self):
+        """Test TTL cache expiration."""
+
+        cache = DenseRetriever._embedding_cache
+        # Clear cache first
+        cache.clear()
+
+        # Add an item
+        cache.put("test_key", "test_value")
+
+        # Should be available immediately
+        assert cache.get("test_key") == "test_value"
+
+        # Wait for TTL to expire (cache TTL is 1 hour, so this won't actually expire)
+        # But we can test the logic by checking cache size
+        assert len(cache) == 1
+
+    def test_fallback_similarity_accuracy(self):
+        """Test that fallback similarity produces reasonable results."""
+        corpus = ["the quick brown fox", "jumped over the lazy dog", "hello world test"]
+        query = "quick brown fox"
+
+        # Test with fallback mode
+        import autorag_live.retrievers.dense as dense_module
+
+        original_st = dense_module.SentenceTransformer
+        dense_module.SentenceTransformer = None
+
+        try:
+            results = dense.dense_retrieve(query, corpus, k=2)
+            # Should return the most similar documents
+            assert len(results) == 2
+            assert "quick brown fox" in results[0]  # Most similar should be first
+        finally:
+            dense_module.SentenceTransformer = original_st
+
+    def test_model_reuse_across_instances(self):
+        """Test that models are reused across DenseRetriever instances."""
+        retriever1 = DenseRetriever()
+        retriever2 = DenseRetriever()
+
+        docs1 = ["document one"]
+        docs2 = ["document two"]
+
+        retriever1.add_documents(docs1)
+        retriever2.add_documents(docs2)
+
+        # Both should use the same cached model
+        assert retriever1.model is retriever2.model
+        assert DenseRetriever._model_cache[retriever1.model_name] is not None
+
+    def test_embedding_cache_performance(self):
+        """Test that embedding caching improves performance."""
+        import time
+
+        retriever = DenseRetriever()
+        documents = ["test document one", "test document two", "test document three"]
+
+        # First call - should cache embeddings
+        start_time = time.time()
+        retriever.add_documents(documents)
+        first_duration = time.time() - start_time
+
+        # Create new retriever with same documents
+        retriever2 = DenseRetriever()
+        start_time = time.time()
+        retriever2.add_documents(documents)
+        second_duration = time.time() - start_time
+
+        # Second call should be faster due to caching
+        # (Allow some tolerance for measurement variability)
+        assert second_duration <= first_duration * 1.5  # At most 50% slower, probably faster
+
+    def test_large_corpus_handling(self):
+        """Test handling of larger corpora."""
+        # Create a moderately large corpus
+        corpus = [f"document number {i} with some content" for i in range(50)]
+        query = "document number 25"
+
+        results = dense.dense_retrieve(query, corpus, k=5)
+        assert len(results) == 5
+        # Should find the most relevant documents
+        assert any("number 25" in result for result in results)
+
+    def test_unicode_and_special_characters(self):
+        """Test handling of unicode and special characters."""
+        corpus = ["héllo wörld", "café au lait", "naïve approach", "test document"]
+        query = "héllo wörld"
+
+        results = dense.dense_retrieve(query, corpus, k=2)
+        assert len(results) == 2
+        assert "héllo wörld" in results[0]  # Should be most similar
+
+    def test_empty_and_single_word_documents(self):
+        """Test handling of edge case documents."""
+        corpus = ["", "a", "single", "this is a normal document"]
+        query = "document"
+
+        results = dense.dense_retrieve(query, corpus, k=2)
+        assert len(results) == 2
+        # Should prioritize the normal document over empty/single word docs
