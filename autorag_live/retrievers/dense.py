@@ -36,6 +36,39 @@ except Exception as e:  # pragma: no cover - unexpected error
     cosine_similarity = None  # type: ignore
     _SENTENCE_TRANSFORMERS_AVAILABLE = False
 
+# Try to import Numba for JIT compilation of fallback TF-IDF
+# Disabled by default due to JIT compilation issues in testing environments
+# Set AUTORAG_ENABLE_NUMBA=1 to enable
+_NUMBA_AVAILABLE = False
+if os.getenv("AUTORAG_ENABLE_NUMBA", "0") == "1":
+    try:  # pragma: no cover - optional optimization
+        from numba import jit as numba_jit
+
+        _NUMBA_AVAILABLE = True
+        logger.debug("Numba JIT compilation enabled for fallback mode")
+
+        def jit(nopython=True, cache=True):  # type: ignore
+            return numba_jit(nopython=nopython, cache=cache)
+
+    except ImportError:  # pragma: no cover - optional dep
+        logger.debug("Numba not available - using pure Python fallback")
+
+        def jit(nopython=True, cache=True):  # type: ignore
+            def decorator(func):
+                return func
+
+            return decorator
+
+else:
+    logger.debug("Numba JIT disabled (set AUTORAG_ENABLE_NUMBA=1 to enable)")
+
+    # No-op decorator when Numba is disabled
+    def jit(nopython=True, cache=True):  # type: ignore
+        def decorator(func):
+            return func
+
+        return decorator
+
 
 class TTLCache:
     """Thread-safe TTL cache with size-based eviction."""
@@ -118,6 +151,81 @@ class TTLCache:
         self.put(key, value)
 
 
+@jit(nopython=False, cache=False)  # Disable nopython mode to avoid path issues in pre-commit
+def _compute_tf_similarity_jit(
+    query_terms_arr: np.ndarray,
+    doc_terms_arr: np.ndarray,
+    query_counts: np.ndarray,
+    doc_counts: np.ndarray,
+) -> float:
+    """JIT-compiled TF-IDF similarity computation.
+
+    Args:
+        query_terms_arr: Array of query term hashes
+        doc_terms_arr: Array of document term hashes
+        query_counts: Array of query term counts
+        doc_counts: Array of document term counts
+
+    Returns:
+        Cosine similarity score between TF vectors
+    """
+    # Find common terms (intersection) and compute dot product
+    dot_product = 0.0
+    n_query = len(query_terms_arr)
+    n_doc = len(doc_terms_arr)
+
+    for i in range(n_query):
+        query_term = query_terms_arr[i]
+        query_count = query_counts[i]
+
+        for j in range(n_doc):
+            if doc_terms_arr[j] == query_term:
+                dot_product += query_count * doc_counts[j]
+                break
+
+    if dot_product == 0.0:
+        return 0.0
+
+    # Compute magnitudes
+    query_mag_sq = 0.0
+    for i in range(n_query):
+        query_mag_sq += query_counts[i] * query_counts[i]
+
+    doc_mag_sq = 0.0
+    for i in range(n_doc):
+        doc_mag_sq += doc_counts[i] * doc_counts[i]
+
+    denominator = (query_mag_sq**0.5) * (doc_mag_sq**0.5)
+    if denominator == 0.0:
+        return 0.0
+
+    return dot_product / denominator
+
+
+def _compute_tf_similarity_python(query_tf: Dict[str, int], doc_tf: Dict[str, int]) -> float:
+    """Pure Python TF-IDF similarity computation (fallback when Numba unavailable).
+
+    Args:
+        query_tf: Query term frequencies
+        doc_tf: Document term frequencies
+
+    Returns:
+        Cosine similarity score between TF vectors
+    """
+    common_terms = set(query_tf.keys()) & set(doc_tf.keys())
+    if not common_terms:
+        return 0.0
+
+    # Dot product of TF vectors
+    dot_product = sum(query_tf[term] * doc_tf[term] for term in common_terms)
+
+    # Magnitudes
+    query_mag = sum(tf**2 for tf in query_tf.values()) ** 0.5
+    doc_mag = sum(tf**2 for tf in doc_tf.values()) ** 0.5
+
+    return dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
+
+
 def dense_retrieve(
     query: str, corpus: List[str], k: int, model_name: str = "all-MiniLM-L6-v2"
 ) -> List[str]:
@@ -149,41 +257,64 @@ def dense_retrieve(
             logger.error(f"Error during dense retrieval with model {model_name}: {e}")
             raise RetrieverError(f"Dense retrieval failed: {e}")
     else:
-        # Improved fallback: TF-IDF like scoring
+        # Improved fallback: TF-IDF like scoring with optional JIT compilation
         query_terms = query.lower().split()
         if not query_terms:
             sims = np.zeros(len(corpus), dtype=float)
         else:
-            sims = []
-            for doc in corpus:
-                doc_terms = doc.lower().split()
-                if not doc_terms:
-                    sims.append(0.0)
-                    continue
-
-                # Calculate term frequency similarity
+            if _NUMBA_AVAILABLE:
+                # Use JIT-compiled version for better performance
+                # Pre-compute query term frequencies
                 query_tf = {}
                 for term in query_terms:
                     query_tf[term] = query_tf.get(term, 0) + 1
 
-                doc_tf = {}
-                for term in doc_terms:
-                    doc_tf[term] = doc_tf.get(term, 0) + 1
+                # Convert to arrays for JIT
+                query_terms_unique = list(query_tf.keys())
+                query_terms_arr = np.array([hash(t) for t in query_terms_unique], dtype=np.int64)
+                query_counts = np.array([query_tf[t] for t in query_terms_unique], dtype=np.float64)
 
-                # Compute cosine similarity between TF vectors
-                common_terms = set(query_tf.keys()) & set(doc_tf.keys())
-                if not common_terms:
-                    sims.append(0.0)
-                else:
-                    # Dot product of TF vectors
-                    dot_product = sum(query_tf[term] * doc_tf[term] for term in common_terms)
-                    # Magnitudes
-                    query_mag = sum(tf**2 for tf in query_tf.values()) ** 0.5
-                    doc_mag = sum(tf**2 for tf in doc_tf.values()) ** 0.5
+                sims = []
+                for doc in corpus:
+                    doc_terms_list = doc.lower().split()
+                    if not doc_terms_list:
+                        sims.append(0.0)
+                        continue
 
-                    similarity = (
-                        dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
+                    # Document TF
+                    doc_tf = {}
+                    for term in doc_terms_list:
+                        doc_tf[term] = doc_tf.get(term, 0) + 1
+
+                    doc_terms_unique = list(doc_tf.keys())
+                    doc_terms_arr = np.array([hash(t) for t in doc_terms_unique], dtype=np.int64)
+                    doc_counts = np.array([doc_tf[t] for t in doc_terms_unique], dtype=np.float64)
+
+                    # JIT-compiled similarity
+                    similarity = _compute_tf_similarity_jit(
+                        query_terms_arr, doc_terms_arr, query_counts, doc_counts
                     )
+                    sims.append(similarity)
+            else:
+                # Pure Python fallback (no Numba)
+                sims = []
+                for doc in corpus:
+                    doc_terms = doc.lower().split()
+                    if not doc_terms:
+                        sims.append(0.0)
+                        continue
+
+                    # Calculate term frequency
+                    query_tf = {}
+                    for term in query_terms:
+                        query_tf[term] = query_tf.get(term, 0) + 1
+
+                    doc_tf = {}
+                    for term in doc_terms:
+                        doc_tf[term] = doc_tf.get(term, 0) + 1
+
+                    # Use pure Python similarity computation
+                    similarity = _compute_tf_similarity_python(query_tf, doc_tf)
                     sims.append(similarity)
 
             sims = np.array(sims, dtype=float)
@@ -356,48 +487,69 @@ class DenseRetriever(BaseRetriever):
                     logger.error(f"Failed to compute similarities: {e}")
                     raise RetrieverError(f"Similarity computation failed: {e}")
             else:
-                # Fallback: TF-IDF like scoring for better similarity
+                # Fallback: TF-IDF like scoring with optional JIT compilation
                 query_terms = query.lower().split()
                 if not query_terms:
                     sims = np.zeros(len(self.corpus), dtype=float)
                 else:
-                    sims = []
-                    for doc in self.corpus:
-                        doc_terms = doc.lower().split()
-                        if not doc_terms:
-                            sims.append(0.0)
-                            continue
-
-                        # Calculate term frequency similarity
+                    if _NUMBA_AVAILABLE:
+                        # Use JIT-compiled version for better performance
                         query_tf = {}
                         for term in query_terms:
                             query_tf[term] = query_tf.get(term, 0) + 1
 
-                        doc_tf = {}
-                        for term in doc_terms:
-                            doc_tf[term] = doc_tf.get(term, 0) + 1
+                        query_terms_unique = list(query_tf.keys())
+                        query_terms_arr = np.array(
+                            [hash(t) for t in query_terms_unique], dtype=np.int64
+                        )
+                        query_counts = np.array(
+                            [query_tf[t] for t in query_terms_unique], dtype=np.float64
+                        )
 
-                        # Compute cosine similarity between TF vectors
-                        common_terms = set(query_tf.keys()) & set(doc_tf.keys())
-                        if not common_terms:
-                            sims.append(0.0)
-                        else:
-                            # Dot product of TF vectors
-                            dot_product = sum(
-                                query_tf[term] * doc_tf[term] for term in common_terms
+                        sims = []
+                        for doc in self.corpus:
+                            doc_terms_list = doc.lower().split()
+                            if not doc_terms_list:
+                                sims.append(0.0)
+                                continue
+
+                            doc_tf = {}
+                            for term in doc_terms_list:
+                                doc_tf[term] = doc_tf.get(term, 0) + 1
+
+                            doc_terms_unique = list(doc_tf.keys())
+                            doc_terms_arr = np.array(
+                                [hash(t) for t in doc_terms_unique], dtype=np.int64
                             )
-                            # Magnitudes
-                            query_mag = sum(tf**2 for tf in query_tf.values()) ** 0.5
-                            doc_mag = sum(tf**2 for tf in doc_tf.values()) ** 0.5
+                            doc_counts = np.array(
+                                [doc_tf[t] for t in doc_terms_unique], dtype=np.float64
+                            )
 
-                            similarity = (
-                                dot_product / (query_mag * doc_mag)
-                                if query_mag * doc_mag > 0
-                                else 0.0
+                            similarity = _compute_tf_similarity_jit(
+                                query_terms_arr, doc_terms_arr, query_counts, doc_counts
                             )
                             sims.append(similarity)
+                    else:
+                        # Pure Python fallback (no Numba)
+                        sims = []
+                        for doc in self.corpus:
+                            doc_terms = doc.lower().split()
+                            if not doc_terms:
+                                sims.append(0.0)
+                                continue
 
-                sims = np.array(sims, dtype=float)
+                            query_tf = {}
+                            for term in query_terms:
+                                query_tf[term] = query_tf.get(term, 0) + 1
+
+                            doc_tf = {}
+                            for term in doc_terms:
+                                doc_tf[term] = doc_tf.get(term, 0) + 1
+
+                            similarity = _compute_tf_similarity_python(query_tf, doc_tf)
+                            sims.append(similarity)
+
+                    sims = np.array(sims, dtype=float)
 
             # Get top-k results
             effective_k = min(k, len(sims))
