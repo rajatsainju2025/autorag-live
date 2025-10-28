@@ -384,6 +384,71 @@ class DenseRetriever(BaseRetriever):
 
             return results
 
+    def retrieve_batch(self, queries: List[QueryText], k: int = 5) -> List[RetrievalResult]:
+        """Retrieve documents for multiple queries efficiently.
+
+        Args:
+            queries: List of query strings
+            k: Number of documents to retrieve per query
+
+        Returns:
+            List of retrieval results, one per query
+
+        Example:
+            queries = ["query 1", "query 2", "query 3"]
+            results_batch = retriever.retrieve_batch(queries, k=5)
+        """
+        from ..utils import monitor_performance
+
+        if not self.is_initialized:
+            raise RetrieverError("Retriever not initialized. Call add_documents() first.")
+
+        with monitor_performance(
+            "DenseRetriever.retrieve_batch",
+            {"num_queries": len(queries), "k": k},
+        ):
+            if (
+                self.corpus_embeddings is not None
+                and self.model is not None
+                and cosine_similarity is not None
+            ):
+                # Batch encode all queries at once for efficiency
+                try:
+                    query_embeddings = self.model.encode(
+                        queries, batch_size=self.batch_size, show_progress_bar=False
+                    )
+                except Exception as e:
+                    logger.error(f"Failed to encode queries: {e}")
+                    raise RetrieverError(f"Query encoding failed: {e}")
+
+                # Normalize embeddings
+                query_norms = query_embeddings / np.linalg.norm(
+                    query_embeddings, axis=1, keepdims=True
+                )
+                corpus_norms = self.corpus_embeddings / np.linalg.norm(
+                    self.corpus_embeddings, axis=1, keepdims=True
+                )
+
+                # Compute similarities for all queries at once (matrix multiplication)
+                # Shape: (num_queries, num_docs)
+                all_sims = np.dot(query_norms, corpus_norms.T)
+
+                # Get top-k for each query
+                results_batch = []
+                for query_idx, sims in enumerate(all_sims):
+                    effective_k = min(k, len(sims))
+                    top_indices = np.argsort(sims)[-effective_k:][::-1]
+
+                    query_results = []
+                    for idx in top_indices:
+                        query_results.append((self.corpus[idx], float(sims[idx])))
+                    results_batch.append(query_results)
+
+                return results_batch
+            else:
+                # Fallback: process queries individually
+                return [self.retrieve(query, k) for query in queries]
+
     def load(self, path: str) -> None:
         """Load retriever state from disk."""
         if not os.path.exists(path):
