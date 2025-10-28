@@ -13,8 +13,6 @@ from .base import BaseRetriever
 
 logger = get_logger(__name__)
 
-logger = get_logger(__name__)
-
 # Try to import heavy deps; fall back to simple embedding if unavailable
 try:  # pragma: no cover - import guard
     # Version checks for better compatibility
@@ -101,6 +99,23 @@ class TTLCache:
         with self.lock:
             self._cleanup_expired()
             return len(self.cache)
+
+    def __contains__(self, key: Any) -> bool:
+        """Check if key exists in cache (dict-like interface)."""
+        with self.lock:
+            self._cleanup_expired()
+            return key in self.cache
+
+    def __getitem__(self, key: Any) -> Any:
+        """Get item with dict-like syntax (raises KeyError if not found)."""
+        value = self.get(key)
+        if value is None:
+            raise KeyError(key)
+        return value
+
+    def __setitem__(self, key: Any, value: Any) -> None:
+        """Set item with dict-like syntax."""
+        self.put(key, value)
 
 
 def dense_retrieve(
