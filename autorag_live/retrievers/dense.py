@@ -126,7 +126,9 @@ def dense_retrieve(
 
             # Optimized similarity computation
             query_norm = query_embedding / np.linalg.norm(query_embedding)
-            corpus_norms = corpus_embeddings / np.linalg.norm(corpus_embeddings, axis=1, keepdims=True)
+            corpus_norms = corpus_embeddings / np.linalg.norm(
+                corpus_embeddings, axis=1, keepdims=True
+            )
             sims = np.dot(corpus_norms, query_norm)
         except Exception as e:
             logger.error(f"Error during dense retrieval with model {model_name}: {e}")
@@ -164,7 +166,9 @@ def dense_retrieve(
                     query_mag = sum(tf**2 for tf in query_tf.values()) ** 0.5
                     doc_mag = sum(tf**2 for tf in doc_tf.values()) ** 0.5
 
-                    similarity = dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
+                    similarity = (
+                        dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
+                    )
                     sims.append(similarity)
 
             sims = np.array(sims, dtype=float)
@@ -180,7 +184,12 @@ class DenseRetriever(BaseRetriever):
     _model_cache: dict = {}  # Simple dict for models (no TTL needed)
     _embedding_cache = TTLCache(max_size=100, ttl_seconds=3600)  # 1 hour TTL, 100 items max
 
-    def __init__(self, model_name: str = "all-MiniLM-L6-v2", cache_embeddings: bool = True, batch_size: int = 32):
+    def __init__(
+        self,
+        model_name: str = "all-MiniLM-L6-v2",
+        cache_embeddings: bool = True,
+        batch_size: int = 32,
+    ):
         super().__init__()
         self.model_name = model_name
         self.cache_embeddings = cache_embeddings
@@ -228,7 +237,9 @@ class DenseRetriever(BaseRetriever):
                         if self.model is not None:
                             try:
                                 self.corpus_embeddings = self.model.encode(
-                                    documents, batch_size=self.batch_size, show_progress_bar=False
+                                    documents,
+                                    batch_size=self.batch_size,
+                                    show_progress_bar=False,
                                 )
                                 DenseRetriever._embedding_cache.put(
                                     cache_key, self.corpus_embeddings
@@ -241,7 +252,9 @@ class DenseRetriever(BaseRetriever):
                     if self.model is not None:
                         try:
                             self.corpus_embeddings = self.model.encode(
-                                documents, batch_size=self.batch_size, show_progress_bar=False
+                                documents,
+                                batch_size=self.batch_size,
+                                show_progress_bar=False,
                             )
                         except Exception as e:
                             logger.error(f"Failed to encode documents: {e}")
@@ -293,7 +306,9 @@ class DenseRetriever(BaseRetriever):
                 try:
                     # Normalize embeddings for cosine similarity
                     query_norm = query_embedding / np.linalg.norm(query_embedding)
-                    corpus_norms = self.corpus_embeddings / np.linalg.norm(self.corpus_embeddings, axis=1, keepdims=True)
+                    corpus_norms = self.corpus_embeddings / np.linalg.norm(
+                        self.corpus_embeddings, axis=1, keepdims=True
+                    )
 
                     # Compute cosine similarities using dot product (faster than sklearn)
                     sims = np.dot(corpus_norms, query_norm)
@@ -328,12 +343,18 @@ class DenseRetriever(BaseRetriever):
                             sims.append(0.0)
                         else:
                             # Dot product of TF vectors
-                            dot_product = sum(query_tf[term] * doc_tf[term] for term in common_terms)
+                            dot_product = sum(
+                                query_tf[term] * doc_tf[term] for term in common_terms
+                            )
                             # Magnitudes
                             query_mag = sum(tf**2 for tf in query_tf.values()) ** 0.5
                             doc_mag = sum(tf**2 for tf in doc_tf.values()) ** 0.5
 
-                            similarity = dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
+                            similarity = (
+                                dot_product / (query_mag * doc_mag)
+                                if query_mag * doc_mag > 0
+                                else 0.0
+                            )
                             sims.append(similarity)
 
                 sims = np.array(sims, dtype=float)
@@ -358,7 +379,12 @@ class DenseRetriever(BaseRetriever):
                 state = pickle.load(f)
 
             # Validate state structure
-            required_keys = ["model_name", "corpus", "corpus_embeddings", "cache_embeddings"]
+            required_keys = [
+                "model_name",
+                "corpus",
+                "corpus_embeddings",
+                "cache_embeddings",
+            ]
             if not all(key in state for key in required_keys):
                 raise ValueError("Invalid state file: missing required keys")
 
