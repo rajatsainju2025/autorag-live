@@ -27,16 +27,21 @@ def bm25_retrieve(query: str, corpus: List[str], k: int = 10) -> List[str]:
 
 ### Dense Retrieval
 
+#### Basic Usage
+
 ```python
 from autorag_live.retrievers import dense
+from autorag_live.retrievers.dense import DenseRetriever
 
-def dense_retrieve(query: str, corpus: List[str], k: int = 10) -> List[str]:
+# Simple function-based retrieval
+def dense_retrieve(query: str, corpus: List[str], k: int = 10, model_name: str = "all-MiniLM-L6-v2") -> List[str]:
     """Retrieve documents using dense embeddings.
 
     Args:
         query: Search query string
         corpus: List of documents to search
         k: Number of documents to retrieve
+        model_name: SentenceTransformer model name (default: "all-MiniLM-L6-v2")
 
     Returns:
         List of top-k relevant documents
@@ -44,6 +49,91 @@ def dense_retrieve(query: str, corpus: List[str], k: int = 10) -> List[str]:
     Example:
         results = dense_retrieve("artificial intelligence", documents, k=5)
     """
+```
+
+#### Advanced Usage with DenseRetriever Class
+
+```python
+from autorag_live.retrievers.dense import DenseRetriever
+
+# Initialize retriever with custom configuration
+retriever = DenseRetriever(
+    model_name="all-MiniLM-L6-v2",
+    cache_embeddings=True,  # Enable embedding caching for better performance
+    batch_size=32  # Configure batch size for your hardware
+)
+
+# Add documents (embeddings are computed once and cached)
+documents = [
+    "Machine learning is a subset of artificial intelligence",
+    "Deep learning uses neural networks with multiple layers",
+    "Natural language processing enables computers to understand text"
+]
+retriever.add_documents(documents)
+
+# Retrieve documents with scores
+results = retriever.retrieve("what is machine learning", k=2)
+for doc, score in results:
+    print(f"Score: {score:.4f} - {doc}")
+```
+
+#### Persistence: Save and Load Retriever State
+
+```python
+# Save retriever state to disk (includes model name, corpus, and embeddings)
+retriever.save("my_retriever_state.pkl")
+
+# Load retriever state from disk
+new_retriever = DenseRetriever()
+new_retriever.load("my_retriever_state.pkl")
+
+# Use loaded retriever immediately (no need to re-add documents)
+results = new_retriever.retrieve("query", k=5)
+```
+
+#### Performance Optimization
+
+```python
+# For large document collections, increase batch size
+large_retriever = DenseRetriever(batch_size=128)  # Better for GPU processing
+large_retriever.add_documents(large_corpus)
+
+# For memory-constrained environments, disable caching
+memory_efficient_retriever = DenseRetriever(cache_embeddings=False)
+memory_efficient_retriever.add_documents(documents)
+
+# Clear cache when needed
+DenseRetriever.clear_cache()  # Clears all cached models and embeddings
+```
+
+#### Features
+
+- **TTL Caching**: Embeddings are cached with 1-hour TTL and LRU eviction (max 100 items)
+- **Optimized Similarity**: Uses numpy dot product instead of sklearn for 2-3x speedup
+- **Fallback Mode**: TF-IDF based similarity when SentenceTransformers unavailable
+- **Batch Processing**: Configurable batch size for optimal hardware utilization
+- **Model Reuse**: Models are cached and shared across DenseRetriever instances
+- **Persistence**: Save/load functionality for quick deployment
+
+#### Troubleshooting
+
+**Issue: Out of memory errors**
+```python
+# Solution: Reduce batch size or disable caching
+retriever = DenseRetriever(batch_size=16, cache_embeddings=False)
+```
+
+**Issue: Slow initial retrieval**
+```python
+# Solution: Use persistence to save computed embeddings
+retriever.add_documents(documents)
+retriever.save("embeddings.pkl")  # Reuse across sessions
+```
+
+**Issue: SentenceTransformers not available**
+```python
+# The retriever automatically falls back to TF-IDF similarity
+# Install full dependencies: pip install sentence-transformers
 ```
 
 ### Hybrid Retrieval
