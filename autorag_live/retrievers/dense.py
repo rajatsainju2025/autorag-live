@@ -337,12 +337,20 @@ class DenseRetriever(BaseRetriever):
         model_name: str = "all-MiniLM-L6-v2",
         cache_embeddings: bool = True,
         batch_size: int = 32,
+        enable_prefetch: bool = False,
+        prefetch_threshold: int = 3,
     ):
         super().__init__()
         self.model_name = model_name
         self.cache_embeddings = cache_embeddings
         self.batch_size = batch_size
+        self.enable_prefetch = enable_prefetch
+        self.prefetch_threshold = prefetch_threshold
         self.corpus: List[str] = []
+
+        # Pre-fetching state
+        self._query_patterns: Dict[str, int] = {}  # Track query frequency
+        self._prefetch_pool: Dict[str, np.ndarray] = {}  # Pre-computed embeddings
         self.corpus_embeddings: Optional[np.ndarray] = None
         self._corpus_embeddings_normalized: Optional[np.ndarray] = None  # Lazy normalized cache
         self.model: Optional[Any] = None
@@ -440,6 +448,86 @@ class DenseRetriever(BaseRetriever):
         assert self._corpus_embeddings_normalized is not None
         return self._corpus_embeddings_normalized
 
+    def pool_embeddings(
+        self, embeddings: np.ndarray, method: Literal["mean", "max", "weighted_mean"] = "mean"
+    ) -> np.ndarray:
+        """Pool multiple embeddings into a single representation.
+
+        Args:
+            embeddings: Array of shape (n_embeddings, embedding_dim)
+            method: Pooling method - 'mean', 'max', or 'weighted_mean'
+
+        Returns:
+            Pooled embedding of shape (embedding_dim,)
+
+        Example:
+            # Combine multiple query variations
+            queries = ["ML", "machine learning", "ML algorithms"]
+            embeddings = model.encode(queries)
+            pooled = retriever.pool_embeddings(embeddings, method='mean')
+        """
+        if len(embeddings) == 0:
+            raise ValueError("Cannot pool empty embeddings")
+
+        if len(embeddings) == 1:
+            return embeddings[0]
+
+        if method == "mean":
+            return np.mean(embeddings, axis=0)
+        elif method == "max":
+            return np.max(embeddings, axis=0)
+        elif method == "weighted_mean":
+            # Weight more recent queries higher (exponential decay)
+            weights = np.exp(np.arange(len(embeddings)) / len(embeddings))
+            weights = weights / weights.sum()
+            return np.average(embeddings, axis=0, weights=weights)
+        else:
+            raise ValueError(f"Unknown pooling method: {method}")
+
+    def _track_query_pattern(self, query: str) -> None:
+        """Track query patterns for smart pre-fetching.
+
+        Args:
+            query: Query string to track
+        """
+        if not self.enable_prefetch:
+            return
+
+        # Normalize query for pattern matching
+        normalized = query.lower().strip()
+        self._query_patterns[normalized] = self._query_patterns.get(normalized, 0) + 1
+
+        # Pre-fetch if query crosses threshold
+        if self._query_patterns[normalized] >= self.prefetch_threshold:
+            if normalized not in self._prefetch_pool and self.model is not None:
+                try:
+                    embedding = self.model.encode([query], show_progress_bar=False)[0]
+                    self._prefetch_pool[normalized] = embedding
+                    logger.debug(f"Pre-fetched embedding for frequent query: {query[:50]}")
+                except Exception as e:
+                    logger.warning(f"Failed to pre-fetch embedding: {e}")
+
+    def _get_prefetched_embedding(self, query: str) -> Optional[np.ndarray]:
+        """Get pre-fetched embedding if available.
+
+        Args:
+            query: Query string
+
+        Returns:
+            Pre-fetched embedding or None
+        """
+        if not self.enable_prefetch:
+            return None
+
+        normalized = query.lower().strip()
+        return self._prefetch_pool.get(normalized)
+
+    def clear_prefetch_pool(self) -> None:
+        """Clear pre-fetched embeddings and query patterns."""
+        self._query_patterns.clear()
+        self._prefetch_pool.clear()
+        logger.info("Cleared pre-fetch pool and query patterns")
+
     def retrieve(self, query: QueryText, k: int = 5) -> RetrievalResult:
         """Retrieve documents for a query."""
         from ..utils import monitor_performance
@@ -453,9 +541,16 @@ class DenseRetriever(BaseRetriever):
                 and self.model is not None
                 and cosine_similarity is not None
             ):
+                # Track query pattern for pre-fetching
+                self._track_query_pattern(query)
+
+                # Check pre-fetched pool first
+                prefetched = self._get_prefetched_embedding(query)
+                if prefetched is not None:
+                    query_embedding = prefetched
                 # Check query embedding cache
-                query_cache_key = (self.model_name, query)
-                if self.cache_embeddings:
+                elif self.cache_embeddings:
+                    query_cache_key = (self.model_name, query)
                     cached_query_embedding = DenseRetriever._embedding_cache.get(query_cache_key)
                     if cached_query_embedding is not None:
                         query_embedding = cached_query_embedding
