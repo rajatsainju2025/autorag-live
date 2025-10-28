@@ -1,3 +1,51 @@
+"""Dense retriever with advanced optimizations.
+
+This module provides a high-performance dense retriever implementation with:
+
+Performance Optimizations:
+- Lazy normalization: Corpus embeddings normalized once and cached
+- Batch query processing: Vectorized matrix operations for multiple queries
+- Memory-mapped persistence: Large corpora loaded efficiently from disk
+- TTL caching: Time-limited caching with LRU eviction
+- Smart pre-fetching: Frequent queries pre-computed and cached
+- Async/concurrent retrieval: Non-blocking parallel query processing
+- JIT compilation: Optional Numba acceleration for fallback mode
+
+Memory Management:
+- Global model cache: Shared across retriever instances
+- Embedding cache: Configurable TTL and size limits
+- Pre-fetch pool: Automatic cleanup based on query patterns
+- Memory-mapped arrays: Reduced memory footprint for large corpora
+
+Features:
+- Embedding pooling: Mean, max, and weighted pooling strategies
+- Configurable batch sizes: Optimal throughput for different hardware
+- Performance monitoring: Built-in timing and profiling hooks
+- Comprehensive benchmarking: Tools for performance analysis
+- Memory profiling: Component-wise memory usage tracking
+
+Example:
+    >>> retriever = DenseRetriever(
+    ...     model_name="all-MiniLM-L6-v2",
+    ...     cache_embeddings=True,
+    ...     enable_prefetch=True
+    ... )
+    >>> retriever.add_documents(["doc 1", "doc 2", "doc 3"])
+    >>> results = retriever.retrieve("query", k=5)
+    >>>
+    >>> # Async retrieval
+    >>> import asyncio
+    >>> results = await retriever.retrieve_async("query", k=5)
+    >>>
+    >>> # Batch processing
+    >>> queries = ["query 1", "query 2"]
+    >>> results = retriever.retrieve_batch(queries, k=5)
+    >>>
+    >>> # Memory-mapped persistence
+    >>> retriever.save("state.pkl", use_mmap=True)
+    >>> retriever.load("state.pkl", mmap_mode="r")
+"""
+
 import asyncio
 import os
 import pickle
