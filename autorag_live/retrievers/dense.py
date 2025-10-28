@@ -1,8 +1,10 @@
+import asyncio
 import os
 import pickle
 import threading
 import time
 from collections import OrderedDict
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Literal, Optional
 
 import numpy as np
@@ -623,6 +625,85 @@ class DenseRetriever(BaseRetriever):
             else:
                 # Fallback: process queries individually
                 return [self.retrieve(query, k) for query in queries]
+
+    async def retrieve_async(self, query: QueryText, k: int = 5) -> RetrievalResult:
+        """Async version of retrieve() for concurrent processing.
+
+        Args:
+            query: Query string
+            k: Number of documents to retrieve
+
+        Returns:
+            List of (document, score) tuples
+
+        Example:
+            result = await retriever.retrieve_async("query text", k=5)
+        """
+        # Run synchronous retrieve in executor to avoid blocking
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(None, self.retrieve, query, k)
+
+    async def retrieve_batch_async(
+        self, queries: List[QueryText], k: int = 5, max_concurrent: int = 10
+    ) -> List[RetrievalResult]:
+        """Async batch retrieval with concurrent execution control.
+
+        Args:
+            queries: List of query strings
+            k: Number of documents to retrieve per query
+            max_concurrent: Maximum number of concurrent queries to process
+
+        Returns:
+            List of retrieval results, one per query
+
+        Example:
+            queries = ["query 1", "query 2", "query 3"]
+            results = await retriever.retrieve_batch_async(queries, k=5, max_concurrent=5)
+        """
+        # For small batches or when embeddings available, use synchronous batch
+        if len(queries) <= max_concurrent or (
+            self.corpus_embeddings is not None and self.model is not None
+        ):
+            loop = asyncio.get_event_loop()
+            return await loop.run_in_executor(None, self.retrieve_batch, queries, k)
+
+        # For large batches without embeddings, process with concurrency control
+        semaphore = asyncio.Semaphore(max_concurrent)
+
+        async def bounded_retrieve(query: QueryText) -> RetrievalResult:
+            async with semaphore:
+                return await self.retrieve_async(query, k)
+
+        tasks = [bounded_retrieve(query) for query in queries]
+        return await asyncio.gather(*tasks)
+
+    def retrieve_concurrent(
+        self, queries: List[QueryText], k: int = 5, max_workers: int = 4
+    ) -> List[RetrievalResult]:
+        """Concurrent retrieval using ThreadPoolExecutor.
+
+        Args:
+            queries: List of query strings
+            k: Number of documents to retrieve per query
+            max_workers: Maximum number of worker threads
+
+        Returns:
+            List of retrieval results, one per query
+
+        Example:
+            queries = ["query 1", "query 2", "query 3"]
+            results = retriever.retrieve_concurrent(queries, k=5, max_workers=4)
+        """
+        # For small batches or when embeddings available, use synchronous batch
+        if len(queries) <= max_workers or (
+            self.corpus_embeddings is not None and self.model is not None
+        ):
+            return self.retrieve_batch(queries, k)
+
+        # For large batches without embeddings, use thread pool
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = list(executor.map(lambda q: self.retrieve(q, k), queries))
+        return results
 
     def load(self, path: str, mmap_mode: Optional[Literal["r", "r+", "w+", "c"]] = "r") -> None:
         """Load retriever state from disk.
