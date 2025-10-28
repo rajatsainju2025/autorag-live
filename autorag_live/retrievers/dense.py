@@ -211,6 +211,7 @@ class DenseRetriever(BaseRetriever):
         self.batch_size = batch_size
         self.corpus: List[str] = []
         self.corpus_embeddings: Optional[np.ndarray] = None
+        self._corpus_embeddings_normalized: Optional[np.ndarray] = None  # Lazy normalized cache
         self.model: Optional[Any] = None
 
     def add_documents(self, documents: List[DocumentText]) -> None:
@@ -225,6 +226,7 @@ class DenseRetriever(BaseRetriever):
 
         with monitor_performance("DenseRetriever.add_documents", {"num_docs": len(documents)}):
             self.corpus = documents
+            self._corpus_embeddings_normalized = None  # Reset normalized cache
 
             if SentenceTransformer is not None and cosine_similarity is not None:
                 # Lazy load model
@@ -280,6 +282,31 @@ class DenseRetriever(BaseRetriever):
 
             self._is_initialized = True
 
+    def _get_normalized_corpus_embeddings(self) -> np.ndarray:
+        """Lazily compute and cache normalized corpus embeddings.
+
+        This avoids redundant normalization on every query by caching
+        the normalized embeddings after first computation.
+
+        Returns:
+            np.ndarray: Normalized corpus embeddings (L2 norm = 1 for each vector)
+
+        Raises:
+            RetrieverError: If corpus embeddings are not initialized
+        """
+        if self._corpus_embeddings_normalized is None:
+            if self.corpus_embeddings is None:
+                raise RetrieverError("Corpus embeddings not initialized")
+
+            # Normalize once and cache
+            self._corpus_embeddings_normalized = self.corpus_embeddings / np.linalg.norm(
+                self.corpus_embeddings, axis=1, keepdims=True
+            )
+
+        # Type checker needs explicit assert after None check
+        assert self._corpus_embeddings_normalized is not None
+        return self._corpus_embeddings_normalized
+
     def retrieve(self, query: QueryText, k: int = 5) -> RetrievalResult:
         """Retrieve documents for a query."""
         from ..utils import monitor_performance
@@ -319,11 +346,9 @@ class DenseRetriever(BaseRetriever):
 
                 # Compute similarities using optimized numpy operations
                 try:
-                    # Normalize embeddings for cosine similarity
+                    # Normalize query embedding only (corpus already normalized via lazy cache)
                     query_norm = query_embedding / np.linalg.norm(query_embedding)
-                    corpus_norms = self.corpus_embeddings / np.linalg.norm(
-                        self.corpus_embeddings, axis=1, keepdims=True
-                    )
+                    corpus_norms = self._get_normalized_corpus_embeddings()
 
                     # Compute cosine similarities using dot product (faster than sklearn)
                     sims = np.dot(corpus_norms, query_norm)
@@ -421,13 +446,11 @@ class DenseRetriever(BaseRetriever):
                     logger.error(f"Failed to encode queries: {e}")
                     raise RetrieverError(f"Query encoding failed: {e}")
 
-                # Normalize embeddings
+                # Normalize query embeddings only (corpus already normalized via lazy cache)
                 query_norms = query_embeddings / np.linalg.norm(
                     query_embeddings, axis=1, keepdims=True
                 )
-                corpus_norms = self.corpus_embeddings / np.linalg.norm(
-                    self.corpus_embeddings, axis=1, keepdims=True
-                )
+                corpus_norms = self._get_normalized_corpus_embeddings()
 
                 # Compute similarities for all queries at once (matrix multiplication)
                 # Shape: (num_queries, num_docs)
@@ -473,6 +496,7 @@ class DenseRetriever(BaseRetriever):
             self.cache_embeddings = state["cache_embeddings"]
             self.corpus = state["corpus"]
             self.corpus_embeddings = state["corpus_embeddings"]
+            self._corpus_embeddings_normalized = None  # Reset normalized cache on load
 
             # Recreate model if embeddings exist (lazy loading)
             if self.corpus_embeddings is not None and SentenceTransformer is not None:
