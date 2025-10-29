@@ -80,6 +80,42 @@ poetry install --with dev
    poetry run python -c "import autorag_live; print('Setup successful!')"
    ```
 
+### IDE Configuration
+
+#### VS Code
+
+Recommended extensions:
+- Python (ms-python.python)
+- Pylance (ms-python.vscode-pylance)
+- Ruff (charliermarsh.ruff)
+- Python Debugger (ms-python.debugpy)
+- markdownlint (DavidAnson.vscode-markdownlint)
+- GitLens (eamodio.gitlens)
+- YAML (redhat.vscode-yaml)
+
+Settings (`.vscode/settings.json`):
+```json
+{
+  "python.analysis.typeCheckingMode": "basic",
+  "python.testing.pytestEnabled": true,
+  "python.formatting.provider": "black",
+  "editor.formatOnSave": true,
+  "[python]": {
+    "editor.defaultFormatter": "ms-python.black-formatter",
+    "editor.codeActionsOnSave": {
+      "source.organizeImports": "explicit"
+    }
+  }
+}
+```
+
+#### PyCharm
+
+1. Open project with Poetry interpreter
+2. Enable pre-commit in Settings > Tools > Pre-commit
+3. Configure pytest as test runner
+4. Enable type checking with mypy plugin
+
 ## 📝 Contributing Guidelines
 
 ### Types of Contributions
@@ -163,7 +199,7 @@ poetry run pytest -m "quick"
 - Test both success and failure cases
 - Use fixtures for common setup
 - Mock external dependencies
-- Aim for high code coverage
+- Aim for high code coverage (>80%)
 
 Example test structure:
 ```python
@@ -171,17 +207,57 @@ import pytest
 from autorag_live.retrievers import bm25
 
 class TestBM25Retriever:
-    def test_retrieve_basic(self):
-        # Test basic retrieval functionality
-        pass
+    @pytest.fixture
+    def sample_corpus(self):
+        """Provide sample documents for testing."""
+        return ["Document 1", "Document 2", "Document 3"]
 
-    def test_retrieve_empty_query(self):
-        # Test edge case: empty query
-        pass
+    def test_retrieve_basic(self, sample_corpus):
+        """Test basic retrieval functionality."""
+        retriever = bm25.BM25Retriever(sample_corpus)
+        results = retriever.retrieve("query", k=2)
+        assert len(results) == 2
+        assert all(isinstance(doc, str) for doc in results)
 
-    def test_retrieve_no_matches(self):
-        # Test edge case: no matching documents
-        pass
+    def test_retrieve_empty_query(self, sample_corpus):
+        """Test edge case: empty query."""
+        retriever = bm25.BM25Retriever(sample_corpus)
+        with pytest.raises(ValueError, match="empty"):
+            retriever.retrieve("", k=2)
+
+    @pytest.mark.parametrize("k,expected", [
+        (1, 1),
+        (5, 3),  # corpus only has 3 docs
+        (0, 0),
+    ])
+    def test_retrieve_various_k(self, sample_corpus, k, expected):
+        """Test retrieval with various k values."""
+        retriever = bm25.BM25Retriever(sample_corpus)
+        results = retriever.retrieve("test query", k=k)
+        assert len(results) == expected
+```
+
+### Test Organization
+
+- **Unit tests**: `tests/` with same structure as `autorag_live/`
+- **Integration tests**: `tests/integration/`
+- **Benchmark tests**: `tests/benchmarks/`
+- **Fixtures**: `tests/conftest.py` for shared fixtures
+
+### Continuous Testing
+
+```bash
+# Watch mode for continuous testing during development
+poetry run pytest-watch
+
+# Run tests on file change with coverage
+poetry run ptw -- --cov=autorag_live
+
+# Run only failed tests
+poetry run pytest --lf
+
+# Run last failed and then all
+poetry run pytest --ff
 ```
 
 ## 📚 Documentation
@@ -268,7 +344,8 @@ Pre-commit hooks automatically check and fix:
 2. **Run final checks**:
    ```bash
    poetry run pre-commit run --all-files
-   poetry run pytest
+   poetry run pytest --cov=autorag_live
+   poetry run mypy autorag_live
    ```
 
 3. **Create a pull request**:
@@ -276,28 +353,53 @@ Pre-commit hooks automatically check and fix:
    - Fill out the PR template
    - Reference related issues
    - Add screenshots for UI changes
+   - Link to relevant documentation
 
 4. **PR Template**:
    ```markdown
    ## Description
-   Brief description of changes
+   Brief description of changes and motivation.
+
+   Fixes #<issue_number>
 
    ## Type of Change
-   - [ ] Bug fix
-   - [ ] New feature
-   - [ ] Breaking change
+   - [ ] Bug fix (non-breaking change which fixes an issue)
+   - [ ] New feature (non-breaking change which adds functionality)
+   - [ ] Breaking change (fix or feature that would cause existing functionality to not work as expected)
    - [ ] Documentation update
+   - [ ] Performance improvement
+   - [ ] Code refactoring
 
    ## Testing
    - [ ] Unit tests added/updated
    - [ ] Integration tests added/updated
    - [ ] Manual testing performed
+   - [ ] All tests pass locally
+   - [ ] Code coverage maintained/improved
+
+   ## Documentation
+   - [ ] Docstrings added/updated
+   - [ ] API reference updated
+   - [ ] README updated (if needed)
+   - [ ] Changelog updated
+   - [ ] Migration guide added (for breaking changes)
 
    ## Checklist
    - [ ] Code follows style guidelines
-   - [ ] Documentation updated
-   - [ ] Tests pass
    - [ ] Pre-commit hooks pass
+   - [ ] No new linting errors
+   - [ ] Type hints added
+   - [ ] Commits follow conventional commit format
+   - [ ] Branch is up to date with main
+
+   ## Performance Impact
+   <!-- If applicable, describe performance implications -->
+   - Benchmarks:
+   - Memory usage:
+   - Breaking changes:
+
+   ## Screenshots (if applicable)
+   <!-- Add screenshots for UI/UX changes -->
    ```
 
 ### Commit Messages
