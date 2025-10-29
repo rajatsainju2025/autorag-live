@@ -81,6 +81,99 @@ def mean_reciprocal_rank(retrieved_docs: List[List[str]], relevant_docs: List[Li
     return float(np.mean(reciprocal_ranks)) if reciprocal_ranks else 0.0
 
 
+def mean_average_precision(
+    retrieved_docs: List[List[str]], relevant_docs: List[List[str]], k: int = 10
+) -> float:
+    """Calculate Mean Average Precision (MAP@k).
+
+    Args:
+        retrieved_docs: List of retrieved document lists for each query
+        relevant_docs: List of relevant document lists for each query
+        k: Number of top results to consider
+
+    Returns:
+        Mean Average Precision score
+    """
+    if not retrieved_docs or not relevant_docs:
+        return 0.0
+
+    if len(retrieved_docs) != len(relevant_docs):
+        raise ValueError("retrieved_docs and relevant_docs must have the same length")
+
+    average_precisions = []
+
+    for ret_docs, rel_docs in zip(retrieved_docs, relevant_docs):
+        if not rel_docs:
+            continue
+
+        rel_set = set(rel_docs)
+        precisions = []
+        relevant_count = 0
+
+        # Calculate precision at each relevant document position
+        for i, doc in enumerate(ret_docs[:k]):
+            if doc in rel_set:
+                relevant_count += 1
+                precision_at_i = relevant_count / (i + 1)
+                precisions.append(precision_at_i)
+
+        # Average precision for this query
+        ap = np.mean(precisions) if precisions else 0.0
+        average_precisions.append(ap)
+
+    return float(np.mean(average_precisions)) if average_precisions else 0.0
+
+
+def hit_rate_at_k(
+    retrieved_docs: List[List[str]], relevant_docs: List[List[str]], k: int = 10
+) -> float:
+    """Calculate Hit Rate@k (Success Rate).
+
+    Measures the proportion of queries with at least one relevant document in top-k.
+
+    Args:
+        retrieved_docs: List of retrieved document lists for each query
+        relevant_docs: List of relevant document lists for each query
+        k: Number of top results to consider
+
+    Returns:
+        Hit rate score (0.0 to 1.0)
+    """
+    if not retrieved_docs or not relevant_docs:
+        return 0.0
+
+    if len(retrieved_docs) != len(relevant_docs):
+        raise ValueError("retrieved_docs and relevant_docs must have the same length")
+
+    hits = 0
+    for ret_docs, rel_docs in zip(retrieved_docs, relevant_docs):
+        rel_set = set(rel_docs)
+        # Check if any document in top-k is relevant
+        if any(doc in rel_set for doc in ret_docs[:k]):
+            hits += 1
+
+    return hits / len(retrieved_docs)
+
+
+def coverage_score(retrieved_docs: List[str], corpus: List[str]) -> float:
+    """Calculate corpus coverage (fraction of unique corpus docs retrieved).
+
+    Args:
+        retrieved_docs: Retrieved documents
+        corpus: Full corpus of available documents
+
+    Returns:
+        Coverage score (0.0 to 1.0)
+    """
+    if not corpus:
+        return 0.0
+
+    corpus_set = set(corpus)
+    retrieved_set = set(retrieved_docs)
+
+    return len(retrieved_set & corpus_set) / len(corpus_set)
+
+
 def diversity_score(retrieved_docs: List[str], embeddings: Optional[np.ndarray] = None) -> float:
     """Calculate diversity score based on semantic similarity.
 
@@ -321,7 +414,7 @@ def comprehensive_evaluation(
     relevant_docs: List[str],
     query: str = "",
     embeddings: Optional[np.ndarray] = None,
-    **kwargs
+    **kwargs,
 ) -> Dict[str, float]:
     """Run comprehensive evaluation with multiple metrics.
 
@@ -331,6 +424,14 @@ def comprehensive_evaluation(
         query: Original query
         embeddings: Document embeddings
         **kwargs: Additional parameters for specific metrics
+            - retrieved_docs_list: For MAP, MRR, Hit Rate (list of lists)
+            - relevant_docs_list: For MAP, MRR, Hit Rate (list of lists)
+            - corpus: For coverage score
+            - query_history: For novelty score
+            - all_relevant_docs: For semantic coverage
+            - document_groups: For fairness score
+            - retrieval_time: For efficiency score
+            - num_docs: For efficiency score
 
     Returns:
         Dictionary of evaluation metrics
@@ -339,27 +440,42 @@ def comprehensive_evaluation(
 
     # Basic metrics
     if retrieved_docs and relevant_docs:
-        # NDCG@5 and NDCG@10
+        # NDCG at different k values
+        metrics["ndcg@1"] = ndcg_at_k(retrieved_docs, relevant_docs, k=1)
+        metrics["ndcg@3"] = ndcg_at_k(retrieved_docs, relevant_docs, k=3)
         metrics["ndcg@5"] = ndcg_at_k(retrieved_docs, relevant_docs, k=5)
         metrics["ndcg@10"] = ndcg_at_k(retrieved_docs, relevant_docs, k=10)
 
-        # Precision and Recall
-        retrieved_set = set(retrieved_docs)
+        # Precision and Recall at different k values
         relevant_set = set(relevant_docs)
-        intersection = retrieved_set & relevant_set
 
-        metrics["precision@5"] = (
-            len(intersection) / len(retrieved_docs[:5]) if retrieved_docs[:5] else 0.0
-        )
-        metrics["precision@10"] = (
-            len(intersection) / len(retrieved_docs[:10]) if retrieved_docs[:10] else 0.0
-        )
-        metrics["recall@5"] = len(intersection) / len(relevant_set) if relevant_set else 0.0
-        metrics["recall@10"] = len(intersection) / len(relevant_set) if relevant_set else 0.0
+        for k in [1, 3, 5, 10]:
+            top_k = retrieved_docs[:k]
+            if top_k:
+                k_intersection = set(top_k) & relevant_set
+                metrics[f"precision@{k}"] = len(k_intersection) / len(top_k)
+                metrics[f"recall@{k}"] = (
+                    len(k_intersection) / len(relevant_set) if relevant_set else 0.0
+                )
+
+    # Multi-query metrics (require lists of lists)
+    if "retrieved_docs_list" in kwargs and "relevant_docs_list" in kwargs:
+        ret_list = kwargs["retrieved_docs_list"]
+        rel_list = kwargs["relevant_docs_list"]
+
+        metrics["map@5"] = mean_average_precision(ret_list, rel_list, k=5)
+        metrics["map@10"] = mean_average_precision(ret_list, rel_list, k=10)
+        metrics["mrr"] = mean_reciprocal_rank(ret_list, rel_list)
+        metrics["hit_rate@1"] = hit_rate_at_k(ret_list, rel_list, k=1)
+        metrics["hit_rate@5"] = hit_rate_at_k(ret_list, rel_list, k=5)
+        metrics["hit_rate@10"] = hit_rate_at_k(ret_list, rel_list, k=10)
 
     # Advanced metrics
     if embeddings is not None and len(retrieved_docs) > 1:
         metrics["diversity"] = diversity_score(retrieved_docs, embeddings)
+
+    if "corpus" in kwargs:
+        metrics["coverage"] = coverage_score(retrieved_docs, kwargs["corpus"])
 
     if query:
         metrics["contextual_relevance"] = contextual_relevance(retrieved_docs, query)
@@ -373,7 +489,7 @@ def comprehensive_evaluation(
             retrieved_docs, kwargs["all_relevant_docs"], embeddings
         )
 
-    if "retrieved_docs_list" in kwargs:
+    if "retrieved_docs_list" in kwargs and relevant_docs:
         metrics["robustness"] = robustness_score(kwargs["retrieved_docs_list"], relevant_docs)
 
     if "document_groups" in kwargs:
