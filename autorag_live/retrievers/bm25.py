@@ -1,3 +1,4 @@
+import re
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -15,6 +16,9 @@ from ..utils import get_logger, monitor_performance
 from .base import BaseRetriever
 
 logger = get_logger(__name__)
+
+# Pre-compiled token pattern for fast tokenization (alphanumeric word tokens)
+_TOKEN_PATTERN = re.compile(r"\w+")
 
 
 def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
@@ -120,4 +124,5 @@ class BM25Retriever(BaseRetriever):
     @staticmethod
     def _tokenize(text: str) -> List[str]:
         """Tokenize incoming text consistently."""
-        return [token for token in text.lower().split() if token]
+        # Use regex to avoid costly split() on large texts and strip punctuation
+        return [t for t in _TOKEN_PATTERN.findall(text.lower()) if t]
