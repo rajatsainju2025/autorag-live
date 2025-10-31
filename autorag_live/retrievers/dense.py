@@ -377,7 +377,13 @@ def dense_retrieve(
 
             sims = np.array(sims, dtype=float)
 
-    top_k_indices = np.argsort(sims)[-k:][::-1]
+    # Use argpartition for O(n) selection, then sort only the top-k for final order
+    k_eff = min(k, len(corpus))
+    if k_eff <= 0:
+        return []
+    top_k_part = np.argpartition(sims, -k_eff)[-k_eff:]
+    top_k_sorted_idx = top_k_part[np.argsort(sims[top_k_part])[::-1]]
+    top_k_indices = top_k_sorted_idx
     return [corpus[i] for i in top_k_indices]
 
 
