@@ -415,7 +415,8 @@ class DenseRetriever(BaseRetriever):
         self._prefetch_pool: Dict[str, np.ndarray] = {}  # Pre-computed embeddings
         self.corpus_embeddings: Optional[np.ndarray] = None
         self._corpus_embeddings_normalized: Optional[np.ndarray] = None  # Lazy normalized cache
-        self.model: Optional[Any] = None
+        self.model = None
+        self._embeddings_are_normalized = False
 
     def add_documents(self, documents: List[DocumentText]) -> None:
         """Add documents to the retriever's index."""
@@ -460,7 +461,10 @@ class DenseRetriever(BaseRetriever):
                                     documents,
                                     batch_size=self.batch_size,
                                     show_progress_bar=False,
+                                    convert_to_numpy=True,
+                                    normalize_embeddings=True,
                                 )
+                                self._embeddings_are_normalized = True
                                 DenseRetriever._embedding_cache.put(
                                     cache_key, self.corpus_embeddings
                                 )
@@ -475,7 +479,10 @@ class DenseRetriever(BaseRetriever):
                                 documents,
                                 batch_size=self.batch_size,
                                 show_progress_bar=False,
+                                convert_to_numpy=True,
+                                normalize_embeddings=True,
                             )
+                            self._embeddings_are_normalized = True
                         except Exception as e:
                             logger.error(f"Failed to encode documents: {e}")
                             raise RetrieverError(f"Document encoding failed: {e}")
@@ -502,9 +509,12 @@ class DenseRetriever(BaseRetriever):
                 raise RetrieverError("Corpus embeddings not initialized")
 
             # Normalize once and cache
-            self._corpus_embeddings_normalized = self.corpus_embeddings / np.linalg.norm(
-                self.corpus_embeddings, axis=1, keepdims=True
-            )
+            if self._embeddings_are_normalized:
+                self._corpus_embeddings_normalized = self.corpus_embeddings
+            else:
+                self._corpus_embeddings_normalized = self.corpus_embeddings / np.linalg.norm(
+                    self.corpus_embeddings, axis=1, keepdims=True
+                )
 
         # Type checker needs explicit assert after None check
         assert self._corpus_embeddings_normalized is not None
@@ -619,7 +629,11 @@ class DenseRetriever(BaseRetriever):
                     else:
                         try:
                             query_embedding = self.model.encode(
-                                [query], batch_size=1, show_progress_bar=False
+                                [query],
+                                batch_size=1,
+                                show_progress_bar=False,
+                                convert_to_numpy=True,
+                                normalize_embeddings=True,
                             )[0]
                             DenseRetriever._embedding_cache.put(query_cache_key, query_embedding)
                         except Exception as e:
@@ -628,7 +642,11 @@ class DenseRetriever(BaseRetriever):
                 else:
                     try:
                         query_embedding = self.model.encode(
-                            [query], batch_size=1, show_progress_bar=False
+                            [query],
+                            batch_size=1,
+                            show_progress_bar=False,
+                            convert_to_numpy=True,
+                            normalize_embeddings=True,
                         )[0]
                     except Exception as e:
                         logger.error(f"Failed to encode query '{query}': {e}")
@@ -636,12 +654,9 @@ class DenseRetriever(BaseRetriever):
 
                 # Compute similarities using optimized numpy operations
                 try:
-                    # Normalize query embedding only (corpus already normalized via lazy cache)
-                    query_norm = query_embedding / np.linalg.norm(query_embedding)
+                    # With normalized query and corpus embeddings, cosine sim is dot product
                     corpus_norms = self._get_normalized_corpus_embeddings()
-
-                    # Compute cosine similarities using dot product (faster than sklearn)
-                    sims = np.dot(corpus_norms, query_norm)
+                    sims = np.dot(corpus_norms, query_embedding)
                 except Exception as e:
                     logger.error(f"Failed to compute similarities: {e}")
                     raise RetrieverError(f"Similarity computation failed: {e}")
@@ -712,7 +727,10 @@ class DenseRetriever(BaseRetriever):
 
             # Get top-k results
             effective_k = min(k, len(sims))
-            top_indices = np.argsort(sims)[-effective_k:][::-1]
+            if effective_k <= 0:
+                return []
+            top_part = np.argpartition(sims, -effective_k)[-effective_k:]
+            top_indices = top_part[np.argsort(sims[top_part])[::-1]]
 
             results = []
             for idx in top_indices:
@@ -751,27 +769,31 @@ class DenseRetriever(BaseRetriever):
                 # Batch encode all queries at once for efficiency
                 try:
                     query_embeddings = self.model.encode(
-                        queries, batch_size=self.batch_size, show_progress_bar=False
+                        queries,
+                        batch_size=self.batch_size,
+                        show_progress_bar=False,
+                        convert_to_numpy=True,
+                        normalize_embeddings=True,
                     )
                 except Exception as e:
                     logger.error(f"Failed to encode queries: {e}")
                     raise RetrieverError(f"Query encoding failed: {e}")
 
-                # Normalize query embeddings only (corpus already normalized via lazy cache)
-                query_norms = query_embeddings / np.linalg.norm(
-                    query_embeddings, axis=1, keepdims=True
-                )
                 corpus_norms = self._get_normalized_corpus_embeddings()
 
                 # Compute similarities for all queries at once (matrix multiplication)
                 # Shape: (num_queries, num_docs)
-                all_sims = np.dot(query_norms, corpus_norms.T)
+                all_sims = np.dot(query_embeddings, corpus_norms.T)
 
                 # Get top-k for each query
                 results_batch = []
                 for query_idx, sims in enumerate(all_sims):
                     effective_k = min(k, len(sims))
-                    top_indices = np.argsort(sims)[-effective_k:][::-1]
+                    if effective_k <= 0:
+                        results_batch.append([])
+                        continue
+                    top_part = np.argpartition(sims, -effective_k)[-effective_k:]
+                    top_indices = top_part[np.argsort(sims[top_part])[::-1]]
 
                     query_results = []
                     for idx in top_indices:
