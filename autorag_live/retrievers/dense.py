@@ -355,17 +355,17 @@ def dense_retrieve(
                     sims.append(similarity)
             else:
                 # Pure Python fallback (no Numba)
+                # Precompute query term frequencies once
+                query_tf = {}
+                for term in query_terms:
+                    query_tf[term] = query_tf.get(term, 0) + 1
+
                 sims = []
                 for doc in corpus:
                     doc_terms = doc.lower().split()
                     if not doc_terms:
                         sims.append(0.0)
                         continue
-
-                    # Calculate term frequency
-                    query_tf = {}
-                    for term in query_terms:
-                        query_tf[term] = query_tf.get(term, 0) + 1
 
                     doc_tf = {}
                     for term in doc_terms:
