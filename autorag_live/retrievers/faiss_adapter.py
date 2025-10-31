@@ -170,8 +170,12 @@ class DenseRetriever(BaseRetriever):
                 query_norm = self._normalize_vector(query_embedding)
                 similarities = np.dot(self._normalized_embeddings, query_norm.T).flatten()
 
-                # Get top k
-                top_indices = np.argsort(similarities)[-k:][::-1]
+                # Get top k via argpartition for efficiency
+                k_eff = min(k, len(similarities))
+                if k_eff <= 0:
+                    return []
+                top_part = np.argpartition(similarities, -k_eff)[-k_eff:]
+                top_indices = top_part[np.argsort(similarities[top_part])[::-1]]
                 results: List[Tuple[str, float]] = []
                 for idx in top_indices:
                     results.append((self.documents[idx], float(similarities[idx])))
@@ -218,7 +222,7 @@ class SentenceTransformerRetriever(DenseRetriever):
     def encode(self, texts: List[str]) -> np.ndarray:
         """Encode texts using sentence-transformers or fallback."""
         if self.model is not None:
-            return self.model.encode(texts, convert_to_numpy=True)
+            return self.model.encode(texts, convert_to_numpy=True, normalize_embeddings=True)
         else:
             # Deterministic fallback
             return super().encode(texts)
