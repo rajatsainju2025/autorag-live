@@ -1,4 +1,6 @@
+import hashlib
 import re
+from collections import OrderedDict
 from typing import Any, Dict, List, Tuple
 
 import numpy as np
@@ -20,6 +22,42 @@ logger = get_logger(__name__)
 # Pre-compiled token pattern for fast tokenization (alphanumeric word tokens)
 _TOKEN_PATTERN = re.compile(r"\w+")
 
+# Small LRU cache for BM25 instances keyed by corpus signature
+_BM25_CACHE: "OrderedDict[str, Any]" = OrderedDict()
+_BM25_CACHE_MAXSIZE = 2
+
+
+def _corpus_signature(corpus: List[str]) -> str:
+    """Compute a stable signature for a corpus for caching."""
+    md5 = hashlib.md5()
+    md5.update(str(len(corpus)).encode())
+    for doc in corpus:
+        md5.update(hashlib.md5(doc.encode()).digest())
+    return md5.hexdigest()
+
+
+def _get_bm25_for_corpus(corpus: List[str]) -> Any:
+    """Get or build a BM25Okapi instance for the given corpus with LRU caching."""
+    if not BM25_AVAILABLE or BM25Okapi is None:
+        raise ImportError("rank_bm25 is required for bm25_retrieve but is not installed")
+
+    sig = _corpus_signature(corpus)
+    cached = _BM25_CACHE.get(sig)
+    if cached is not None:
+        # LRU: move to end
+        _BM25_CACHE.move_to_end(sig)
+        return cached
+
+    tokenized_corpus = [BM25Retriever._tokenize(doc) for doc in corpus]
+    bm25 = BM25Okapi(tokenized_corpus)  # type: ignore[call-arg]
+
+    # Insert into cache and enforce size
+    _BM25_CACHE[sig] = bm25
+    while len(_BM25_CACHE) > _BM25_CACHE_MAXSIZE:
+        _BM25_CACHE.popitem(last=False)
+
+    return bm25
+
 
 def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
     """
@@ -34,11 +72,7 @@ def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
     if k <= 0:
         raise ValueError("k must be positive")
 
-    if not BM25_AVAILABLE or BM25Okapi is None:
-        raise ImportError("rank_bm25 is required for bm25_retrieve but is not installed")
-
-    tokenized_corpus = [BM25Retriever._tokenize(doc) for doc in corpus]
-    bm25 = BM25Okapi(tokenized_corpus)  # type: ignore[call-arg]
+    bm25 = _get_bm25_for_corpus(corpus)
     tokenized_query = BM25Retriever._tokenize(query)
     doc_scores = np.asarray(bm25.get_scores(tokenized_query), dtype=np.float32)
 
