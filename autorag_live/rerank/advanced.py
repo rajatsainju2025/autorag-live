@@ -19,7 +19,7 @@ from autorag_live.utils import get_logger
 logger = get_logger(__name__)
 
 
-@dataclass
+@dataclass(slots=True)  # type: ignore[call-arg]
 class RankedDocument:
     """
     Document with ranking metadata.
