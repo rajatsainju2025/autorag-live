@@ -302,15 +302,15 @@ def dense_retrieve(
             if model is None:
                 model = SentenceTransformer(model_name)
                 _ST_MODEL_CACHE[model_name] = model
-            query_embedding = model.encode([query])[0]
-            corpus_embeddings = model.encode(corpus)
-
-            # Optimized similarity computation
-            query_norm = query_embedding / np.linalg.norm(query_embedding)
-            corpus_norms = corpus_embeddings / np.linalg.norm(
-                corpus_embeddings, axis=1, keepdims=True
+            # Encode with normalization in-model to avoid extra numpy ops
+            query_embedding = model.encode(
+                [query], convert_to_numpy=True, normalize_embeddings=True
+            )[0]
+            corpus_embeddings = model.encode(
+                corpus, convert_to_numpy=True, normalize_embeddings=True
             )
-            sims = np.dot(corpus_norms, query_norm)
+            # With normalized embeddings, cosine similarity reduces to dot product
+            sims = np.dot(corpus_embeddings, query_embedding)
         except Exception as e:
             logger.error(f"Error during dense retrieval with model {model_name}: {e}")
             raise RetrieverError(f"Dense retrieval failed: {e}")
