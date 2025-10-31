@@ -1,6 +1,5 @@
 """Advanced evaluation metrics for RAG systems."""
 
-import math
 from typing import Dict, List, Optional
 
 import numpy as np
@@ -26,22 +25,27 @@ def ndcg_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) 
     if not retrieved_docs or not relevant_docs:
         return 0.0
 
-    # Create relevance scores (1 if relevant, 0 otherwise)
-    relevance_scores = []
-    for i, doc in enumerate(retrieved_docs[:k]):
-        relevance = 1.0 if doc in relevant_docs else 0.0
-        relevance_scores.append(relevance)
+    # Relevance vector: 1 if relevant, else 0 (up to k)
+    rel_set = set(relevant_docs)
+    top_k = retrieved_docs[:k]
+    if not top_k:
+        return 0.0
 
-    # Calculate DCG
-    dcg = 0.0
-    for i, rel in enumerate(relevance_scores):
-        dcg += rel / math.log2(i + 2)  # i+2 because positions start from 1
+    relevance = np.fromiter((1.0 if d in rel_set else 0.0 for d in top_k), dtype=float)
 
-    # Calculate IDCG (ideal DCG)
-    ideal_relevance = [1.0] * min(len(relevant_docs), k)
-    idcg = 0.0
-    for i, rel in enumerate(ideal_relevance):
-        idcg += rel / math.log2(i + 2)
+    # Discount factors: log2(positions+1)
+    positions = np.arange(1, len(relevance) + 1, dtype=float)
+    discounts = np.log2(positions + 1.0)
+
+    dcg = float(np.sum(relevance / discounts))
+
+    # Ideal DCG with all ones up to min(len(relevant), k)
+    ideal_len = min(len(rel_set), len(top_k))
+    if ideal_len == 0:
+        return 0.0
+    ideal_relevance = np.ones(ideal_len, dtype=float)
+    ideal_discounts = np.log2(np.arange(1, ideal_len + 1, dtype=float) + 1.0)
+    idcg = float(np.sum(ideal_relevance / ideal_discounts))
 
     return dcg / idcg if idcg > 0 else 0.0
 
