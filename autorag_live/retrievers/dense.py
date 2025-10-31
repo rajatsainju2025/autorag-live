@@ -276,6 +276,10 @@ def _compute_tf_similarity_python(query_tf: Dict[str, int], doc_tf: Dict[str, in
     return dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
 
 
+# Lightweight global model cache for function API to avoid reloads
+_ST_MODEL_CACHE: Dict[str, Any] = {}
+
+
 def dense_retrieve(
     query: str, corpus: List[str], k: int, model_name: str = "all-MiniLM-L6-v2"
 ) -> List[str]:
@@ -293,7 +297,11 @@ def dense_retrieve(
 
     if SentenceTransformer is not None and cosine_similarity is not None:
         try:
-            model = SentenceTransformer(model_name)
+            # Reuse cached model if available
+            model = _ST_MODEL_CACHE.get(model_name)
+            if model is None:
+                model = SentenceTransformer(model_name)
+                _ST_MODEL_CACHE[model_name] = model
             query_embedding = model.encode([query])[0]
             corpus_embeddings = model.encode(corpus)
 
