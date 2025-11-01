@@ -276,8 +276,9 @@ def _compute_tf_similarity_python(query_tf: Dict[str, int], doc_tf: Dict[str, in
     return dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
 
 
-# Lightweight global model cache for function API to avoid reloads
-_ST_MODEL_CACHE: Dict[str, Any] = {}
+# Lightweight LRU model cache for function API to avoid reloads
+_ST_MODEL_CACHE: "OrderedDict[str, Any]" = OrderedDict()
+_ST_MODEL_CACHE_MAXSIZE = 2
 
 
 def dense_retrieve(
@@ -299,9 +300,13 @@ def dense_retrieve(
         try:
             # Reuse cached model if available
             model = _ST_MODEL_CACHE.get(model_name)
-            if model is None:
+            if model is not None:
+                _ST_MODEL_CACHE.move_to_end(model_name)
+            else:
                 model = SentenceTransformer(model_name)
                 _ST_MODEL_CACHE[model_name] = model
+                while len(_ST_MODEL_CACHE) > _ST_MODEL_CACHE_MAXSIZE:
+                    _ST_MODEL_CACHE.popitem(last=False)
             # Encode with normalization in-model to avoid extra numpy ops
             query_embedding = model.encode(
                 [query], convert_to_numpy=True, normalize_embeddings=True
