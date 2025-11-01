@@ -74,10 +74,13 @@ def mean_reciprocal_rank(retrieved_docs: List[List[str]], relevant_docs: List[Li
         if not isinstance(ret_docs, list) or not isinstance(rel_docs, list):
             raise TypeError("Each element must be a list")
 
+        # Use a set for O(1) membership checks
+        rel_set = set(rel_docs)
+
         # Find first relevant document
         rr = 0.0
         for i, doc in enumerate(ret_docs):
-            if doc in rel_docs:
+            if doc in rel_set:
                 rr = 1.0 / (i + 1)
                 break
         reciprocal_ranks.append(rr)
