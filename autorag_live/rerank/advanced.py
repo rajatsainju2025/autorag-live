@@ -62,29 +62,37 @@ class MMRReranker:
         """
         self.lambda_param = lambda_param
         self.similarity_fn = similarity_fn or self._default_similarity
+        self._similarity_cache: Dict[Tuple[str, str], float] = {}
 
     def _default_similarity(self, text1: str, text2: str) -> float:
         """Compute cosine similarity on term frequency vectors."""
+        key = (text1, text2) if text1 <= text2 else (text2, text1)
+        if key in self._similarity_cache:
+            return self._similarity_cache[key]
+
         tokens1 = text1.lower().split()
         tokens2 = text2.lower().split()
 
         if not tokens1 or not tokens2:
-            return 0.0
+            sim = 0.0
+        else:
+            # Build term frequency vectors
+            vocab = sorted(set(tokens1 + tokens2))
+            vec1 = np.array([tokens1.count(t) for t in vocab], dtype=float)
+            vec2 = np.array([tokens2.count(t) for t in vocab], dtype=float)
 
-        # Build term frequency vectors
-        vocab = sorted(set(tokens1 + tokens2))
-        vec1 = np.array([tokens1.count(t) for t in vocab], dtype=float)
-        vec2 = np.array([tokens2.count(t) for t in vocab], dtype=float)
+            # Cosine similarity
+            dot = np.dot(vec1, vec2)
+            norm1 = np.linalg.norm(vec1)
+            norm2 = np.linalg.norm(vec2)
 
-        # Cosine similarity
-        dot = np.dot(vec1, vec2)
-        norm1 = np.linalg.norm(vec1)
-        norm2 = np.linalg.norm(vec2)
+            if norm1 == 0 or norm2 == 0:
+                sim = 0.0
+            else:
+                sim = float(dot / (norm1 * norm2))
 
-        if norm1 == 0 or norm2 == 0:
-            return 0.0
-
-        return float(dot / (norm1 * norm2))
+        self._similarity_cache[key] = sim
+        return sim
 
     def rerank(
         self, query: str, documents: List[RankedDocument], top_k: Optional[int] = None
