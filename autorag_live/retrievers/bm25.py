@@ -1,7 +1,7 @@
 import hashlib
 import re
 from collections import OrderedDict
-from typing import Any, Dict, List, Tuple
+from typing import Any, List
 
 import numpy as np
 
@@ -26,6 +26,8 @@ _TOKEN_PATTERN = re.compile(r"\w+")
 _BM25_CACHE: "OrderedDict[str, Any]" = OrderedDict()
 _BM25_CACHE_MAXSIZE = 2
 _SCORES_CACHE_MAXSIZE = 128
+_TOKENIZED_QUERY_CACHE: "OrderedDict[str, List[str]]" = OrderedDict()
+_TOKENIZED_QUERY_CACHE_MAXSIZE = 64
 
 
 def _corpus_signature(corpus: List[str]) -> str:
@@ -74,7 +76,12 @@ def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
         raise ValueError("k must be positive")
 
     bm25 = _get_bm25_for_corpus(corpus)
-    tokenized_query = BM25Retriever._tokenize(query)
+    tokenized_query = _TOKENIZED_QUERY_CACHE.get(query)
+    if tokenized_query is None:
+        tokenized_query = BM25Retriever._tokenize(query)
+        _TOKENIZED_QUERY_CACHE[query] = tokenized_query
+        while len(_TOKENIZED_QUERY_CACHE) > _TOKENIZED_QUERY_CACHE_MAXSIZE:
+            _TOKENIZED_QUERY_CACHE.popitem(last=False)
     doc_scores = np.asarray(bm25.get_scores(tokenized_query), dtype=np.float32)
 
     if doc_scores.size == 0:
@@ -96,6 +103,7 @@ class BM25Retriever(BaseRetriever):
         self.bm25: Any = None
         self._tokenized_corpus: List[List[str]] = []
         self._scores_cache = OrderedDict()
+        self._tokenized_cache = OrderedDict()
 
     def add_documents(self, documents: List[DocumentText]) -> None:
         """Add documents to the retriever's index."""
@@ -110,6 +118,7 @@ class BM25Retriever(BaseRetriever):
             else:
                 self.bm25 = BM25Okapi(self._tokenized_corpus)  # type: ignore[call-arg]
             self._scores_cache.clear()
+            self._tokenized_cache.clear()
             self._is_initialized = True
 
     def retrieve(self, query: QueryText, k: int = 5) -> RetrievalResult:
@@ -121,7 +130,13 @@ class BM25Retriever(BaseRetriever):
             if self.bm25 is None:
                 return []
 
-            tokenized_query = self._tokenize(query)
+            tokenized_query = self._tokenized_cache.get(query)
+            if tokenized_query is None:
+                tokenized_query = self._tokenize(query)
+                self._tokenized_cache[query] = tokenized_query
+                while len(self._tokenized_cache) > _SCORES_CACHE_MAXSIZE:
+                    self._tokenized_cache.popitem(last=False)
+
             cache_key = tuple(tokenized_query)
             cached_scores = self._scores_cache.get(cache_key)
 
