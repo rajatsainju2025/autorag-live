@@ -612,6 +612,10 @@ class DenseRetriever(BaseRetriever):
         if not self.is_initialized:
             raise RetrieverError("Retriever not initialized. Call add_documents() first.")
 
+        # Early exit for edge cases
+        if k <= 0 or not self.corpus:
+            return []
+
         with monitor_performance("DenseRetriever.retrieve", {"query_length": len(query), "k": k}):
             if (
                 self.corpus_embeddings is not None
@@ -761,6 +765,10 @@ class DenseRetriever(BaseRetriever):
 
         if not self.is_initialized:
             raise RetrieverError("Retriever not initialized. Call add_documents() first.")
+
+        # Early exit for edge cases
+        if k <= 0 or not queries or not self.corpus:
+            return [[] for _ in queries]
 
         with monitor_performance(
             "DenseRetriever.retrieve_batch",

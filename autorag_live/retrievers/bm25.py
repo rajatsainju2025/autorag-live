@@ -25,6 +25,7 @@ _TOKEN_PATTERN = re.compile(r"\w+")
 # Small LRU cache for BM25 instances keyed by corpus signature
 _BM25_CACHE: "OrderedDict[str, Any]" = OrderedDict()
 _BM25_CACHE_MAXSIZE = 2
+_SCORES_CACHE_MAXSIZE = 128
 
 
 def _corpus_signature(corpus: List[str]) -> str:
@@ -94,7 +95,7 @@ class BM25Retriever(BaseRetriever):
         self.corpus: List[str] = []
         self.bm25: Any = None
         self._tokenized_corpus: List[List[str]] = []
-        self._scores_cache: Dict[Tuple[str, ...], np.ndarray] = {}
+        self._scores_cache = OrderedDict()
 
     def add_documents(self, documents: List[DocumentText]) -> None:
         """Add documents to the retriever's index."""
@@ -126,8 +127,14 @@ class BM25Retriever(BaseRetriever):
 
             if cached_scores is None:
                 scores = np.asarray(self.bm25.get_scores(tokenized_query), dtype=np.float32)
+                # Insert into LRU scores cache and enforce size bound
                 self._scores_cache[cache_key] = scores
+                self._scores_cache.move_to_end(cache_key)
+                while len(self._scores_cache) > _SCORES_CACHE_MAXSIZE:
+                    self._scores_cache.popitem(last=False)
             else:
+                # Touch for LRU
+                self._scores_cache.move_to_end(cache_key)
                 scores = cached_scores
 
             if scores.size == 0:

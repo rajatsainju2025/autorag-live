@@ -152,14 +152,12 @@ def hit_rate_at_k(
     if len(retrieved_docs) != len(relevant_docs):
         raise ValueError("retrieved_docs and relevant_docs must have the same length")
 
-    hits = 0
-    for ret_docs, rel_docs in zip(retrieved_docs, relevant_docs):
-        rel_set = set(rel_docs)
-        # Check if any document in top-k is relevant
-        if any(doc in rel_set for doc in ret_docs[:k]):
-            hits += 1
-
-    return hits / len(retrieved_docs)
+    # Vectorized hit calculation using NumPy
+    hit_list = [
+        any(doc in set(rel_docs) for doc in ret_docs[:k])
+        for ret_docs, rel_docs in zip(retrieved_docs, relevant_docs)
+    ]
+    return np.sum(hit_list) / len(retrieved_docs)
 
 
 def coverage_score(retrieved_docs: List[str], corpus: List[str]) -> float:
