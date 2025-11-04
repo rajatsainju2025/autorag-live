@@ -59,6 +59,7 @@ import numpy as np
 
 from ..types.types import DocumentText, QueryText, RetrievalResult, RetrieverError
 from ..utils import get_logger
+from ..utils.error_handling import handle_errors, with_retry
 from .base import BaseRetriever
 
 logger = get_logger(__name__)
@@ -281,6 +282,7 @@ _ST_MODEL_CACHE: "OrderedDict[str, Any]" = OrderedDict()
 _ST_MODEL_CACHE_MAXSIZE = 2
 
 
+@handle_errors(RetrieverError)
 def dense_retrieve(
     query: str, corpus: List[str], k: int, model_name: str = "all-MiniLM-L6-v2"
 ) -> List[str]:
@@ -423,6 +425,14 @@ class DenseRetriever(BaseRetriever):
         self.model = None
         self._embeddings_are_normalized = False
 
+    @with_retry(max_attempts=3, delay=1.0, exceptions=(Exception,))
+    def _load_model_with_retry(self, model_name: str):
+        """Load model with retry logic."""
+        if SentenceTransformer is None:
+            raise RetrieverError("SentenceTransformer not available")
+        return SentenceTransformer(model_name)
+
+    @handle_errors(RetrieverError)
     def add_documents(self, documents: List[DocumentText]) -> None:
         """Add documents to the retriever's index."""
         from ..utils import monitor_performance
@@ -440,15 +450,9 @@ class DenseRetriever(BaseRetriever):
             if SentenceTransformer is not None and cosine_similarity is not None:
                 # Lazy load model
                 if self.model_name not in DenseRetriever._model_cache:
-                    try:
-                        DenseRetriever._model_cache[self.model_name] = SentenceTransformer(
-                            self.model_name
-                        )
-                    except Exception as e:
-                        logger.error(
-                            f"Failed to load SentenceTransformer model {self.model_name}: {e}"
-                        )
-                        raise RetrieverError(f"Model loading failed: {e}")
+                    DenseRetriever._model_cache[self.model_name] = self._load_model_with_retry(
+                        self.model_name
+                    )
 
                 self.model = DenseRetriever._model_cache[self.model_name]
 
@@ -605,6 +609,7 @@ class DenseRetriever(BaseRetriever):
         self._prefetch_pool.clear()
         logger.info("Cleared pre-fetch pool and query patterns")
 
+    @handle_errors(RetrieverError)
     def retrieve(self, query: QueryText, k: int = 5) -> RetrievalResult:
         """Retrieve documents for a query."""
         from ..utils import monitor_performance
