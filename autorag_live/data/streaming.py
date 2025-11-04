@@ -269,6 +269,22 @@ class DocumentStream:
         Returns:
             Number of documents added
         """
+        # Fast-path for small batches: process immediately to avoid async overhead
+        if len(documents) <= 10:
+            events = []
+            for doc in documents:
+                event = StreamEvent(
+                    event_type=DocumentEvent.BULK_ADD,
+                    document=doc,
+                    metadata=metadata or {},
+                )
+                events.append(event)
+
+            if events:
+                await self._process_batch(events)
+            return len(events)
+
+        # Standard batching for larger sets
         added_count = 0
         for doc in documents:
             added = await self.add_document(doc, DocumentEvent.BULK_ADD, metadata)
