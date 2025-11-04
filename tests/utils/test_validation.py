@@ -20,7 +20,7 @@ class SubConfig:
 
 
 @dataclass
-class TestConfig:
+class SampleConfig:
     name: str
     value: float
     items: List[str]
@@ -42,7 +42,7 @@ def test_validate_config_valid():
     )
 
     # Should not raise
-    validate_config(config, TestConfig)
+    validate_config(config, SampleConfig)
 
 
 def test_validate_config_missing_required():
@@ -57,7 +57,7 @@ def test_validate_config_missing_required():
     )
 
     with pytest.raises(ConfigurationError, match="Missing.*value"):
-        validate_config(config, TestConfig)
+        validate_config(config, SampleConfig)
 
 
 def test_validate_config_wrong_type():
@@ -73,7 +73,7 @@ def test_validate_config_wrong_type():
     )
 
     with pytest.raises(ConfigurationError, match="invalid type"):
-        validate_config(config, TestConfig)
+        validate_config(config, SampleConfig)
 
 
 def test_validate_config_nested_missing():
@@ -89,7 +89,7 @@ def test_validate_config_nested_missing():
     )
 
     with pytest.raises(ConfigurationError, match="required_field"):
-        validate_config(config, TestConfig)
+        validate_config(config, SampleConfig)
 
 
 def test_merge_env_vars(monkeypatch):

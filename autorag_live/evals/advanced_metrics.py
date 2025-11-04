@@ -114,18 +114,23 @@ def mean_average_precision(
             continue
 
         rel_set = set(rel_docs)
-        precisions = []
-        relevant_count = 0
+        top_k_docs = ret_docs[:k]
+        if not top_k_docs:
+            average_precisions.append(0.0)
+            continue
 
-        # Calculate precision at each relevant document position
-        for i, doc in enumerate(ret_docs[:k]):
-            if doc in rel_set:
-                relevant_count += 1
-                precision_at_i = relevant_count / (i + 1)
-                precisions.append(precision_at_i)
+        # Vectorized precision calculation
+        relevant_mask = np.array([doc in rel_set for doc in top_k_docs], dtype=bool)
+        if not np.any(relevant_mask):
+            average_precisions.append(0.0)
+            continue
+
+        relevant_cumsum = np.cumsum(relevant_mask)
+        positions = np.arange(1, len(top_k_docs) + 1)
+        precisions = relevant_cumsum[relevant_mask] / positions[relevant_mask]
 
         # Average precision for this query
-        ap = np.mean(precisions) if precisions else 0.0
+        ap = np.mean(precisions)
         average_precisions.append(ap)
 
     return float(np.mean(average_precisions)) if average_precisions else 0.0
@@ -387,6 +392,53 @@ def fairness_score(retrieved_docs: List[str], document_groups: Dict[str, List[st
 
     cv = std_repr / mean_repr if mean_repr > 0 else 0.0
     return float(max(0.0, 1.0 - cv))
+
+
+def precision_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) -> float:
+    """Calculate Precision@k.
+
+    Args:
+        retrieved_docs: List of retrieved document IDs/content
+        relevant_docs: List of relevant document IDs/content
+        k: Number of top results to consider
+
+    Returns:
+        Precision@k score
+    """
+    if not retrieved_docs or not relevant_docs or k <= 0:
+        return 0.0
+
+    top_k = retrieved_docs[:k]
+    relevant_set = set(relevant_docs)
+
+    # Vectorized calculation using NumPy
+    relevant_mask = np.array([doc in relevant_set for doc in top_k], dtype=bool)
+    return float(np.sum(relevant_mask) / len(top_k))
+
+
+def recall_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) -> float:
+    """Calculate Recall@k.
+
+    Args:
+        retrieved_docs: List of retrieved document IDs/content
+        relevant_docs: List of relevant document IDs/content
+        k: Number of top results to consider
+
+    Returns:
+        Recall@k score
+    """
+    if not retrieved_docs or not relevant_docs or k <= 0:
+        return 0.0
+
+    top_k = retrieved_docs[:k]
+    relevant_set = set(relevant_docs)
+
+    # Vectorized calculation using NumPy
+    relevant_mask = np.array([doc in relevant_set for doc in top_k], dtype=bool)
+    num_relevant_retrieved = np.sum(relevant_mask)
+    total_relevant = len(relevant_set)
+
+    return float(num_relevant_retrieved / total_relevant) if total_relevant > 0 else 0.0
 
 
 def efficiency_score(retrieval_time: float, num_docs: int, baseline_time: float = 1.0) -> float:
