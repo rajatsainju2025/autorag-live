@@ -1,13 +1,23 @@
 """Advanced evaluation metrics for RAG systems."""
 
+from functools import lru_cache
 from typing import Dict, List, Optional
 
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+@lru_cache(maxsize=128)
+def _get_discount_factors(length: int) -> np.ndarray:
+    """Cache discount factors for efficiency."""
+    positions = np.arange(1, length + 1, dtype=float)
+    return np.log2(positions + 1.0)
+
+
 def ndcg_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) -> float:
     """Calculate Normalized Discounted Cumulative Gain at k.
+
+    Optimized version with cached discount factors.
 
     Args:
         retrieved_docs: List of retrieved document IDs/content
@@ -33,9 +43,8 @@ def ndcg_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) 
 
     relevance = np.fromiter((1.0 if d in rel_set else 0.0 for d in top_k), dtype=float)
 
-    # Discount factors: log2(positions+1)
-    positions = np.arange(1, len(relevance) + 1, dtype=float)
-    discounts = np.log2(positions + 1.0)
+    # Discount factors: log2(positions+1) - cached
+    discounts = _get_discount_factors(len(relevance))
 
     dcg = float(np.sum(relevance / discounts))
 
@@ -44,7 +53,7 @@ def ndcg_at_k(retrieved_docs: List[str], relevant_docs: List[str], k: int = 10) 
     if ideal_len == 0:
         return 0.0
     ideal_relevance = np.ones(ideal_len, dtype=float)
-    ideal_discounts = np.log2(np.arange(1, ideal_len + 1, dtype=float) + 1.0)
+    ideal_discounts = _get_discount_factors(ideal_len)
     idcg = float(np.sum(ideal_relevance / ideal_discounts))
 
     return dcg / idcg if idcg > 0 else 0.0
