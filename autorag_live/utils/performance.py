@@ -104,7 +104,7 @@ class AggregatedMetrics:
 class PerformanceMonitor:
     """Central performance monitoring system."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self._metrics: Dict[str, AggregatedMetrics] = {}
         self._lock = threading.Lock()
         self._enabled = True

@@ -283,7 +283,7 @@ class FileCache(Cache):
 class CacheManager:
     """Central cache management."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         self.caches: Dict[str, Cache] = {}
         self._setup_default_caches()
 

@@ -48,7 +48,7 @@ class Document:
     timestamp: float = field(default_factory=time.time)
     hash: Optional[str] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Compute content hash if not provided."""
         if self.hash is None:
             self.hash = hashlib.md5(self.content.encode()).hexdigest()

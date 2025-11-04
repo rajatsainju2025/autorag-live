@@ -21,7 +21,7 @@ class TimeSeriesNote:
     metadata: Dict[str, Any]
     embedding: Optional[np.ndarray] = None
 
-    def __post_init__(self):
+    def __post_init__(self) -> None:
         """Validate timestamp and initialize metadata."""
         if not isinstance(self.timestamp, datetime):
             raise ValueError("timestamp must be a datetime object")
