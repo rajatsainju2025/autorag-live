@@ -96,7 +96,7 @@ class EvaluationConfig:
 @dataclass
 class AutoRAGConfig:
     name: str = "autorag-live"
-    version: str = MISSING
+    version: str = "0.1.0"
     paths: Dict[str, Any] = MISSING
     logging: LoggingConfig = field(default_factory=LoggingConfig)
     cache: Dict[str, Any] = MISSING

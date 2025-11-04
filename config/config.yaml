@@ -6,12 +6,12 @@ defaults:
   - _self_
 
 name: autorag-live
-version: ${version}
+version: "0.1.0"
 
 paths:
-  data_dir: ${hydra:runtime.cwd}/data
-  cache_dir: ${hydra:runtime.cwd}/.cache
-  runs_dir: ${hydra:runtime.cwd}/runs
+  data_dir: ./data
+  cache_dir: ./.cache
+  runs_dir: ./runs
 
 logging:
   level: INFO

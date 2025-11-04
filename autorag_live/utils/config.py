@@ -53,25 +53,20 @@ class ConfigManager:
                     configs_to_merge.append(OmegaConf.load(component_file))
 
             # Merge configs
-            config = cast(DictConfig, OmegaConf.merge(*configs_to_merge))
+            merged_config = cast(DictConfig, OmegaConf.merge(*configs_to_merge))
 
             # Apply environment variable overrides
-            config = merge_with_env_vars(config)
+            merged_config = merge_with_env_vars(merged_config)
 
-            # Validate against schema
-            validate_config(config, AutoRAGConfig)
-
-            self._config = config
-
-            # Merge configs
-            if len(configs_to_merge) == 1:
-                merged_config = base_config
-            else:
-                merged_config = OmegaConf.merge(*configs_to_merge)
+            # Resolve interpolations
+            OmegaConf.resolve(merged_config)
 
             # Ensure we have a DictConfig
             if not isinstance(merged_config, DictConfig):
                 raise ConfigurationError("Configuration merge did not produce a DictConfig")
+
+            # Validate against schema
+            validate_config(merged_config, AutoRAGConfig)
 
             self._config = merged_config
 
