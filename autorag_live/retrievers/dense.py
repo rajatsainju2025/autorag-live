@@ -451,6 +451,10 @@ class DenseRetriever(BaseRetriever):
         self.model = None
         self._embeddings_are_normalized = False
 
+        # Corpus statistics cache
+        self._corpus_size: int = 0
+        self._avg_doc_length: float = 0.0
+
     @with_retry(max_attempts=3, delay=1.0, exceptions=(Exception,))
     def _load_model_with_retry(self, model_name: str):
         """Load model with retry logic."""
@@ -535,7 +539,33 @@ class DenseRetriever(BaseRetriever):
                 # Fallback mode - no embeddings needed
                 self.corpus_embeddings = None
 
+            # Cache corpus statistics for efficient operations
+            self._compute_corpus_stats()
+
             self._is_initialized = True
+
+    def _compute_corpus_stats(self) -> None:
+        """Compute and cache corpus statistics.
+
+        Caches corpus size and average document length to avoid
+        redundant computation on repeated accesses.
+        """
+        self._corpus_size = len(self.corpus)
+        if self.corpus:
+            self._avg_doc_length = float(np.mean([len(doc) for doc in self.corpus]))
+        else:
+            self._avg_doc_length = 0.0
+
+    def get_corpus_stats(self) -> Dict[str, float]:
+        """Get cached corpus statistics.
+
+        Returns:
+            Dictionary with corpus_size and avg_doc_length
+        """
+        return {
+            "corpus_size": self._corpus_size,
+            "avg_doc_length": self._avg_doc_length,
+        }
 
     def _get_normalized_corpus_embeddings(self) -> np.ndarray:
         """Lazily compute and cache normalized corpus embeddings.
