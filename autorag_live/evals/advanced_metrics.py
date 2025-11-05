@@ -493,6 +493,47 @@ def efficiency_score(retrieval_time: float, num_docs: int, baseline_time: float 
     return (time_score + throughput_score) / 2
 
 
+def _compute_metrics_at_k_values(
+    retrieved_docs: List[str],
+    relevant_docs: List[str],
+    k_values: Optional[List[int]] = None,
+) -> Dict[str, float]:
+    """Compute precision and recall at multiple k values efficiently.
+
+    Uses vectorized set operations to compute all k values in a single pass.
+
+    Args:
+        retrieved_docs: Retrieved documents
+        relevant_docs: Relevant documents
+        k_values: List of k values to compute (default [1, 3, 5, 10])
+
+    Returns:
+        Dictionary with precision@k and recall@k for each k
+    """
+    if k_values is None:
+        k_values = [1, 3, 5, 10]
+
+    metrics = {}
+
+    if not retrieved_docs or not relevant_docs:
+        for k in k_values:
+            metrics[f"precision@{k}"] = 0.0
+            metrics[f"recall@{k}"] = 0.0
+        return metrics
+
+    relevant_set = set(relevant_docs)
+
+    # Pre-compute relevant set intersection for all k values
+    for k in sorted(k_values):
+        top_k = set(retrieved_docs[:k])
+        k_intersection = top_k & relevant_set
+
+        metrics[f"precision@{k}"] = len(k_intersection) / len(top_k) if top_k else 0.0
+        metrics[f"recall@{k}"] = len(k_intersection) / len(relevant_set) if relevant_set else 0.0
+
+    return metrics
+
+
 def comprehensive_evaluation(
     retrieved_docs: List[str],
     relevant_docs: List[str],
@@ -530,17 +571,9 @@ def comprehensive_evaluation(
         metrics["ndcg@5"] = ndcg_at_k(retrieved_docs, relevant_docs, k=5)
         metrics["ndcg@10"] = ndcg_at_k(retrieved_docs, relevant_docs, k=10)
 
-        # Precision and Recall at different k values
-        relevant_set = set(relevant_docs)
-
-        for k in [1, 3, 5, 10]:
-            top_k = retrieved_docs[:k]
-            if top_k:
-                k_intersection = set(top_k) & relevant_set
-                metrics[f"precision@{k}"] = len(k_intersection) / len(top_k)
-                metrics[f"recall@{k}"] = (
-                    len(k_intersection) / len(relevant_set) if relevant_set else 0.0
-                )
+        # Vectorized precision and recall at different k values
+        k_metrics = _compute_metrics_at_k_values(retrieved_docs, relevant_docs)
+        metrics.update(k_metrics)
 
     # Multi-query metrics (require lists of lists)
     if "retrieved_docs_list" in kwargs and "relevant_docs_list" in kwargs:
