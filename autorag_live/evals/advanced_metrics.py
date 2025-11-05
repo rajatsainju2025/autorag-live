@@ -152,6 +152,8 @@ def hit_rate_at_k(
 
     Measures the proportion of queries with at least one relevant document in top-k.
 
+    Optimized using pre-converted sets and numpy operations.
+
     Args:
         retrieved_docs: List of retrieved document lists for each query
         relevant_docs: List of relevant document lists for each query
@@ -166,11 +168,13 @@ def hit_rate_at_k(
     if len(retrieved_docs) != len(relevant_docs):
         raise ValueError("retrieved_docs and relevant_docs must have the same length")
 
-    # Vectorized hit calculation using NumPy
-    hit_list = [
-        any(doc in set(rel_docs) for doc in ret_docs[:k])
-        for ret_docs, rel_docs in zip(retrieved_docs, relevant_docs)
-    ]
+    # Vectorized hit calculation with pre-converted sets
+    hit_list = []
+    for ret_docs, rel_docs in zip(retrieved_docs, relevant_docs):
+        rel_set = set(rel_docs)
+        top_k_docs = set(ret_docs[:k])
+        hit_list.append(bool(top_k_docs & rel_set))
+
     return np.sum(hit_list) / len(retrieved_docs)
 
 
