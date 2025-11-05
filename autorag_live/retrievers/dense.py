@@ -51,7 +51,7 @@ import os
 import pickle
 import threading
 import time
-from collections import OrderedDict
+from collections import Counter, OrderedDict
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Dict, List, Literal, Optional
 
@@ -329,10 +329,8 @@ def dense_retrieve(
         else:
             if _NUMBA_AVAILABLE:
                 # Use JIT-compiled version for better performance
-                # Pre-compute query term frequencies
-                query_tf = {}
-                for term in query_terms:
-                    query_tf[term] = query_tf.get(term, 0) + 1
+                # Pre-compute query term frequencies using Counter (more efficient)
+                query_tf = Counter(query_terms)
 
                 # Convert to arrays for JIT
                 query_terms_unique = list(query_tf.keys())
@@ -346,10 +344,8 @@ def dense_retrieve(
                         sims.append(0.0)
                         continue
 
-                    # Document TF
-                    doc_tf = {}
-                    for term in doc_terms_list:
-                        doc_tf[term] = doc_tf.get(term, 0) + 1
+                    # Document TF using Counter (more efficient)
+                    doc_tf = Counter(doc_terms_list)
 
                     doc_terms_unique = list(doc_tf.keys())
                     doc_terms_arr = np.array([hash(t) for t in doc_terms_unique], dtype=np.int64)
@@ -362,10 +358,8 @@ def dense_retrieve(
                     sims.append(similarity)
             else:
                 # Pure Python fallback (no Numba)
-                # Precompute query term frequencies once
-                query_tf = {}
-                for term in query_terms:
-                    query_tf[term] = query_tf.get(term, 0) + 1
+                # Precompute query term frequencies once using Counter
+                query_tf = Counter(query_terms)
 
                 sims = []
                 for doc in corpus:
@@ -374,9 +368,8 @@ def dense_retrieve(
                         sims.append(0.0)
                         continue
 
-                    doc_tf = {}
-                    for term in doc_terms:
-                        doc_tf[term] = doc_tf.get(term, 0) + 1
+                    # Use Counter for efficient term frequency computation
+                    doc_tf = Counter(doc_terms)
 
                     # Use pure Python similarity computation
                     similarity = _compute_tf_similarity_python(query_tf, doc_tf)
@@ -705,9 +698,7 @@ class DenseRetriever(BaseRetriever):
                 else:
                     if _NUMBA_AVAILABLE:
                         # Use JIT-compiled version for better performance
-                        query_tf = {}
-                        for term in query_terms:
-                            query_tf[term] = query_tf.get(term, 0) + 1
+                        query_tf = Counter(query_terms)
 
                         query_terms_unique = list(query_tf.keys())
                         query_terms_arr = np.array(
@@ -724,9 +715,7 @@ class DenseRetriever(BaseRetriever):
                                 sims.append(0.0)
                                 continue
 
-                            doc_tf = {}
-                            for term in doc_terms_list:
-                                doc_tf[term] = doc_tf.get(term, 0) + 1
+                            doc_tf = Counter(doc_terms_list)
 
                             doc_terms_unique = list(doc_tf.keys())
                             doc_terms_arr = np.array(
@@ -749,13 +738,8 @@ class DenseRetriever(BaseRetriever):
                                 sims.append(0.0)
                                 continue
 
-                            query_tf = {}
-                            for term in query_terms:
-                                query_tf[term] = query_tf.get(term, 0) + 1
-
-                            doc_tf = {}
-                            for term in doc_terms:
-                                doc_tf[term] = doc_tf.get(term, 0) + 1
+                            query_tf = Counter(query_terms)
+                            doc_tf = Counter(doc_terms)
 
                             similarity = _compute_tf_similarity_python(query_tf, doc_tf)
                             sims.append(similarity)
