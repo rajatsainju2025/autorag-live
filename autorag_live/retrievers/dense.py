@@ -787,12 +787,15 @@ class DenseRetriever(BaseRetriever):
 
             return results
 
-    def retrieve_batch(self, queries: List[QueryText], k: int = 5) -> List[RetrievalResult]:
+    def retrieve_batch(
+        self, queries: List[QueryText], k: int = 5, dedup_results: bool = False
+    ) -> List[RetrievalResult]:
         """Retrieve documents for multiple queries efficiently.
 
         Args:
             queries: List of query strings
             k: Number of documents to retrieve per query
+            dedup_results: If True, remove near-duplicate results per query
 
         Returns:
             List of retrieval results, one per query
@@ -849,14 +852,27 @@ class DenseRetriever(BaseRetriever):
                     top_indices = top_part[np.argsort(sims[top_part])[::-1]]
 
                     query_results = []
+                    seen_normalized: Optional[set] = set() if dedup_results else None
+
                     for idx in top_indices:
-                        query_results.append((self.corpus[idx], float(sims[idx])))
+                        doc = self.corpus[idx]
+                        score = float(sims[idx])
+
+                        # Skip near-duplicates if deduplication enabled
+                        if dedup_results and seen_normalized is not None:
+                            normalized = doc.strip().lower()
+                            if normalized in seen_normalized:
+                                continue
+                            seen_normalized.add(normalized)
+
+                        query_results.append((doc, score))
+
                     results_batch.append(query_results)
 
                 return results_batch
             else:
                 # Fallback: process queries individually
-                return [self.retrieve(query, k) for query in queries]
+                return [self.retrieve(query, k, dedup_results) for query in queries]
 
     async def retrieve_async(self, query: QueryText, k: int = 5) -> RetrievalResult:
         """Async version of retrieve() for concurrent processing.
