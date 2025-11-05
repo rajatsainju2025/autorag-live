@@ -458,8 +458,10 @@ class DenseRetriever(BaseRetriever):
 
                 self.model = DenseRetriever._model_cache[self.model_name]
 
-                # Check cache for embeddings
-                cache_key = (self.model_name, tuple(documents))
+                # Check cache for embeddings using efficient hash-based key
+                # Instead of tuple(documents), use corpus hash to avoid O(n) memory overhead
+                corpus_hash = hash(tuple(tuple(d) for d in documents)) % (2**32)
+                cache_key = (self.model_name, corpus_hash)
                 if self.cache_embeddings:
                     cached_embeddings = DenseRetriever._embedding_cache.get(cache_key)
                     if cached_embeddings is not None:
