@@ -408,6 +408,7 @@ class DenseRetriever(BaseRetriever):
         batch_size: int = 32,
         enable_prefetch: bool = False,
         prefetch_threshold: int = 3,
+        use_fp16: bool = False,
     ):
         super().__init__()
         self.model_name = model_name
@@ -415,6 +416,7 @@ class DenseRetriever(BaseRetriever):
         self.batch_size = batch_size
         self.enable_prefetch = enable_prefetch
         self.prefetch_threshold = prefetch_threshold
+        self.use_fp16 = use_fp16  # Use float16 for 50% memory reduction
         self.corpus: List[str] = []
 
         # Pre-fetching state
@@ -466,12 +468,16 @@ class DenseRetriever(BaseRetriever):
                         # Batch encode for better performance
                         if self.model is not None:
                             try:
-                                self.corpus_embeddings = self.model.encode(
+                                embeddings = self.model.encode(
                                     documents,
                                     batch_size=self.batch_size,
                                     show_progress_bar=False,
                                     convert_to_numpy=True,
                                     normalize_embeddings=True,
+                                )
+                                # Convert to float16 if enabled (50% memory reduction)
+                                self.corpus_embeddings = (
+                                    embeddings.astype(np.float16) if self.use_fp16 else embeddings
                                 )
                                 self._embeddings_are_normalized = True
                                 DenseRetriever._embedding_cache.put(
@@ -484,12 +490,16 @@ class DenseRetriever(BaseRetriever):
                     # Batch encode for better performance (no caching)
                     if self.model is not None:
                         try:
-                            self.corpus_embeddings = self.model.encode(
+                            embeddings = self.model.encode(
                                 documents,
                                 batch_size=self.batch_size,
                                 show_progress_bar=False,
                                 convert_to_numpy=True,
                                 normalize_embeddings=True,
+                            )
+                            # Convert to float16 if enabled (50% memory reduction)
+                            self.corpus_embeddings = (
+                                embeddings.astype(np.float16) if self.use_fp16 else embeddings
                             )
                             self._embeddings_are_normalized = True
                         except Exception as e:
