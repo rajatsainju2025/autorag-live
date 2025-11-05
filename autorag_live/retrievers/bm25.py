@@ -31,11 +31,22 @@ _TOKENIZED_QUERY_CACHE_MAXSIZE = 64
 
 
 def _corpus_signature(corpus: List[str]) -> str:
-    """Compute a stable signature for a corpus for caching."""
+    """Compute efficient corpus signature for caching.
+
+    Uses length + hash of first and last docs instead of all docs
+    to avoid O(n) computation for large corpora.
+    """
     md5 = hashlib.md5()
+    # Use length and total char count for quick signature
     md5.update(str(len(corpus)).encode())
-    for doc in corpus:
-        md5.update(hashlib.md5(doc.encode()).digest())
+    md5.update(str(sum(len(d) for d in corpus)).encode())
+
+    # Hash first and last document (representative sample)
+    if corpus:
+        md5.update(hashlib.md5(corpus[0].encode()).digest())
+        if len(corpus) > 1:
+            md5.update(hashlib.md5(corpus[-1].encode()).digest())
+
     return md5.hexdigest()
 
 
