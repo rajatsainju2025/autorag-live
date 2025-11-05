@@ -622,8 +622,19 @@ class DenseRetriever(BaseRetriever):
         logger.info("Cleared pre-fetch pool and query patterns")
 
     @handle_errors(RetrieverError)
-    def retrieve(self, query: QueryText, k: int = 5) -> RetrievalResult:
-        """Retrieve documents for a query."""
+    def retrieve(
+        self, query: QueryText, k: int = 5, dedup_results: bool = False
+    ) -> RetrievalResult:
+        """Retrieve documents for a query.
+
+        Args:
+            query: Query text
+            k: Number of results to retrieve
+            dedup_results: If True, remove near-duplicate results (case-insensitive)
+
+        Returns:
+            List of (document, score) tuples
+        """
         from ..utils import monitor_performance
 
         if not self.is_initialized:
@@ -759,8 +770,20 @@ class DenseRetriever(BaseRetriever):
             top_indices = top_part[np.argsort(sims[top_part])[::-1]]
 
             results = []
+            seen_normalized: Optional[set] = set() if dedup_results else None
+
             for idx in top_indices:
-                results.append((self.corpus[idx], float(sims[idx])))
+                doc = self.corpus[idx]
+                score = float(sims[idx])
+
+                # Skip near-duplicates if deduplication enabled
+                if dedup_results and seen_normalized is not None:
+                    normalized = doc.strip().lower()
+                    if normalized in seen_normalized:
+                        continue
+                    seen_normalized.add(normalized)
+
+                results.append((doc, score))
 
             return results
 
