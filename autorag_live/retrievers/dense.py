@@ -433,6 +433,7 @@ class DenseRetriever(BaseRetriever):
         enable_prefetch: bool = False,
         prefetch_threshold: int = 3,
         use_fp16: bool = False,
+        enable_mmap: bool = False,
     ):
         super().__init__()
         self.model_name = model_name
@@ -441,6 +442,7 @@ class DenseRetriever(BaseRetriever):
         self.enable_prefetch = enable_prefetch
         self.prefetch_threshold = prefetch_threshold
         self.use_fp16 = use_fp16  # Use float16 for 50% memory reduction
+        self.enable_mmap = enable_mmap  # Use memory-mapped storage for very large corpora
         self.corpus: List[str] = []
 
         # Pre-fetching state
@@ -555,6 +557,37 @@ class DenseRetriever(BaseRetriever):
             self._avg_doc_length = float(np.mean([len(doc) for doc in self.corpus]))
         else:
             self._avg_doc_length = 0.0
+
+    def _enable_mmap_if_needed(self, embeddings: np.ndarray) -> np.ndarray:
+        """Convert embeddings to memory-mapped storage if enabled.
+
+        For very large corpora, memory-mapped files reduce RAM usage.
+
+        Args:
+            embeddings: Embedding array
+
+        Returns:
+            Embeddings (possibly memory-mapped)
+        """
+        if not self.enable_mmap or len(embeddings) < 10000:
+            return embeddings
+
+        try:
+            # Create temporary mmap file
+            mmap_file = f"/tmp/autorag_embeddings_{id(self)}.bin"
+            mmap_embeddings = np.memmap(
+                mmap_file,
+                dtype=embeddings.dtype,
+                mode="w+",
+                shape=embeddings.shape,
+            )
+            mmap_embeddings[:] = embeddings[:]
+            mmap_embeddings.flush()
+            logger.info(f"Embeddings stored in memory-mapped file: {mmap_file}")
+            return np.array(mmap_embeddings, copy=True)
+        except Exception as e:
+            logger.warning(f"Failed to enable mmap: {e}. Using regular arrays.")
+            return embeddings
 
     def get_corpus_stats(self) -> Dict[str, float]:
         """Get cached corpus statistics.
