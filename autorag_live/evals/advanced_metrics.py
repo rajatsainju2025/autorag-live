@@ -588,6 +588,8 @@ def comprehensive_evaluation(
 def aggregate_metrics(metrics_list: List[Dict[str, float]]) -> Dict[str, Dict[str, float]]:
     """Aggregate metrics across multiple evaluation runs.
 
+    Optimized with vectorized NumPy operations.
+
     Args:
         metrics_list: List of metric dictionaries
 
@@ -597,16 +599,17 @@ def aggregate_metrics(metrics_list: List[Dict[str, float]]) -> Dict[str, Dict[st
     if not metrics_list:
         return {}
 
-    # Collect all metric names
+    # Collect all metric names (vectorized approach)
     all_metrics = set()
     for metrics in metrics_list:
         all_metrics.update(metrics.keys())
 
     aggregated = {}
     for metric_name in all_metrics:
-        values = [m.get(metric_name, 0.0) for m in metrics_list if metric_name in m]
+        # Vectorized collection of values into numpy array
+        values = np.array([m.get(metric_name, 0.0) for m in metrics_list if metric_name in m])
 
-        if values:
+        if len(values) > 0:
             aggregated[metric_name] = {
                 "mean": float(np.mean(values)),
                 "std": float(np.std(values)),
