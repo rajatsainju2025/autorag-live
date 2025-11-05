@@ -121,6 +121,37 @@ else:
         return decorator
 
 
+# Cache normalized queries (term lists) to avoid redundant preprocessing
+_QUERY_NORMALIZATION_CACHE: "OrderedDict[str, List[str]]" = OrderedDict()
+_QUERY_NORMALIZATION_CACHE_MAXSIZE = 256
+
+
+def _get_normalized_query_terms(query: str) -> List[str]:
+    """Get normalized query terms with caching.
+
+    Args:
+        query: Query string
+
+    Returns:
+        List of normalized query terms
+    """
+    # Check cache first
+    cached = _QUERY_NORMALIZATION_CACHE.get(query)
+    if cached is not None:
+        _QUERY_NORMALIZATION_CACHE.move_to_end(query)
+        return cached
+
+    # Compute normalized terms
+    terms = query.lower().split()
+
+    # Cache result with LRU eviction
+    _QUERY_NORMALIZATION_CACHE[query] = terms
+    while len(_QUERY_NORMALIZATION_CACHE) > _QUERY_NORMALIZATION_CACHE_MAXSIZE:
+        _QUERY_NORMALIZATION_CACHE.popitem(last=False)
+
+    return terms
+
+
 class TTLCache:
     """Thread-safe TTL cache with size-based eviction."""
 
@@ -323,7 +354,7 @@ def dense_retrieve(
             raise RetrieverError(f"Dense retrieval failed: {e}")
     else:
         # Improved fallback: TF-IDF like scoring with optional JIT compilation
-        query_terms = query.lower().split()
+        query_terms = _get_normalized_query_terms(query)
         if not query_terms:
             sims = np.zeros(len(corpus), dtype=float)
         else:
@@ -692,7 +723,7 @@ class DenseRetriever(BaseRetriever):
                     raise RetrieverError(f"Similarity computation failed: {e}")
             else:
                 # Fallback: TF-IDF like scoring with optional JIT compilation
-                query_terms = query.lower().split()
+                query_terms = _get_normalized_query_terms(query)
                 if not query_terms:
                     sims = np.zeros(len(self.corpus), dtype=float)
                 else:
