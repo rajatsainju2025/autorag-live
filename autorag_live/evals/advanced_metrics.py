@@ -240,14 +240,18 @@ def novelty_score(retrieved_docs: List[str], query_history: List[str]) -> float:
 
 
 def semantic_coverage(
-    retrieved_docs: List[str], all_relevant_docs: List[str], embeddings: Optional[np.ndarray] = None
+    retrieved_docs: List[str],
+    all_relevant_docs: List[str],
+    embeddings: Optional[np.ndarray] = None,
 ) -> float:
     """Calculate semantic coverage of relevant documents.
+
+    Optimized version with efficient indexing and vectorized operations.
 
     Args:
         retrieved_docs: Retrieved documents
         all_relevant_docs: All relevant documents
-        embeddings: Pre-computed embeddings
+        embeddings: Pre-computed embeddings for all docs
 
     Returns:
         Semantic coverage score
@@ -255,13 +259,19 @@ def semantic_coverage(
     if not all_relevant_docs or embeddings is None:
         return 0.0
 
-    retrieved_embeddings = embeddings[: len(retrieved_docs)]
-    relevant_embeddings = embeddings[
-        len(retrieved_docs) : len(retrieved_docs) + len(all_relevant_docs)
-    ]
+    num_retrieved = len(retrieved_docs)
+    num_relevant = len(all_relevant_docs)
 
-    if len(retrieved_embeddings) == 0 or len(relevant_embeddings) == 0:
+    # Bounds checking to avoid invalid slicing
+    if num_retrieved == 0 or num_relevant == 0:
         return 0.0
+
+    if num_retrieved + num_relevant > len(embeddings):
+        return 0.0
+
+    # Vectorized similarity computation
+    retrieved_embeddings = embeddings[:num_retrieved]
+    relevant_embeddings = embeddings[num_retrieved : num_retrieved + num_relevant]
 
     # Calculate maximum similarity for each relevant doc to any retrieved doc
     max_similarities = []
