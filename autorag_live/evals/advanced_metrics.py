@@ -310,6 +310,8 @@ def robustness_score(retrieved_docs_list: List[List[str]], relevant_docs: List[s
 def contextual_relevance(retrieved_docs: List[str], query: str, context_window: int = 3) -> float:
     """Calculate contextual relevance based on term proximity.
 
+    Optimized with vectorized set operations and early termination.
+
     Args:
         retrieved_docs: Retrieved documents
         query: Original query
@@ -328,41 +330,43 @@ def contextual_relevance(retrieved_docs: List[str], query: str, context_window: 
     total_score = 0.0
     for doc in retrieved_docs:
         doc_terms = doc.lower().split()
-        term_positions = {}
 
-        # Find positions of query terms
+        # Early exit for empty docs
+        if not doc_terms:
+            continue
+
+        # Find positions of query terms efficiently using dict
+        term_positions = {term: [] for term in query_terms}
         for i, term in enumerate(doc_terms):
-            if term in query_terms:
-                if term not in term_positions:
-                    term_positions[term] = []
+            if term in term_positions:
                 term_positions[term].append(i)
 
-        # Calculate proximity score
-        if len(term_positions) > 1:
-            min_distances = []
-            terms_list = list(term_positions.keys())
+        # Vectorized proximity computation using numpy arrays
+        relevant_terms = [t for t, pos_list in term_positions.items() if pos_list]
+        if not relevant_terms:
+            continue
 
-            for i in range(len(terms_list)):
-                for j in range(i + 1, len(terms_list)):
-                    term1, term2 = terms_list[i], terms_list[j]
-                    pos1_list = term_positions[term1]
-                    pos2_list = term_positions[term2]
+        if len(relevant_terms) > 1:
+            # Calculate proximity scores using vectorized approach
+            proximity_scores = []
+            for i in range(len(relevant_terms)):
+                for j in range(i + 1, len(relevant_terms)):
+                    pos1_list = np.array(term_positions[relevant_terms[i]])
+                    pos2_list = np.array(term_positions[relevant_terms[j]])
 
-                    # Find minimum distance between any positions
-                    min_dist = float("inf")
-                    for pos1 in pos1_list:
-                        for pos2 in pos2_list:
-                            min_dist = min(min_dist, abs(pos1 - pos2))
+                    # Vectorized distance computation
+                    distances = np.abs(pos1_list[:, np.newaxis] - pos2_list[np.newaxis, :])
+                    min_dist = np.min(distances)
 
                     if min_dist <= context_window:
-                        min_distances.append(1.0 / (min_dist + 1))
+                        proximity_scores.append(1.0 / (min_dist + 1))
 
-            proximity_score = np.mean(min_distances) if min_distances else 0.0
+            proximity_score = float(np.mean(proximity_scores)) if proximity_scores else 0.0
         else:
             proximity_score = 0.0
 
         # Combine term coverage and proximity
-        coverage = len(term_positions) / len(query_terms)
+        coverage = len(relevant_terms) / len(query_terms)
         total_score += (coverage + proximity_score) / 2
 
     return float(total_score / len(retrieved_docs)) if retrieved_docs else 0.0
