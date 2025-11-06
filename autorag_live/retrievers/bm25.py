@@ -132,8 +132,19 @@ class BM25Retriever(BaseRetriever):
             self._tokenized_cache.clear()
             self._is_initialized = True
 
-    def retrieve(self, query: QueryText, k: int = 5) -> RetrievalResult:
-        """Retrieve documents for a query."""
+    def retrieve(
+        self, query: QueryText, k: int = 5, dedup_results: bool = False
+    ) -> RetrievalResult:
+        """Retrieve documents for a query using BM25.
+
+        Args:
+            query: Query string
+            k: Number of documents to retrieve
+            dedup_results: If True, remove near-duplicate results
+
+        Returns:
+            List of (document, score) tuples
+        """
         if not self.is_initialized:
             raise RetrieverError("Retriever not initialized. Call add_documents() first.")
 

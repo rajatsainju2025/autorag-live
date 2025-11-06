@@ -7,6 +7,19 @@ import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 
 
+@lru_cache(maxsize=512)
+def _get_relevant_set(relevant_docs: tuple) -> frozenset:
+    """Cache set conversion for frequently used relevant documents.
+
+    Args:
+        relevant_docs: Tuple of relevant document strings
+
+    Returns:
+        Frozen set for efficient membership testing
+    """
+    return frozenset(relevant_docs)
+
+
 @lru_cache(maxsize=128)
 def _get_discount_factors(length: int) -> np.ndarray:
     """Cache discount factors for efficiency."""
