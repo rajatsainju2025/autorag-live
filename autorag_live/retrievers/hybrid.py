@@ -1,11 +1,12 @@
-from typing import List
+from typing import Dict, List
 
 from . import bm25, dense
 
 
 def hybrid_retrieve(query: str, corpus: List[str], k: int, bm25_weight: float = 0.5) -> List[str]:
-    """
-    Retrieves top-k documents from the corpus using a hybrid of BM25 and dense retrieval.
+    """Retrieve top-k documents using hybrid BM25 and dense retrieval.
+
+    Uses equal contribution strategy for fast, balanced results.
     """
     if not corpus:
         return []
@@ -19,18 +20,30 @@ def hybrid_retrieve(query: str, corpus: List[str], k: int, bm25_weight: float = 
     if not (0.0 <= bm25_weight <= 1.0):
         raise ValueError("bm25_weight must be between 0.0 and 1.0")
 
-    # Placeholder implementation
-    bm25_results = bm25.bm25_retrieve(query, corpus, k)
-    dense_results = dense.dense_retrieve(query, corpus, k)
+    dense_weight = 1.0 - bm25_weight
 
-    # Simple interleaving for now
-    results = []
-    for i in range(k):
-        if i % 2 == 0 and bm25_results:
-            results.append(bm25_results.pop(0))
-        elif dense_results:
-            results.append(dense_results.pop(0))
-    return results
+    # Get results from both retrievers (2x k for flexibility)
+    bm25_results = bm25.bm25_retrieve(query, corpus, min(k * 2, len(corpus)))
+    dense_results = dense.dense_retrieve(query, corpus, min(k * 2, len(corpus)))
+
+    # Score each document based on position in both rankings
+    scores: Dict[str, float] = {}
+
+    # Assign scores based on ranking position (inverse ranking)
+    # Lower position = higher score
+    for i, doc in enumerate(bm25_results):
+        if doc not in scores:
+            scores[doc] = 0.0
+        scores[doc] += bm25_weight * (1.0 - i / len(bm25_results))
+
+    for i, doc in enumerate(dense_results):
+        if doc not in scores:
+            scores[doc] = 0.0
+        scores[doc] += dense_weight * (1.0 - i / len(dense_results))
+
+    # Return top-k by combined score
+    top_docs = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:k]
+    return [doc for doc, _ in top_docs]
 
 
 class HybridRetriever:
