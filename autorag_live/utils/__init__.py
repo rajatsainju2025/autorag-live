@@ -1,5 +1,6 @@
 """Utility functions and helpers for AutoRAG-Live."""
 
+from .batch_processing import BatchProcessor, ChunkIterator, estimate_optimal_batch_size
 from .cache import (
     Cache,
     CacheManager,
@@ -20,6 +21,15 @@ from .logging_config import (
     logging_context,
     setup_logging,
 )
+from .numpy_ops import (
+    batch_cosine_similarity,
+    batched_dot_product,
+    chunk_array,
+    cosine_similarity_fast,
+    ranked_top_k,
+    reduce_memory_copies,
+    top_k_similarity,
+)
 from .performance import (
     PerformanceMonitor,
     SystemMonitor,
@@ -31,6 +41,7 @@ from .performance import (
     stop_system_monitoring,
     system_monitor,
 )
+from .performance_metrics import MemoryMonitor, PerformanceMetrics
 from .schema import AutoRAGConfig, CacheConfig, EvaluationConfig, LoggingConfig, RetrievalConfig
 
 __all__ = [
@@ -63,6 +74,21 @@ __all__ = [
     "start_system_monitoring",
     "stop_system_monitoring",
     "get_system_metrics",
+    # New performance metrics
+    "PerformanceMetrics",
+    "MemoryMonitor",
+    # Numpy operations
+    "batch_cosine_similarity",
+    "batched_dot_product",
+    "chunk_array",
+    "cosine_similarity_fast",
+    "ranked_top_k",
+    "reduce_memory_copies",
+    "top_k_similarity",
+    # Batch processing
+    "BatchProcessor",
+    "ChunkIterator",
+    "estimate_optimal_batch_size",
     # Schema
     "AutoRAGConfig",
     "RetrievalConfig",
