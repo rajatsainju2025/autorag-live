@@ -73,10 +73,11 @@ def handle_errors(
     """
 
     def decorator(func: F) -> F:
+        logger = get_logger(func.__module__)  # Cache logger at decoration time
+        func_name = func.__name__  # Cache function name at decoration time
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            logger = get_logger(func.__module__)
-
             try:
                 return func(*args, **kwargs)
 
@@ -85,14 +86,23 @@ def handle_errors(
                 raise
 
             except Exception as e:
-                # Wrap other exceptions
+                # Wrap other exceptions with minimal overhead
+                context = {
+                    "function": func_name,
+                }
+                # Only include args/kwargs if they're small
+                if args:
+                    args_str = str(args)[:100]
+                    if len(args_str) < 100:
+                        context["args"] = args_str
+                if kwargs:
+                    kwargs_str = str(kwargs)[:100]
+                    if len(kwargs_str) < 100:
+                        context["kwargs"] = kwargs_str
+
                 wrapped_error = error_type(
-                    message=f"Error in {func.__name__}: {str(e)}",
-                    context={
-                        "function": func.__name__,
-                        "args": str(args)[:200],  # Limit size
-                        "kwargs": str(kwargs)[:200],
-                    },
+                    message=f"Error in {func_name}: {str(e)}",
+                    context=context,
                     cause=e,
                 )
 
@@ -100,9 +110,7 @@ def handle_errors(
                     error_dict = wrapped_error.to_dict()
                     # Remove 'message' key to avoid LogRecord conflict
                     error_dict.pop("message", None)
-                    logger.error(
-                        f"Error in {func.__name__}: {str(e)}", extra=error_dict, exc_info=True
-                    )
+                    logger.error(f"Error in {func_name}: {str(e)}", extra=error_dict, exc_info=True)
 
                 if reraise:
                     raise wrapped_error
@@ -136,10 +144,11 @@ def with_retry(
     """
 
     def decorator(func: F) -> F:
+        logger = get_logger(func.__module__)  # Cache logger
+        func_name = func.__name__  # Cache function name
+
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            logger = get_logger(func.__module__)
-
             last_exception = None
             current_delay = delay
 
@@ -156,7 +165,7 @@ def with_retry(
 
                     if log_attempts:
                         logger.warning(
-                            f"Attempt {attempt + 1}/{max_attempts} failed for {func.__name__}: {str(e)}"
+                            f"Attempt {attempt + 1}/{max_attempts} failed for {func_name}: {str(e)}"
                         )
 
                     import time
@@ -169,7 +178,7 @@ def with_retry(
                 raise last_exception
             else:
                 raise AutoRAGError(
-                    message=f"Function {func.__name__} failed after {max_attempts} attempts",
+                    message=f"Function {func_name} failed after {max_attempts} attempts",
                     context={"last_error": str(last_exception)},
                     cause=last_exception,
                 )
