@@ -78,3 +78,54 @@ def config_manager(temp_config_dir: Path) -> Generator[ConfigManager, None, None
     # Reset singleton for other tests
     ConfigManager._instance = None
     ConfigManager._config = None
+
+
+# New optimization-focused fixtures
+
+
+@pytest.fixture
+def embedding_cache():
+    """Create a fresh embedding cache for testing."""
+    from autorag_live.cache.embedding_cache import EmbeddingCache
+
+    cache = EmbeddingCache(max_size=100, ttl_seconds=None)
+    yield cache
+    cache.clear()
+
+
+@pytest.fixture
+def tokenization_cache():
+    """Create a fresh tokenization cache for testing."""
+    from autorag_live.cache.tokenization_cache import TokenizationCache
+
+    cache = TokenizationCache(max_size=100)
+    yield cache
+    cache.clear()
+
+
+@pytest.fixture
+def query_cache():
+    """Create a fresh query cache for testing."""
+    from autorag_live.cache.query_cache import QueryCache
+
+    cache = QueryCache(max_size=100, ttl_seconds=None)
+    yield cache
+    cache.clear()
+
+
+@pytest.fixture
+def performance_metrics():
+    """Create a fresh metrics collector for testing."""
+    from autorag_live.utils.performance_metrics import PerformanceMetrics
+
+    metrics = PerformanceMetrics()
+    yield metrics
+    metrics.clear()
+
+
+@pytest.fixture
+def batch_processor():
+    """Create a batch processor for testing."""
+    from autorag_live.utils.batch_processing import BatchProcessor
+
+    return BatchProcessor(batch_size=32)
