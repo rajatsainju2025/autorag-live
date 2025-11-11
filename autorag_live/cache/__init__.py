@@ -3,6 +3,12 @@ Advanced Query Caching System for AutoRAG-Live.
 
 This module provides LRU and intelligent caching strategies to reduce redundant
 query processing, embedding computation, and retrieval operations.
+
+Caching components:
+    - EmbeddingCache: LRU cache for embedding vectors
+    - TokenizationCache: LRU cache for tokenization results
+    - QueryCache: LRU cache for query results
+    - DistributedCacheManager: Multi-cache coordination
 """
 from __future__ import annotations
 
