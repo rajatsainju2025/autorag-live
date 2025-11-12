@@ -13,6 +13,13 @@ from .cache import (
     get_cache,
 )
 from .config import ConfigManager
+from .lazy_loader import (
+    LazyLoader,
+    get_elasticsearch_client,
+    get_qdrant_client,
+    get_sentence_transformer,
+    lazy_import,
+)
 from .logging_config import (
     get_audit_logger,
     get_logger,
@@ -57,6 +64,12 @@ __all__ = [
     "clear_all_caches",
     # Configuration
     "ConfigManager",
+    # Lazy loading
+    "LazyLoader",
+    "get_elasticsearch_client",
+    "get_qdrant_client",
+    "get_sentence_transformer",
+    "lazy_import",
     # Logging
     "get_audit_logger",
     "get_logger",

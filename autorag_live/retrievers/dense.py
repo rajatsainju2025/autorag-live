@@ -978,6 +978,7 @@ class DenseRetriever(BaseRetriever):
             queries: List of query strings
             k: Number of documents to retrieve per query
             max_concurrent: Maximum number of concurrent queries to process
+            dedup_results: If True, remove near-duplicate results per query
 
         Returns:
             List of retrieval results, one per query
@@ -1004,7 +1005,11 @@ class DenseRetriever(BaseRetriever):
         return await asyncio.gather(*tasks)
 
     def retrieve_concurrent(
-        self, queries: List[QueryText], k: int = 5, max_workers: int = 4
+        self,
+        queries: List[QueryText],
+        k: int = 5,
+        max_workers: int = 4,
+        dedup_results: bool = False,
     ) -> List[RetrievalResult]:
         """Concurrent retrieval using ThreadPoolExecutor.
 
@@ -1012,6 +1017,7 @@ class DenseRetriever(BaseRetriever):
             queries: List of query strings
             k: Number of documents to retrieve per query
             max_workers: Maximum number of worker threads
+            dedup_results: If True, remove near-duplicate results per query
 
         Returns:
             List of retrieval results, one per query
