@@ -154,6 +154,10 @@ def _get_normalized_query_terms(query: str) -> List[str]:
         return terms
 
 
+# Memory pressure monitoring for batch processing
+_BATCH_MEMORY_THRESHOLD_MB = 2000  # 2GB default threshold for streaming
+
+
 class TTLCache:
     """Thread-safe TTL cache with size-based eviction."""
 
