@@ -95,7 +95,11 @@ class ElasticsearchRetriever(DenseRetriever):
                     "metadata": {"type": "object", "dynamic": True},
                 }
             },
-            "settings": {"number_of_shards": 1, "number_of_replicas": 0},
+            "settings": {
+                "number_of_shards": 1,
+                "number_of_replicas": 0,
+                "refresh_interval": "1s",  # Faster refresh for near-real-time search
+            },
         }
         return mapping
 
@@ -142,7 +146,8 @@ class ElasticsearchRetriever(DenseRetriever):
         # Bulk index
         _ensure_elasticsearch_available()
         bulk_func = cast(Any, bulk)
-        success, failed = bulk_func(self.client, actions, refresh=True)
+        # Use chunk_size for better memory management during bulk indexing
+        success, failed = bulk_func(self.client, actions, refresh=True, chunk_size=500)
 
         if failed:
             logger.warning(f"Failed to index {len(failed)} documents")
