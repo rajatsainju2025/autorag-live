@@ -210,6 +210,29 @@ class EmbeddingCache:
 
         await loop.run_in_executor(None, _save)
 
+    def cleanup_expired(self) -> int:
+        """Remove all expired entries.
+
+        Returns:
+            Number of removed entries.
+        """
+        if self.ttl_seconds is None:
+            return 0
+
+        now = time.time()
+        expired_count = 0
+        with self.lock:
+            # Create list of keys to avoid runtime error during iteration
+            keys = list(self.timestamps.keys())
+            for key in keys:
+                if now - self.timestamps[key] > self.ttl_seconds:
+                    if key in self.cache:
+                        del self.cache[key]
+                    if key in self.timestamps:
+                        del self.timestamps[key]
+                    expired_count += 1
+        return expired_count
+
 
 # Optimization: perf(cache): add model cache manager with memory eviction
 
