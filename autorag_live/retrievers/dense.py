@@ -525,6 +525,7 @@ class DenseRetriever(BaseRetriever):
                     cached_embeddings = DenseRetriever._embedding_cache.get(cache_key)
                     if cached_embeddings is not None:
                         self.corpus_embeddings = cached_embeddings
+                        self._embeddings_are_normalized = True
                     else:
                         # Batch encode for better performance
                         if self.model is not None:
