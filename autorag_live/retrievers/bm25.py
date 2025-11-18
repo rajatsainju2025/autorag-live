@@ -2,6 +2,7 @@ import hashlib
 import re
 import threading
 from collections import OrderedDict
+from functools import lru_cache
 from typing import Any, List
 
 import numpy as np
@@ -205,6 +206,7 @@ class BM25Retriever(BaseRetriever):
         raise NotImplementedError("BM25 retriever persistence not implemented")
 
     @staticmethod
+    @lru_cache(maxsize=1024)
     def _tokenize(text: str) -> List[str]:
         """Tokenize incoming text consistently."""
         # Use regex to avoid costly split() on large texts and strip punctuation
