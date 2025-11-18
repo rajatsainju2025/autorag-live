@@ -1205,6 +1205,31 @@ class DenseRetriever(BaseRetriever):
         cls._model_cache.clear()
         cls._embedding_cache.clear()
 
+    def profile_memory(self) -> Dict[str, float]:
+        """Profile memory usage of the retriever.
+
+        Returns:
+            Dictionary with memory usage stats in MB
+        """
+        from .memory_profiler import get_object_size
+
+        stats = {
+            "corpus_mb": get_object_size(self.corpus) / (1024 * 1024),
+            "embeddings_mb": (
+                get_object_size(self.corpus_embeddings) / (1024 * 1024)
+                if self.corpus_embeddings is not None
+                else 0.0
+            ),
+            "normalized_cache_mb": (
+                get_object_size(self._corpus_embeddings_normalized) / (1024 * 1024)
+                if self._corpus_embeddings_normalized is not None
+                else 0.0
+            ),
+            "prefetch_pool_mb": get_object_size(self._prefetch_pool) / (1024 * 1024),
+        }
+        stats["total_mb"] = sum(stats.values())
+        return stats
+
 
 # Optimization: perf(mmap): add memory-mapped embeddings for large corpora
 
