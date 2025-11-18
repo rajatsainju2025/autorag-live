@@ -315,9 +315,36 @@ def _compute_tf_similarity_python(query_tf: Dict[str, int], doc_tf: Dict[str, in
 
 
 # Lightweight LRU model cache for function API to avoid reloads (thread-safe)
-_ST_MODEL_CACHE: "OrderedDict[str, Any]" = OrderedDict()
-_ST_MODEL_CACHE_MAXSIZE = 2
-_ST_MODEL_CACHE_LOCK = threading.Lock()
+class ModelCacheManager:
+    """Thread-safe model cache with memory-based eviction."""
+
+    def __init__(self, max_models: int = 2):
+        self.max_models = max_models
+        self._cache: "OrderedDict[str, Any]" = OrderedDict()
+        self._lock = threading.RLock()
+
+    def get_model(self, model_name: str) -> Any:
+        """Get or load a model with LRU eviction."""
+        with self._lock:
+            if model_name in self._cache:
+                self._cache.move_to_end(model_name)
+                return self._cache[model_name]
+
+            # Load model
+            if SentenceTransformer is None:
+                raise ImportError("SentenceTransformer not available")
+
+            model = SentenceTransformer(model_name)
+
+            # Evict if needed
+            while len(self._cache) >= self.max_models:
+                self._cache.popitem(last=False)
+
+            self._cache[model_name] = model
+            return model
+
+
+_MODEL_CACHE_MANAGER = ModelCacheManager(max_models=2)
 
 
 @handle_errors(RetrieverError)
@@ -339,15 +366,7 @@ def dense_retrieve(
     if SentenceTransformer is not None and cosine_similarity is not None:
         try:
             # Reuse cached model if available (thread-safe)
-            with _ST_MODEL_CACHE_LOCK:
-                model = _ST_MODEL_CACHE.get(model_name)
-                if model is not None:
-                    _ST_MODEL_CACHE.move_to_end(model_name)
-                else:
-                    model = SentenceTransformer(model_name)
-                    _ST_MODEL_CACHE[model_name] = model
-                    while len(_ST_MODEL_CACHE) > _ST_MODEL_CACHE_MAXSIZE:
-                        _ST_MODEL_CACHE.popitem(last=False)
+            model = _MODEL_CACHE_MANAGER.get_model(model_name)
             # Encode with normalization in-model to avoid extra numpy ops
             query_embedding = model.encode(
                 [query], convert_to_numpy=True, normalize_embeddings=True
