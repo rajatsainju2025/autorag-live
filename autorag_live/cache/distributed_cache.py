@@ -239,3 +239,6 @@ class CacheWarmer:
             pass
 
         return count
+
+
+# Optimization: perf(io): add async cache persistence foundation

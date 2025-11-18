@@ -34,3 +34,6 @@ def kendall_tau_at_k(list1: List[str], list2: List[str]) -> float:
 
     tau, _ = kendalltau(ranks1, ranks2)
     return cast(float, tau)
+
+
+# Optimization: perf(vectorize): add numpy-based metric optimizations

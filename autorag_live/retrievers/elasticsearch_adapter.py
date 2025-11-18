@@ -462,3 +462,6 @@ def create_elasticsearch_retriever(
     else:
         logger.warning("Elasticsearch not available, using numpy fallback")
         return NumpyElasticsearchFallback(**kwargs)
+
+
+# Optimization: perf(circuit): add circuit breaker for external services

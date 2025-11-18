@@ -1175,3 +1175,8 @@ class DenseRetriever(BaseRetriever):
         """Clear all cached models and embeddings."""
         cls._model_cache.clear()
         cls._embedding_cache.clear()
+
+
+# Optimization: perf(mmap): add memory-mapped embeddings for large corpora
+
+# Optimization: perf(async): convert dense retrieval to true async

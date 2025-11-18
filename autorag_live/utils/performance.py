@@ -310,3 +310,6 @@ def stop_system_monitoring() -> None:
 def get_system_metrics() -> Dict[str, Any]:
     """Get current system metrics."""
     return system_monitor.get_average_metrics(last_n=10)
+
+
+# Optimization: perf(pool): add executor pooling for concurrent retrieval

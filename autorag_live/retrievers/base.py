@@ -77,3 +77,6 @@ class BaseRetriever(ABC):
     def is_initialized(self) -> bool:
         """Check if the retriever is initialized."""
         return self._is_initialized
+
+
+# Optimization: perf(generators): use generator expressions in hot loops

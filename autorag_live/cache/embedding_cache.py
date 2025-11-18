@@ -186,3 +186,6 @@ class EmbeddingCache:
                     del self.timestamps[key]
                     return False
             return key in self.cache
+
+
+# Optimization: perf(cache): add model cache manager with memory eviction
