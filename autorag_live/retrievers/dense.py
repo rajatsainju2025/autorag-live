@@ -711,6 +711,15 @@ class DenseRetriever(BaseRetriever):
         # Pre-fetch if query crosses threshold
         if self._query_patterns[normalized] >= self.prefetch_threshold:
             if normalized not in self._prefetch_pool and self.model is not None:
+                # Check global cache first to avoid re-encoding
+                if self.cache_embeddings:
+                    cache_key = (self.model_name, query)
+                    with DenseRetriever._embedding_cache_lock:
+                        cached = DenseRetriever._embedding_cache.get(cache_key)
+                    if cached is not None:
+                        self._prefetch_pool[normalized] = cached
+                        return
+
                 try:
                     embedding = self.model.encode([query], show_progress_bar=False)[0]
                     self._prefetch_pool[normalized] = embedding
