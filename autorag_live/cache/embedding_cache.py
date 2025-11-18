@@ -187,6 +187,29 @@ class EmbeddingCache:
                     return False
             return key in self.cache
 
+    async def save_async(self, filepath: str) -> None:
+        """Save cache to disk asynchronously.
+
+        Args:
+            filepath: Path to save cache file
+        """
+        import asyncio
+        import pickle
+
+        loop = asyncio.get_running_loop()
+        # Create a snapshot of data to save to avoid thread safety issues during serialization
+        with self.lock:
+            data = {
+                "cache": self.cache,
+                "timestamps": self.timestamps,
+            }
+
+        def _save():
+            with open(filepath, "wb") as f:
+                pickle.dump(data, f)
+
+        await loop.run_in_executor(None, _save)
+
 
 # Optimization: perf(cache): add model cache manager with memory eviction
 
