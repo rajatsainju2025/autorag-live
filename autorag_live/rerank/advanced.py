@@ -9,10 +9,10 @@ This module implements state-of-the-art reranking algorithms including:
 """
 from __future__ import annotations
 
+import math
+from collections import Counter
 from dataclasses import dataclass
 from typing import Any, Callable, Dict, List, Optional, Tuple
-
-import numpy as np
 
 from autorag_live.utils import get_logger
 
@@ -76,15 +76,16 @@ class MMRReranker:
         if not tokens1 or not tokens2:
             sim = 0.0
         else:
-            # Build term frequency vectors
-            vocab = sorted(set(tokens1 + tokens2))
-            vec1 = np.array([tokens1.count(t) for t in vocab], dtype=float)
-            vec2 = np.array([tokens2.count(t) for t in vocab], dtype=float)
+            # Use Counter for efficient sparse vector operations
+            c1 = Counter(tokens1)
+            c2 = Counter(tokens2)
 
-            # Cosine similarity
-            dot = np.dot(vec1, vec2)
-            norm1 = np.linalg.norm(vec1)
-            norm2 = np.linalg.norm(vec2)
+            # Dot product only on intersection
+            intersection = set(c1.keys()) & set(c2.keys())
+            dot = sum(c1[t] * c2[t] for t in intersection)
+
+            norm1 = math.sqrt(sum(v * v for v in c1.values()))
+            norm2 = math.sqrt(sum(v * v for v in c2.values()))
 
             if norm1 == 0 or norm2 == 0:
                 sim = 0.0
@@ -115,23 +116,24 @@ class MMRReranker:
         selected: List[RankedDocument] = []
         remaining = documents.copy()
 
+        # Pre-compute relevance scores
+        relevance_scores = {
+            doc.content: self.similarity_fn(query, doc.content) for doc in documents
+        }
+
+        # Track max similarity to selected docs for each remaining doc
+        # Initialize with 0.0
+        max_sim_to_selected = {doc.content: 0.0 for doc in documents}
+
         while len(selected) < top_k and remaining:
             mmr_scores = []
 
             for doc in remaining:
-                # Relevance to query
-                relevance = self.similarity_fn(query, doc.content)
-
-                # Maximum similarity to already selected docs
-                if selected:
-                    max_similarity = max(
-                        self.similarity_fn(doc.content, s.content) for s in selected
-                    )
-                else:
-                    max_similarity = 0.0
-
                 # MMR score
-                mmr = self.lambda_param * relevance - (1 - self.lambda_param) * max_similarity
+                mmr = (
+                    self.lambda_param * relevance_scores[doc.content]
+                    - (1 - self.lambda_param) * max_sim_to_selected[doc.content]
+                )
                 mmr_scores.append((doc, mmr))
 
             # Select document with highest MMR score
@@ -139,6 +141,12 @@ class MMRReranker:
             best_doc.score = best_score  # Update score to MMR score
             selected.append(best_doc)
             remaining.remove(best_doc)
+
+            # Update max similarity for remaining docs
+            for doc in remaining:
+                sim = self.similarity_fn(doc.content, best_doc.content)
+                if sim > max_sim_to_selected[doc.content]:
+                    max_sim_to_selected[doc.content] = sim
 
         logger.debug(f"MMR reranked {len(documents)} → {len(selected)} documents")
         return selected
