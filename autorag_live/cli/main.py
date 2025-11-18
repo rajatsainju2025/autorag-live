@@ -24,10 +24,11 @@ from autorag_live.pipeline.hybrid_optimizer import (
 )
 from autorag_live.rerank.simple import SimpleReranker
 from autorag_live.retrievers import bm25, dense, hybrid
-from autorag_live.utils import setup_logging
+from autorag_live.utils import get_logger, setup_logging
 
 # Setup logging
 setup_logging()
+logger = get_logger(__name__)
 
 app = typer.Typer()
 
@@ -58,7 +59,7 @@ def disagree(
     """
     Run disagreement analysis between different retrievers for a given query.
     """
-    print(f"Running disagreement analysis for query: '{query}'")
+    logger.info(f"Running disagreement analysis for query: '{query}'")
 
     # Ensure the reports directory exists
     os.makedirs(os.path.dirname(report_path), exist_ok=True)
@@ -91,9 +92,9 @@ def disagree(
     mined = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
     if mined:
         update_terms_from_mining(mined)
-        print(f"Updated terms.yaml with {len(mined)} synonym groups")
+        logger.info(f"Updated terms.yaml with {len(mined)} synonym groups")
 
-    print(f"Disagreement report saved to {report_path}")
+    logger.info(f"Disagreement report saved to {report_path}")
 
 
 @app.command()
@@ -106,11 +107,11 @@ def eval(
     """Run evaluation suites (e.g., small)."""
     if suite == "small":
         summary = run_small_suite(judge_type=judge)
-        print(f"EM={summary['metrics']['em']:.3f} F1={summary['metrics']['f1']:.3f}")
+        logger.info(f"EM={summary['metrics']['em']:.3f} F1={summary['metrics']['f1']:.3f}")
         print(
             f"Relevance={summary['metrics']['relevance']:.3f} Faithfulness={summary['metrics']['faithfulness']:.3f}"
         )
-        print(f"Wrote runs/{summary['run_id']}.json")
+        logger.info(f"Wrote runs/{summary['run_id']}.json")
     else:
         raise typer.BadParameter(f"Unknown suite: {suite}")
 
@@ -128,16 +129,18 @@ def optimize(
     def update_func():
         weights, score = grid_search_hybrid_weights(queries, CORPUS, k=5, grid_size=4)
         save_hybrid_config(weights)
-        print(f"New weights: BM25={weights.bm25_weight:.3f}, Dense={weights.dense_weight:.3f}")
-        print(f"Diversity score: {score:.3f}")
+        logger.info(
+            f"New weights: BM25={weights.bm25_weight:.3f}, Dense={weights.dense_weight:.3f}"
+        )
+        logger.info(f"Diversity score: {score:.3f}")
 
     policy = AcceptancePolicy(threshold=0.01)
     accepted = safe_config_update(update_func, ["hybrid_config.json"], policy)
 
     if accepted:
-        print("✅ Optimization accepted!")
+        logger.info("✅ Optimization accepted!")
     else:
-        print("❌ Optimization reverted.")
+        logger.info("❌ Optimization reverted.")
 
 
 @app.command()
@@ -150,7 +153,7 @@ def advanced_eval(
     output_file: Annotated[Optional[str], typer.Option(help="Output file for metrics")] = None,
 ):
     """Run advanced evaluation metrics for a query."""
-    print(f"Running advanced evaluation for query: '{query}'")
+    logger.info(f"Running advanced evaluation for query: '{query}'")
 
     # Get retrieved documents from different retrievers
     bm25_results = bm25.bm25_retrieve(query, CORPUS, 5)
@@ -164,15 +167,15 @@ def advanced_eval(
     for name, results in retrievers.items():
         metrics = comprehensive_evaluation(results, relevant_docs, query)
         all_metrics[name] = metrics
-        print(f"\n{name} Metrics:")
+        logger.info(f"\n{name} Metrics:")
         for metric_name, value in metrics.items():
-            print(f"  {metric_name}: {value:.3f}")
+            logger.info(f"  {metric_name}: {value:.3f}")
 
     # Aggregate metrics
     aggregated = aggregate_metrics(list(all_metrics.values()))
-    print("\nAggregated Metrics:")
+    logger.info("\nAggregated Metrics:")
     for metric_name, stats in aggregated.items():
-        print(f"  {metric_name}: {stats['mean']:.3f} ± {stats['std']:.3f}")
+        logger.info(f"  {metric_name}: {stats['mean']:.3f} ± {stats['std']:.3f}")
 
     # Save to file if requested
     if output_file:
@@ -184,7 +187,7 @@ def advanced_eval(
         }
         with open(output_file, "w") as f:
             json.dump(result, f, indent=2)
-        print(f"\nResults saved to {output_file}")
+        logger.info(f"\nResults saved to {output_file}")
 
 
 @app.command()
@@ -197,19 +200,19 @@ def rerank(
     if docs is None:
         docs = CORPUS
 
-    print(f"Reranking {len(docs)} documents for query: '{query}'")
+    logger.info(f"Reranking {len(docs)} documents for query: '{query}'")
 
     # First retrieve documents
     retrieved_docs = hybrid.hybrid_retrieve(query, docs, k)
-    print(f"Initially retrieved {len(retrieved_docs)} documents")
+    logger.info(f"Initially retrieved {len(retrieved_docs)} documents")
 
     # Rerank using simple reranker
     reranker = SimpleReranker()
     reranked_docs = reranker.rerank(query, retrieved_docs)
 
-    print("\nReranked Results:")
+    logger.info("\nReranked Results:")
     for i, doc in enumerate(reranked_docs[:5]):  # Show top 5
-        print(f"{i+1}. {doc}")
+        logger.info(f"{i+1}. {doc}")
 
 
 @app.command()
@@ -223,7 +226,7 @@ def bandit_optimize(
     iterations: Annotated[int, typer.Option(help="Number of iterations")] = 10,
 ):
     """Optimize hybrid weights using bandit algorithms."""
-    print(f"Running {algorithm} bandit optimization with {iterations} iterations")
+    logger.info(f"Running {algorithm} bandit optimization with {iterations} iterations")
 
     optimizer = BanditHybridOptimizer(retriever_names=["bm25", "dense"], bandit_type=algorithm)
 
@@ -247,16 +250,18 @@ def bandit_optimize(
 
         # Update with reward
         optimizer.update_weights(weights, reward)
-        print(f"  Iteration {i+1}: weights=({bm25_w:.3f}, {dense_w:.3f}), reward={reward:.3f}")
+        logger.info(
+            f"  Iteration {i+1}: weights=({bm25_w:.3f}, {dense_w:.3f}), reward={reward:.3f}"
+        )
 
     # Get best configuration
     best_weights = optimizer.get_best_weights()
     stats = optimizer.get_statistics()
 
-    print("\nBest Configuration:")
-    print(f"  Weights: {best_weights}")
-    print(f"  Best Reward: {stats.get('best_reward', 0):.3f}")
-    print(f"  Total Pulls: {stats.get('total_pulls', 0)}")
+    logger.info("\nBest Configuration:")
+    logger.info(f"  Weights: {best_weights}")
+    logger.info(f"  Best Reward: {stats.get('best_reward', 0):.3f}")
+    logger.info(f"  Total Pulls: {stats.get('total_pulls', 0)}")
 
 
 @app.command()
@@ -267,7 +272,7 @@ def time_series_retrieve(
     time_window: Annotated[str, typer.Option(help="Time window (e.g., 7d, 30d)")] = "7d",
 ):
     """Retrieve documents using time-series aware retrieval."""
-    print(f"Running time-series retrieval for query: '{query}' with window: {time_window}")
+    logger.info(f"Running time-series retrieval for query: '{query}' with window: {time_window}")
 
     # Create sample time-series notes
     import random
@@ -299,10 +304,10 @@ def time_series_retrieve(
         query=query, query_time=base_time, top_k=5, time_window_days=window_days
     )
 
-    print(f"\nRetrieved {len(results)} documents within {time_window}:")
+    logger.info(f"\nRetrieved {len(results)} documents within {time_window}:")
     for i, result in enumerate(results):
         time_diff = result["time_diff_days"]
-        print(f"{i+1}. ({time_diff:.1f} days ago) {result['content']}")
+        logger.info(f"{i+1}. ({time_diff:.1f} days ago) {result['content']}")
         print(
             f"   Combined score: {result['combined_score']:.3f} "
             f"(temporal: {result['temporal_score']:.3f}, content: {result['content_score']:.3f})"
@@ -316,7 +321,7 @@ def compare_retrievers(
     output_file: Annotated[Optional[str], typer.Option(help="Output file for comparison")] = None,
 ):
     """Compare all available retrievers on a query."""
-    print(f"Comparing retrievers for query: '{query}'")
+    logger.info(f"Comparing retrievers for query: '{query}'")
 
     retrievers = {
         "BM25": lambda q, c, k: bm25.bm25_retrieve(q, c, k),
@@ -328,16 +333,16 @@ def compare_retrievers(
     for name, retrieve_func in retrievers.items():
         docs = retrieve_func(query, CORPUS, k)
         results[name] = docs
-        print(f"\n{name} Results:")
+        logger.info(f"\n{name} Results:")
         for i, doc in enumerate(docs):
-            print(f"  {i+1}. {doc}")
+            logger.info(f"  {i+1}. {doc}")
 
     # Save comparison if requested
     if output_file:
         comparison = {"query": query, "results": results, "timestamp": datetime.now().isoformat()}
         with open(output_file, "w") as f:
             json.dump(comparison, f, indent=2)
-        print(f"\nComparison saved to {output_file}")
+        logger.info(f"\nComparison saved to {output_file}")
 
 
 @app.command()
@@ -350,13 +355,13 @@ def config(
     if action == "show":
         try:
             config = load_hybrid_config()
-            print("Current Configuration:")
-            print(f"  BM25 Weight: {config.bm25_weight:.3f}")
-            print(f"  Dense Weight: {config.dense_weight:.3f}")
+            logger.info("Current Configuration:")
+            logger.info(f"  BM25 Weight: {config.bm25_weight:.3f}")
+            logger.info(f"  Dense Weight: {config.dense_weight:.3f}")
         except Exception as e:
-            print(f"No configuration found ({e}). Using defaults:")
-            print("  BM25 Weight: 0.500")
-            print("  Dense Weight: 0.500")
+            logger.info(f"No configuration found ({e}). Using defaults:")
+            logger.info("  BM25 Weight: 0.500")
+            logger.info("  Dense Weight: 0.500")
 
     elif action == "reset":
         # Reset to default
@@ -364,21 +369,21 @@ def config(
 
         default_config = HybridWeights(bm25_weight=0.5, dense_weight=0.5)
         save_hybrid_config(default_config)
-        print("Configuration reset to defaults.")
+        logger.info("Configuration reset to defaults.")
 
     elif action == "update":
         if bm25_weight is None or dense_weight is None:
-            print("Error: Both bm25_weight and dense_weight must be provided for update.")
+            logger.info("Error: Both bm25_weight and dense_weight must be provided for update.")
             return
 
         from autorag_live.pipeline.hybrid_optimizer import HybridWeights
 
         new_config = HybridWeights(bm25_weight=bm25_weight, dense_weight=dense_weight)
         save_hybrid_config(new_config)
-        print(f"Configuration updated: BM25={bm25_weight:.3f}, Dense={dense_weight:.3f}")
+        logger.info(f"Configuration updated: BM25={bm25_weight:.3f}, Dense={dense_weight:.3f}")
 
     else:
-        print(f"Unknown action: {action}. Use 'show', 'reset', or 'update'.")
+        logger.info(f"Unknown action: {action}. Use 'show', 'reset', or 'update'.")
 
 
 @app.command()
@@ -387,7 +392,7 @@ def self_improve(
     output_dir: Annotated[str, typer.Option(help="Output directory for results")] = "runs",
 ):
     """Run self-improvement loop (simplified version)."""
-    print(f"Running self-improvement loop for {iterations} iterations")
+    logger.info(f"Running self-improvement loop for {iterations} iterations")
 
     # Simple self-improvement simulation
     train_queries = ["bright sun", "blue sky", "fox mammal", "machine learning"]
@@ -395,7 +400,7 @@ def self_improve(
 
     history = []
     for i in range(iterations):
-        print(f"\nIteration {i+1}/{iterations}")
+        logger.info(f"\nIteration {i+1}/{iterations}")
 
         # Evaluate current performance
         bm25_results = bm25.bm25_retrieve(eval_queries[0], CORPUS, 5)
@@ -403,17 +408,19 @@ def self_improve(
         hybrid_results = hybrid.hybrid_retrieve(eval_queries[0], CORPUS, 5)
 
         diversity = metrics.jaccard_at_k(bm25_results, dense_results)
-        print(f"  Diversity: {diversity:.3f}")
+        logger.info(f"  Diversity: {diversity:.3f}")
 
         # Optimize weights
         weights, score = grid_search_hybrid_weights(train_queries, CORPUS, k=5, grid_size=3)
-        print(f"  New weights: BM25={weights.bm25_weight:.3f}, Dense={weights.dense_weight:.3f}")
+        logger.info(
+            f"  New weights: BM25={weights.bm25_weight:.3f}, Dense={weights.dense_weight:.3f}"
+        )
 
         # Mine synonyms
         synonyms = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
         if synonyms:
             update_terms_from_mining(synonyms)
-            print(f"  Added {len(synonyms)} synonym groups")
+            logger.info(f"  Added {len(synonyms)} synonym groups")
 
         history.append(
             {
@@ -430,7 +437,7 @@ def self_improve(
     with open(output_file, "w") as f:
         json.dump(history, f, indent=2)
 
-    print(f"\nSelf-improvement complete! Results saved to {output_file}")
+    logger.info(f"\nSelf-improvement complete! Results saved to {output_file}")
 
 
 @app.command()
@@ -454,13 +461,13 @@ def benchmark(
 
     if components is None:
         # Run full suite
-        print("Running full benchmark suite...")
+        logger.info("Running full benchmark suite...")
         results = run_full_benchmark_suite(output_file)
-        print(f"Completed {len(results)} benchmarks.")
+        logger.info(f"Completed {len(results)} benchmarks.")
         return
 
     # Run specific components
-    print(f"Running benchmarks for: {', '.join(components)}")
+    logger.info(f"Running benchmarks for: {', '.join(components)}")
 
     benchmark = PerformanceBenchmark()
 
@@ -484,7 +491,7 @@ def benchmark(
         elif component.lower() == "disagreement":
             benchmark_disagreement_analysis(corpus, queries, benchmark)
         else:
-            print(f"Unknown component: {component}")
+            logger.info(f"Unknown component: {component}")
 
     benchmark.print_summary()
 

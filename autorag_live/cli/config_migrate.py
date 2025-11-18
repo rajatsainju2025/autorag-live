@@ -14,8 +14,11 @@ from typing import cast
 from omegaconf import DictConfig, OmegaConf
 
 from autorag_live.types.types import ConfigurationError
+from autorag_live.utils import get_logger
 from autorag_live.utils.schema import AutoRAGConfig
 from autorag_live.utils.validation import migrate_config, validate_config
+
+logger = get_logger(__name__)
 
 
 def setup_logging(verbose: bool = False) -> None:
@@ -39,11 +42,11 @@ def migrate_command(args: argparse.Namespace) -> int:
         output_path = Path(args.output) if args.output else None
 
         if not input_path.exists():
-            print(f"ERROR: Input file does not exist: {input_path}")
+            logger.error(f"Input file does not exist: {input_path}")
             return 1
 
         # Load configuration
-        print(f"Loading configuration from {input_path}")
+        logger.info(f"Loading configuration from {input_path}")
         config = OmegaConf.load(input_path)
 
         # Determine current version
@@ -51,7 +54,7 @@ def migrate_command(args: argparse.Namespace) -> int:
         current_version = dict_config.get("version", "0.1.0")
         target_version = args.to_version
 
-        print(f"Migrating from v{current_version} to v{target_version}")
+        logger.info(f"Migrating from v{current_version} to v{target_version}")
 
         # Perform migration
         migrated_config = migrate_config(
@@ -60,28 +63,28 @@ def migrate_command(args: argparse.Namespace) -> int:
 
         # Validate migrated configuration
         if args.validate:
-            print("Validating migrated configuration...")
+            logger.info("Validating migrated configuration...")
             validate_config(migrated_config, AutoRAGConfig)
-            print("✓ Configuration is valid")
+            logger.info("✓ Configuration is valid")
 
         # Save migrated configuration
         if output_path:
-            print(f"Saving migrated configuration to {output_path}")
+            logger.info(f"Saving migrated configuration to {output_path}")
             output_path.parent.mkdir(parents=True, exist_ok=True)
             OmegaConf.save(migrated_config, output_path)
         else:
-            # Print to stdout
-            print("\nMigrated configuration:")
-            print(OmegaConf.to_yaml(migrated_config))
+            # Log to stdout
+            logger.info("Migrated configuration:")
+            logger.info(OmegaConf.to_yaml(migrated_config))
 
-        print("✓ Migration completed successfully")
+        logger.info("✓ Migration completed successfully")
         return 0
 
     except ConfigurationError as e:
-        print(f"ERROR: Configuration migration failed: {e}")
+        logger.error(f"Configuration migration failed: {e}")
         return 1
     except Exception as e:
-        print(f"ERROR: Unexpected error during migration: {e}")
+        logger.error(f"Unexpected error during migration: {e}")
         if args.verbose:
             import traceback
 
@@ -103,24 +106,24 @@ def validate_command(args: argparse.Namespace) -> int:
         input_path = Path(args.input)
 
         if not input_path.exists():
-            print(f"ERROR: Input file does not exist: {input_path}")
+            logger.error(f"Input file does not exist: {input_path}")
             return 1
 
         # Load and validate configuration
-        print(f"Validating configuration from {input_path}")
+        logger.info(f"Validating configuration from {input_path}")
         config = OmegaConf.load(input_path)
 
         dict_config = cast(DictConfig, config)
         validate_config(dict_config, AutoRAGConfig)
 
-        print("✓ Configuration is valid")
+        logger.info("✓ Configuration is valid")
         return 0
 
     except ConfigurationError as e:
-        print(f"ERROR: Configuration validation failed: {e}")
+        logger.error(f"Configuration validation failed: {e}")
         return 1
     except Exception as e:
-        print(f"ERROR: Unexpected error during validation: {e}")
+        logger.error(f"Unexpected error during validation: {e}")
         if args.verbose:
             import traceback
 
@@ -142,30 +145,30 @@ def info_command(args: argparse.Namespace) -> int:
         input_path = Path(args.input)
 
         if not input_path.exists():
-            print(f"ERROR: Input file does not exist: {input_path}")
+            logger.error(f"Input file does not exist: {input_path}")
             return 1
 
         # Load configuration
         config = OmegaConf.load(input_path)
 
         # Display information
-        print(f"Configuration Information for: {input_path}")
-        print("=" * 50)
+        logger.info(f"Configuration Information for: {input_path}")
+        logger.info("=" * 50)
 
         dict_config = cast(DictConfig, config)
         version = dict_config.get("version", "unknown")
-        print(f"Version: {version}")
+        logger.info(f"Version: {version}")
 
         # Count sections
         sections = [k for k in config.keys() if k != "version"]
-        print(f"Sections: {len(sections)}")
+        logger.info(f"Sections: {len(sections)}")
         for section in sections:
-            print(f"  - {section}")
+            logger.info(f"  - {section}")
 
         # Display structure
         if args.show_structure:
-            print("\nConfiguration Structure:")
-            print(OmegaConf.to_yaml(config))
+            logger.info("Configuration Structure:")
+            logger.info(OmegaConf.to_yaml(config))
 
         return 0
 
