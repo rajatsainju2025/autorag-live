@@ -49,6 +49,7 @@ class BatchAugmentationPipeline:
         queries: List[str],
         rewrite_fn,
         num_rewrites: int = 3,
+        max_workers: int = 4,
     ) -> List[str]:
         """
         Generate query rewrites in batches.
@@ -57,16 +58,20 @@ class BatchAugmentationPipeline:
             queries: List of query strings
             rewrite_fn: Function to generate rewrites
             num_rewrites: Number of rewrites per query
+            max_workers: Number of parallel workers
 
         Returns:
             Original queries + rewrites
         """
         results = list(queries)  # Include originals
 
-        for i in range(0, len(queries), self.batch_size):
-            batch = queries[i : i + self.batch_size]
-            for query in batch:
-                rewrites = rewrite_fn(query, num_rewrites)
+        def process_query(query):
+            return rewrite_fn(query, num_rewrites)
+
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Process all queries in parallel
+            rewrites_list = executor.map(process_query, queries)
+            for rewrites in rewrites_list:
                 results.extend(rewrites)
 
         return results
