@@ -1,5 +1,6 @@
 """Batch augmentation pipeline for efficient processing."""
 
+from concurrent.futures import ThreadPoolExecutor
 from typing import List
 
 
@@ -14,6 +15,7 @@ class BatchAugmentationPipeline:
         self,
         texts: List[str],
         augmentation_fn,
+        max_workers: int = 4,
     ) -> List[str]:
         """
         Apply augmentation to a batch of texts.
@@ -21,16 +23,24 @@ class BatchAugmentationPipeline:
         Args:
             texts: List of text strings
             augmentation_fn: Function to apply to each text
+            max_workers: Number of parallel workers
 
         Returns:
             Augmented texts
         """
-        augmented = []
+        if not texts:
+            return []
 
-        for i in range(0, len(texts), self.batch_size):
-            batch = texts[i : i + self.batch_size]
-            batch_result = [augmentation_fn(t) for t in batch]
-            augmented.extend(batch_result)
+        batches = [texts[i : i + self.batch_size] for i in range(0, len(texts), self.batch_size)]
+
+        def process_batch(batch):
+            return [augmentation_fn(t) for t in batch]
+
+        augmented = []
+        with ThreadPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(process_batch, batches)
+            for res in results:
+                augmented.extend(res)
 
         return augmented
 
