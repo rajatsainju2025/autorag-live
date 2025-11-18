@@ -100,6 +100,12 @@ class HybridRetriever:
             bm25_scores = {doc: score for doc, score in bm25_results}
             dense_scores = {doc: score for doc, score in dense_results}
 
+            # Normalize BM25 scores to [0, 1] range for fair combination
+            if bm25_scores:
+                max_bm25 = max(bm25_scores.values())
+                if max_bm25 > 0:
+                    bm25_scores = {doc: score / max_bm25 for doc, score in bm25_scores.items()}
+
             # Combine scores for all unique documents
             all_docs = set(bm25_scores.keys()) | set(dense_scores.keys())
             combined_scores = {}
