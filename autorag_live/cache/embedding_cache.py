@@ -189,3 +189,5 @@ class EmbeddingCache:
 
 
 # Optimization: perf(cache): add model cache manager with memory eviction
+
+# Optimization: perf(evict-approx): optimize cache eviction with sampling

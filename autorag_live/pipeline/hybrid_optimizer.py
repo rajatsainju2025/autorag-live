@@ -124,3 +124,6 @@ def load_hybrid_config(path: str = "hybrid_config.json") -> HybridWeights:
         f"Loaded hybrid config from {path}: BM25={weights.bm25_weight:.2f}, Dense={weights.dense_weight:.2f}"
     )
     return weights
+
+
+# Optimization: perf(batch-tune): implement adaptive batch sizing
