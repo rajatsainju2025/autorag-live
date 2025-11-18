@@ -208,4 +208,4 @@ class BM25Retriever(BaseRetriever):
     def _tokenize(text: str) -> List[str]:
         """Tokenize incoming text consistently."""
         # Use regex to avoid costly split() on large texts and strip punctuation
-        return [t for t in _TOKEN_PATTERN.findall(text.lower()) if t]
+        return _TOKEN_PATTERN.findall(text.lower())
