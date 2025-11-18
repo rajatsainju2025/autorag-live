@@ -176,19 +176,26 @@ class DiversityReranker:
         self.num_clusters = num_clusters
         self.cluster_sample_ratio = cluster_sample_ratio
         self.similarity_fn = similarity_fn or self._default_similarity
+        self._similarity_cache: Dict[Tuple[str, str], float] = {}
 
     def _default_similarity(self, text1: str, text2: str) -> float:
         """Simple token overlap similarity."""
+        key = (text1, text2) if text1 <= text2 else (text2, text1)
+        if key in self._similarity_cache:
+            return self._similarity_cache[key]
+
         tokens1 = set(text1.lower().split())
         tokens2 = set(text2.lower().split())
 
         if not tokens1 or not tokens2:
-            return 0.0
+            sim = 0.0
+        else:
+            intersection = len(tokens1 & tokens2)
+            union = len(tokens1 | tokens2)
+            sim = intersection / union if union > 0 else 0.0
 
-        intersection = len(tokens1 & tokens2)
-        union = len(tokens1 | tokens2)
-
-        return intersection / union if union > 0 else 0.0
+        self._similarity_cache[key] = sim
+        return sim
 
     def _cluster_documents(self, documents: List[RankedDocument]) -> List[List[RankedDocument]]:
         """Simple k-means-like clustering of documents."""
