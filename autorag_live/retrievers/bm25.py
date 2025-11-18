@@ -1,5 +1,6 @@
 import hashlib
 import re
+import threading
 from collections import OrderedDict
 from typing import Any, List
 
@@ -22,12 +23,14 @@ logger = get_logger(__name__)
 # Pre-compiled token pattern for fast tokenization (alphanumeric word tokens)
 _TOKEN_PATTERN = re.compile(r"\w+")
 
-# Small LRU cache for BM25 instances keyed by corpus signature
+# Small LRU cache for BM25 instances keyed by corpus signature (thread-safe)
 _BM25_CACHE: "OrderedDict[str, Any]" = OrderedDict()
 _BM25_CACHE_MAXSIZE = 2
+_BM25_CACHE_LOCK = threading.Lock()
 _SCORES_CACHE_MAXSIZE = 128
 _TOKENIZED_QUERY_CACHE: "OrderedDict[str, List[str]]" = OrderedDict()
 _TOKENIZED_QUERY_CACHE_MAXSIZE = 64
+_TOKENIZED_QUERY_CACHE_LOCK = threading.Lock()
 
 
 def _corpus_signature(corpus: List[str]) -> str:
@@ -51,26 +54,27 @@ def _corpus_signature(corpus: List[str]) -> str:
 
 
 def _get_bm25_for_corpus(corpus: List[str]) -> Any:
-    """Get or build a BM25Okapi instance for the given corpus with LRU caching."""
+    """Get or build a BM25Okapi instance for the given corpus with LRU caching (thread-safe)."""
     if not BM25_AVAILABLE or BM25Okapi is None:
         raise ImportError("rank_bm25 is required for bm25_retrieve but is not installed")
 
     sig = _corpus_signature(corpus)
-    cached = _BM25_CACHE.get(sig)
-    if cached is not None:
-        # LRU: move to end
-        _BM25_CACHE.move_to_end(sig)
-        return cached
+    with _BM25_CACHE_LOCK:
+        cached = _BM25_CACHE.get(sig)
+        if cached is not None:
+            # LRU: move to end
+            _BM25_CACHE.move_to_end(sig)
+            return cached
 
-    tokenized_corpus = [BM25Retriever._tokenize(doc) for doc in corpus]
-    bm25 = BM25Okapi(tokenized_corpus)  # type: ignore[call-arg]
+        tokenized_corpus = [BM25Retriever._tokenize(doc) for doc in corpus]
+        bm25 = BM25Okapi(tokenized_corpus)  # type: ignore[call-arg]
 
-    # Insert into cache and enforce size
-    _BM25_CACHE[sig] = bm25
-    while len(_BM25_CACHE) > _BM25_CACHE_MAXSIZE:
-        _BM25_CACHE.popitem(last=False)
+        # Insert into cache and enforce size
+        _BM25_CACHE[sig] = bm25
+        while len(_BM25_CACHE) > _BM25_CACHE_MAXSIZE:
+            _BM25_CACHE.popitem(last=False)
 
-    return bm25
+        return bm25
 
 
 def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
@@ -87,12 +91,13 @@ def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
         raise ValueError("k must be positive")
 
     bm25 = _get_bm25_for_corpus(corpus)
-    tokenized_query = _TOKENIZED_QUERY_CACHE.get(query)
-    if tokenized_query is None:
-        tokenized_query = BM25Retriever._tokenize(query)
-        _TOKENIZED_QUERY_CACHE[query] = tokenized_query
-        while len(_TOKENIZED_QUERY_CACHE) > _TOKENIZED_QUERY_CACHE_MAXSIZE:
-            _TOKENIZED_QUERY_CACHE.popitem(last=False)
+    with _TOKENIZED_QUERY_CACHE_LOCK:
+        tokenized_query = _TOKENIZED_QUERY_CACHE.get(query)
+        if tokenized_query is None:
+            tokenized_query = BM25Retriever._tokenize(query)
+            _TOKENIZED_QUERY_CACHE[query] = tokenized_query
+            while len(_TOKENIZED_QUERY_CACHE) > _TOKENIZED_QUERY_CACHE_MAXSIZE:
+                _TOKENIZED_QUERY_CACHE.popitem(last=False)
     doc_scores = np.asarray(bm25.get_scores(tokenized_query), dtype=np.float32)
 
     if doc_scores.size == 0:

@@ -121,9 +121,10 @@ else:
         return decorator
 
 
-# Cache normalized queries (term lists) to avoid redundant preprocessing
+# Cache normalized queries (term lists) to avoid redundant preprocessing (thread-safe)
 _QUERY_NORMALIZATION_CACHE: "OrderedDict[str, List[str]]" = OrderedDict()
 _QUERY_NORMALIZATION_CACHE_MAXSIZE = 256
+_QUERY_NORMALIZATION_CACHE_LOCK = threading.Lock()
 
 
 def _get_normalized_query_terms(query: str) -> List[str]:
@@ -135,21 +136,22 @@ def _get_normalized_query_terms(query: str) -> List[str]:
     Returns:
         List of normalized query terms
     """
-    # Check cache first
-    cached = _QUERY_NORMALIZATION_CACHE.get(query)
-    if cached is not None:
-        _QUERY_NORMALIZATION_CACHE.move_to_end(query)
-        return cached
+    with _QUERY_NORMALIZATION_CACHE_LOCK:
+        # Check cache first
+        cached = _QUERY_NORMALIZATION_CACHE.get(query)
+        if cached is not None:
+            _QUERY_NORMALIZATION_CACHE.move_to_end(query)
+            return cached
 
-    # Compute normalized terms
-    terms = query.lower().split()
+        # Compute normalized terms
+        terms = query.lower().split()
 
-    # Cache result with LRU eviction
-    _QUERY_NORMALIZATION_CACHE[query] = terms
-    while len(_QUERY_NORMALIZATION_CACHE) > _QUERY_NORMALIZATION_CACHE_MAXSIZE:
-        _QUERY_NORMALIZATION_CACHE.popitem(last=False)
+        # Cache result with LRU eviction
+        _QUERY_NORMALIZATION_CACHE[query] = terms
+        while len(_QUERY_NORMALIZATION_CACHE) > _QUERY_NORMALIZATION_CACHE_MAXSIZE:
+            _QUERY_NORMALIZATION_CACHE.popitem(last=False)
 
-    return terms
+        return terms
 
 
 class TTLCache:
@@ -308,9 +310,10 @@ def _compute_tf_similarity_python(query_tf: Dict[str, int], doc_tf: Dict[str, in
     return dot_product / (query_mag * doc_mag) if query_mag * doc_mag > 0 else 0.0
 
 
-# Lightweight LRU model cache for function API to avoid reloads
+# Lightweight LRU model cache for function API to avoid reloads (thread-safe)
 _ST_MODEL_CACHE: "OrderedDict[str, Any]" = OrderedDict()
 _ST_MODEL_CACHE_MAXSIZE = 2
+_ST_MODEL_CACHE_LOCK = threading.Lock()
 
 
 @handle_errors(RetrieverError)
@@ -331,15 +334,16 @@ def dense_retrieve(
 
     if SentenceTransformer is not None and cosine_similarity is not None:
         try:
-            # Reuse cached model if available
-            model = _ST_MODEL_CACHE.get(model_name)
-            if model is not None:
-                _ST_MODEL_CACHE.move_to_end(model_name)
-            else:
-                model = SentenceTransformer(model_name)
-                _ST_MODEL_CACHE[model_name] = model
-                while len(_ST_MODEL_CACHE) > _ST_MODEL_CACHE_MAXSIZE:
-                    _ST_MODEL_CACHE.popitem(last=False)
+            # Reuse cached model if available (thread-safe)
+            with _ST_MODEL_CACHE_LOCK:
+                model = _ST_MODEL_CACHE.get(model_name)
+                if model is not None:
+                    _ST_MODEL_CACHE.move_to_end(model_name)
+                else:
+                    model = SentenceTransformer(model_name)
+                    _ST_MODEL_CACHE[model_name] = model
+                    while len(_ST_MODEL_CACHE) > _ST_MODEL_CACHE_MAXSIZE:
+                        _ST_MODEL_CACHE.popitem(last=False)
             # Encode with normalization in-model to avoid extra numpy ops
             query_embedding = model.encode(
                 [query], convert_to_numpy=True, normalize_embeddings=True
@@ -421,9 +425,11 @@ def dense_retrieve(
 class DenseRetriever(BaseRetriever):
     """Dense retriever implementation with caching and lazy loading."""
 
-    # Global caches with TTL and size limits
+    # Global caches with TTL and size limits (thread-safe access)
     _model_cache: dict = {}  # Simple dict for models (no TTL needed)
+    _model_cache_lock = threading.Lock()  # Protect model cache access
     _embedding_cache = TTLCache(max_size=100, ttl_seconds=3600)  # 1 hour TTL, 100 items max
+    _embedding_cache_lock = threading.Lock()  # Protect embedding cache access
 
     def __init__(
         self,
@@ -480,13 +486,13 @@ class DenseRetriever(BaseRetriever):
             self._corpus_embeddings_normalized = None  # Reset normalized cache
 
             if SentenceTransformer is not None and cosine_similarity is not None:
-                # Lazy load model
-                if self.model_name not in DenseRetriever._model_cache:
-                    DenseRetriever._model_cache[self.model_name] = self._load_model_with_retry(
-                        self.model_name
-                    )
-
-                self.model = DenseRetriever._model_cache[self.model_name]
+                # Lazy load model (thread-safe)
+                with DenseRetriever._model_cache_lock:
+                    if self.model_name not in DenseRetriever._model_cache:
+                        DenseRetriever._model_cache[self.model_name] = self._load_model_with_retry(
+                            self.model_name
+                        )
+                    self.model = DenseRetriever._model_cache[self.model_name]
 
                 # Check cache for embeddings using efficient hash-based key
                 # Instead of tuple(documents), use corpus hash to avoid O(n) memory overhead
@@ -512,9 +518,10 @@ class DenseRetriever(BaseRetriever):
                                     embeddings.astype(np.float16) if self.use_fp16 else embeddings
                                 )
                                 self._embeddings_are_normalized = True
-                                DenseRetriever._embedding_cache.put(
-                                    cache_key, self.corpus_embeddings
-                                )
+                                with DenseRetriever._embedding_cache_lock:
+                                    DenseRetriever._embedding_cache.put(
+                                        cache_key, self.corpus_embeddings
+                                    )
                             except Exception as e:
                                 logger.error(f"Failed to encode documents: {e}")
                                 raise RetrieverError(f"Document encoding failed: {e}")
@@ -744,10 +751,13 @@ class DenseRetriever(BaseRetriever):
                 prefetched = self._get_prefetched_embedding(query)
                 if prefetched is not None:
                     query_embedding = prefetched
-                # Check query embedding cache
+                # Check query embedding cache (thread-safe)
                 elif self.cache_embeddings:
                     query_cache_key = (self.model_name, query)
-                    cached_query_embedding = DenseRetriever._embedding_cache.get(query_cache_key)
+                    with DenseRetriever._embedding_cache_lock:
+                        cached_query_embedding = DenseRetriever._embedding_cache.get(
+                            query_cache_key
+                        )
                     if cached_query_embedding is not None:
                         query_embedding = cached_query_embedding
                     else:
@@ -759,7 +769,10 @@ class DenseRetriever(BaseRetriever):
                                 convert_to_numpy=True,
                                 normalize_embeddings=True,
                             )[0]
-                            DenseRetriever._embedding_cache.put(query_cache_key, query_embedding)
+                            with DenseRetriever._embedding_cache_lock:
+                                DenseRetriever._embedding_cache.put(
+                                    query_cache_key, query_embedding
+                                )
                         except Exception as e:
                             logger.error(f"Failed to encode query '{query}': {e}")
                             raise RetrieverError(f"Query encoding failed: {e}")
@@ -1085,13 +1098,14 @@ class DenseRetriever(BaseRetriever):
 
             self._corpus_embeddings_normalized = None  # Reset normalized cache on load
 
-            # Recreate model if embeddings exist (lazy loading)
+            # Recreate model if embeddings exist (lazy loading, thread-safe)
             if self.corpus_embeddings is not None and SentenceTransformer is not None:
-                if self.model_name not in DenseRetriever._model_cache:
-                    DenseRetriever._model_cache[self.model_name] = SentenceTransformer(
-                        self.model_name
-                    )
-                self.model = DenseRetriever._model_cache[self.model_name]
+                with DenseRetriever._model_cache_lock:
+                    if self.model_name not in DenseRetriever._model_cache:
+                        DenseRetriever._model_cache[self.model_name] = SentenceTransformer(
+                            self.model_name
+                        )
+                    self.model = DenseRetriever._model_cache[self.model_name]
 
             self._is_initialized = True
             logger.info(f"Loaded retriever state from {path}")
