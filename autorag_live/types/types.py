@@ -56,11 +56,8 @@ DistanceMetric = Literal["cosine", "euclidean", "dot", "manhattan"]
 JudgeType = Literal["deterministic", "llm"]
 ModelDevice = Literal["cpu", "cuda", "mps"]
 OptimizerType = Literal["bandit", "grid", "bayesian"]
-
-# Constants and Literals
-# Remove duplicate definitions - already defined above
-MetricsDict = Dict[str, float]  # Type alias for metric dictionaries
-ConfigDict = Dict[str, Any]  # Type alias for configuration dictionaries
+PoolingStrategy = Literal["mean", "max", "weighted_mean", "cls"]
+CacheStrategy = Literal["lru", "ttl", "fifo"]
 
 
 @dataclass(frozen=True)

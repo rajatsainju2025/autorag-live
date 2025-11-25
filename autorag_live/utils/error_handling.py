@@ -7,6 +7,8 @@ strategies across the entire codebase.
 import functools
 import logging
 import sys
+import threading
+import time
 from typing import Any, Callable, Dict, Optional, Type, TypeVar
 
 from autorag_live.types import (
@@ -24,10 +26,14 @@ F = TypeVar("F", bound=Callable[..., Any])
 # Type variable for function return types
 T = TypeVar("T")
 
+# Thread-safe logger cache to avoid repeated logger creation
+_LOGGER_CACHE: Dict[str, logging.Logger] = {}
+_LOGGER_CACHE_LOCK = threading.Lock()
+
 
 def get_logger(name: str) -> logging.Logger:
     """
-    Get a configured logger instance.
+    Get a configured logger instance with thread-safe caching.
 
     Args:
         name: Logger name (usually __name__)
@@ -35,22 +41,33 @@ def get_logger(name: str) -> logging.Logger:
     Returns:
         Configured logger
     """
-    logger = logging.getLogger(name)
+    # Fast path: check if logger already exists without lock
+    if name in _LOGGER_CACHE:
+        return _LOGGER_CACHE[name]
 
-    # Avoid adding handlers multiple times
-    if not logger.handlers:
-        # Create console handler
-        console_handler = logging.StreamHandler(sys.stdout)
-        console_handler.setLevel(logging.INFO)
+    # Slow path: create logger with thread safety
+    with _LOGGER_CACHE_LOCK:
+        # Double-check after acquiring lock
+        if name in _LOGGER_CACHE:
+            return _LOGGER_CACHE[name]
 
-        # Create formatter
-        formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-        console_handler.setFormatter(formatter)
+        logger = logging.getLogger(name)
 
-        logger.addHandler(console_handler)
-        logger.setLevel(logging.INFO)
+        # Avoid adding handlers multiple times
+        if not logger.handlers:
+            # Create console handler
+            console_handler = logging.StreamHandler(sys.stdout)
+            console_handler.setLevel(logging.INFO)
 
-    return logger
+            # Create formatter
+            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+            console_handler.setFormatter(formatter)
+
+            logger.addHandler(console_handler)
+            logger.setLevel(logging.INFO)
+
+        _LOGGER_CACHE[name] = logger
+        return logger
 
 
 def handle_errors(
@@ -167,8 +184,6 @@ def with_retry(
                         logger.warning(
                             f"Attempt {attempt + 1}/{max_attempts} failed for {func_name}: {str(e)}"
                         )
-
-                    import time
 
                     time.sleep(current_delay)
                     current_delay *= backoff_factor
@@ -334,7 +349,41 @@ def configure_error_logging(
         root_logger.addHandler(file_handler)
 
 
-# Convenience functions for common error types
+# Optimized error factory using dictionary dispatch
+_ERROR_FACTORIES = {
+    "retriever": RetrieverError,
+    "evaluation": EvaluationError,
+    "pipeline": PipelineError,
+    "model": ModelError,
+    "data": DataError,
+    "validation": ValidationError,
+}
+
+
+def create_error(error_type: str, message: str, **kwargs) -> AutoRAGError:
+    """
+    Create an error of the specified type with standard formatting.
+
+    Args:
+        error_type: Type of error (retriever, evaluation, pipeline, model, data, validation)
+        message: Error message
+        **kwargs: Additional error context
+
+    Returns:
+        Appropriate AutoRAGError subclass
+
+    Raises:
+        ValueError: If error_type is unknown
+    """
+    error_class = _ERROR_FACTORIES.get(error_type)
+    if error_class is None:
+        raise ValueError(
+            f"Unknown error type: {error_type}. Available types: {list(_ERROR_FACTORIES.keys())}"
+        )
+    return error_class(message, **kwargs)
+
+
+# Convenience functions for backward compatibility
 def retrieval_error(message: str, **kwargs) -> RetrieverError:
     """Create a RetrieverError with standard formatting."""
     return RetrieverError(message, **kwargs)

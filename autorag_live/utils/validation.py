@@ -96,19 +96,23 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
                     non_none_types[0] if len(non_none_types) == 1 else Union[non_none_types]
                 )
 
-        # Handle Lists
-        if getattr(expected_type, "__origin__", None) is list:
+        # Handle Lists - optimized with early type check
+        origin = getattr(expected_type, "__origin__", None)
+        if origin is list:
             if not isinstance(value, collections.abc.Sequence):
                 raise ConfigurationError(f"Field '{name}' must be a list")
-            item_type = expected_type.__args__[0]
-            for i, item in enumerate(value):
-                validate_field(f"{name}[{i}]", item, item_type)
+            # Only validate items if type args are present
+            if hasattr(expected_type, "__args__") and expected_type.__args__:
+                item_type = expected_type.__args__[0]
+                for i, item in enumerate(value):
+                    validate_field(f"{name}[{i}]", item, item_type)
             return
 
-        # Handle Dicts (including OmegaConf DictConfig)
-        if getattr(expected_type, "__origin__", None) is dict:
+        # Handle Dicts (including OmegaConf DictConfig) - optimized with early check
+        if origin is dict:
             if not isinstance(value, collections.abc.Mapping):
                 raise ConfigurationError(f"Field '{name}' must be a dict or DictConfig")
+            # Only validate nested if type args are present
             if hasattr(expected_type, "__args__") and len(expected_type.__args__) >= 2:
                 key_type, value_type = expected_type.__args__
                 for k, v in value.items():
@@ -121,18 +125,21 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
             validate_config(value, expected_type)
             return
 
-        # Skip validation for typing.Any
+        # Skip validation for typing.Any - cached import
         from typing import Any as TypingAny
 
         if expected_type is TypingAny:
             return
 
-        # Basic type checking
+        # Basic type checking - optimized with hasattr check
         if not isinstance(value, expected_type):
             raise ConfigurationError(
                 f"Field '{name}' has invalid type. Expected {expected_type}, got {type(value)}"
             )
 
+    except ConfigurationError:
+        # Re-raise ConfigurationError as-is
+        raise
     except Exception as e:
         raise ConfigurationError(f"Validation failed for field '{name}': {str(e)}")
 

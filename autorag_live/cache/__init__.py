@@ -146,16 +146,18 @@ class QueryCache(Generic[K, V]):
 
             # Check expiration
             if entry.is_expired():
+                # Remove expired entry
                 del self._cache[key]
                 self._total_size_bytes -= entry.size_bytes
                 self._misses += 1
                 return default
 
-            # Update access statistics
-            entry.access()
+            # Update access statistics - optimized to reduce method calls
+            entry.access_count += 1
+            entry.last_access = time.time()
             self._hits += 1
 
-            # Move to end for LRU
+            # Move to end for LRU - only if using LRU policy
             if self.eviction_policy == "lru":
                 self._cache.move_to_end(key)
 

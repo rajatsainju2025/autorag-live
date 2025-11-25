@@ -142,8 +142,21 @@ class ConfigManager:
             mutable_config = OmegaConf.create(OmegaConf.to_container(self._config))
             OmegaConf.update(mutable_config, key, value, merge=True)
 
-            # Validate the new config
-            # TODO: Add schema validation
+            # Validate the new config with fast schema validation
+            from .schema_validation import COMMON_SCHEMAS, validate_config_fast
+
+            # Use appropriate schema based on config structure
+            schema = None
+            if "retriever" in str(key).lower():
+                schema = COMMON_SCHEMAS["retriever_config"]
+            elif "pipeline" in str(key).lower():
+                schema = COMMON_SCHEMAS["pipeline_config"]
+            elif "cache" in str(key).lower():
+                schema = COMMON_SCHEMAS["cache_config"]
+
+            if schema and isinstance(mutable_config, DictConfig):
+                if not validate_config_fast(mutable_config, schema):
+                    raise ConfigurationError(f"Configuration validation failed for key '{key}'")
 
             # Ensure we have a DictConfig
             if not isinstance(mutable_config, DictConfig):

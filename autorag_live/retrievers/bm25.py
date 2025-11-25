@@ -17,6 +17,7 @@ except ImportError:  # pragma: no cover - fallback when rank_bm25 missing
 
 from ..types.types import DocumentText, QueryText, RetrievalResult, RetrieverError
 from ..utils import get_logger, monitor_performance
+from ..utils.string_interning import intern_query
 from .base import BaseRetriever
 
 logger = get_logger(__name__)
@@ -24,14 +25,16 @@ logger = get_logger(__name__)
 # Pre-compiled token pattern for fast tokenization (alphanumeric word tokens)
 _TOKEN_PATTERN = re.compile(r"\w+")
 
-# Small LRU cache for BM25 instances keyed by corpus signature (thread-safe)
+# Thread-safe caches with reduced lock contention
 _BM25_CACHE: "OrderedDict[str, Any]" = OrderedDict()
 _BM25_CACHE_MAXSIZE = 2
 _BM25_CACHE_LOCK = threading.Lock()
-_SCORES_CACHE_MAXSIZE = 128
+
 _TOKENIZED_QUERY_CACHE: "OrderedDict[str, List[str]]" = OrderedDict()
-_TOKENIZED_QUERY_CACHE_MAXSIZE = 64
+_TOKENIZED_QUERY_CACHE_MAXSIZE = 128  # Increased from 64 for better hit rate
 _TOKENIZED_QUERY_CACHE_LOCK = threading.Lock()
+
+_SCORES_CACHE_MAXSIZE = 256  # Maximum score cache size for retriever instances
 
 
 def _corpus_signature(corpus: List[str]) -> str:
@@ -91,12 +94,15 @@ def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
     if k <= 0:
         raise ValueError("k must be positive")
 
+    # Intern query for better cache performance
+    interned_query = intern_query(query)
+
     bm25 = _get_bm25_for_corpus(corpus)
     with _TOKENIZED_QUERY_CACHE_LOCK:
-        tokenized_query = _TOKENIZED_QUERY_CACHE.get(query)
+        tokenized_query = _TOKENIZED_QUERY_CACHE.get(interned_query)
         if tokenized_query is None:
-            tokenized_query = BM25Retriever._tokenize(query)
-            _TOKENIZED_QUERY_CACHE[query] = tokenized_query
+            tokenized_query = BM25Retriever._tokenize(interned_query)
+            _TOKENIZED_QUERY_CACHE[interned_query] = tokenized_query
             while len(_TOKENIZED_QUERY_CACHE) > _TOKENIZED_QUERY_CACHE_MAXSIZE:
                 _TOKENIZED_QUERY_CACHE.popitem(last=False)
     doc_scores = np.asarray(bm25.get_scores(tokenized_query), dtype=np.float32)
