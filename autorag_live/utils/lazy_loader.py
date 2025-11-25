@@ -1,21 +1,23 @@
 """Lazy loading utilities for heavy dependencies to improve startup time."""
 
+import threading
 from typing import Any, Callable, Dict, Optional
 
 
 class LazyLoader:
-    """Lazy loads modules and caches results for subsequent accesses."""
+    """Thread-safe lazy loader for modules with caching."""
 
     def __init__(self):
-        """Initialize the lazy loader with empty cache."""
+        """Initialize the lazy loader with empty cache and thread lock."""
         self._cache: Dict[str, Any] = {}
+        self._lock = threading.Lock()
 
-    def get(self, module_path: str, attr_name: str) -> Any:
+    def get(self, module_path: str, attr_name: Optional[str] = None) -> Any:
         """
-        Lazy load and cache a module attribute.
+        Lazy load and cache a module attribute with thread safety.
 
         Args:
-            module_path: Full module path (e.g., "transformers.AutoTokenizer")
+            module_path: Full module path (e.g., "transformers")
             attr_name: Optional attribute to extract (e.g., "AutoTokenizer")
 
         Returns:
@@ -24,33 +26,31 @@ class LazyLoader:
         Raises:
             ImportError: If module cannot be imported
         """
-        cache_key = f"{module_path}.{attr_name}"
+        cache_key = f"{module_path}.{attr_name}" if attr_name else module_path
+
+        # Fast path: check cache without lock
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        # Extract module and attribute
-        parts = module_path.rsplit(".", 1)
-        if len(parts) == 2:
-            module_name, default_attr = parts
-        else:
-            module_name = module_path
-            default_attr = attr_name or None
+        # Slow path: load with thread safety
+        with self._lock:
+            # Double-check after acquiring lock
+            if cache_key in self._cache:
+                return self._cache[cache_key]
 
-        from importlib import import_module
+            from importlib import import_module
 
-        module = import_module(module_name)
+            module = import_module(module_path)
 
-        # Get the attribute if specified
-        if attr_name:
-            result = getattr(module, attr_name)
-        elif default_attr:
-            result = getattr(module, default_attr)
-        else:
-            result = module
+            # Get the attribute if specified
+            if attr_name:
+                result = getattr(module, attr_name)
+            else:
+                result = module
 
-        # Cache and return
-        self._cache[cache_key] = result
-        return result
+            # Cache and return
+            self._cache[cache_key] = result
+            return result
 
     def get_callable_wrapper(self, module_path: str, attr_name: str) -> Callable:
         """
@@ -76,7 +76,8 @@ class LazyLoader:
 
     def clear_cache(self):
         """Clear the cache to force reloading on next access."""
-        self._cache.clear()
+        with self._lock:
+            self._cache.clear()
 
 
 # Global lazy loader instance
