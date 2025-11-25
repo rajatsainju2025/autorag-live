@@ -13,6 +13,16 @@ from ..types.types import ConfigurationError
 
 T = TypeVar("T")  # Generic type for config classes
 
+# Cache type hints to avoid repeated lookups
+_TYPE_HINTS_CACHE: Dict[Type, Dict[str, Any]] = {}
+
+
+def _get_cached_type_hints(schema_cls: Type) -> Dict[str, Any]:
+    """Get type hints with caching."""
+    if schema_cls not in _TYPE_HINTS_CACHE:
+        _TYPE_HINTS_CACHE[schema_cls] = get_type_hints(schema_cls)
+    return _TYPE_HINTS_CACHE[schema_cls]
+
 
 def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
     """
@@ -32,8 +42,8 @@ def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
 
         schema_fields = cast(Dict[str, Field], getattr(schema_cls, "__dataclass_fields__"))
 
-        # Get type hints to check for Optional types
-        type_hints = get_type_hints(schema_cls)
+        # Get type hints with caching
+        type_hints = _get_cached_type_hints(schema_cls)
 
         # Get required fields (not Optional and no default)
         required_fields: Set[str] = set()
@@ -58,9 +68,6 @@ def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
                 f"Missing required configuration fields: {', '.join(missing_fields)}"
             )
 
-        # Get type hints
-        type_hints = get_type_hints(schema_cls)
-
         # Validate each field
         for field_name, field_type in type_hints.items():
             if field_name not in config:
@@ -69,8 +76,10 @@ def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
             value = config[field_name]
             validate_field(field_name, value, field_type)
 
+    except ConfigurationError:
+        raise
     except Exception as e:
-        raise ConfigurationError(f"Configuration validation failed: {str(e)}")
+        raise ConfigurationError(f"Configuration validation failed: {e!s}")
 
 
 def validate_field(name: str, value: Any, expected_type: Any) -> None:
