@@ -24,14 +24,25 @@ class AcceptancePolicy:
         self.threshold = threshold
         self.metric_key = metric_key
         self.best_runs_file = best_runs_file
+        self._cached_best: Optional[Dict[str, Any]] = None
+        self._cache_mtime: Optional[float] = None
 
     def get_current_best(self) -> Optional[Dict[str, Any]]:
-        """Get the current best run metrics."""
+        """Get the current best run metrics with caching."""
         if not os.path.exists(self.best_runs_file):
             return None
 
+        # Check if cache is valid
+        current_mtime = os.path.getmtime(self.best_runs_file)
+        if self._cached_best is not None and self._cache_mtime == current_mtime:
+            return self._cached_best
+
+        # Read and cache
         with open(self.best_runs_file, "r") as f:
             best_data = json.load(f)
+
+        self._cached_best = best_data
+        self._cache_mtime = current_mtime
         return best_data
 
     def evaluate_change(self, config_backup_paths: Dict[str, str], runs_dir: str = "runs") -> bool:
@@ -83,9 +94,12 @@ class AcceptancePolicy:
             return False
 
     def _update_best(self, run_data: Dict[str, Any]) -> None:
-        """Update the best run record."""
+        """Update the best run record and invalidate cache."""
         with open(self.best_runs_file, "w") as f:
             json.dump(run_data, f, indent=2)
+        # Invalidate cache
+        self._cached_best = run_data
+        self._cache_mtime = os.path.getmtime(self.best_runs_file)
         logger.debug(f"Updated best runs file: {self.best_runs_file}")
 
     def _cleanup_backups(self, backup_paths: Dict[str, str]) -> None:
