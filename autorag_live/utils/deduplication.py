@@ -5,19 +5,22 @@ from typing import List, Set, Tuple
 
 
 class ContentDeduplicator:
-    """Deduplicates content efficiently using content hashes."""
+    """Deduplicates content efficiently using content hashes with LRU cache."""
 
-    def __init__(self, hash_algorithm: str = "md5"):
+    def __init__(self, hash_algorithm: str = "md5", cache_size: int = 10000):
         """Initialize content deduplicator.
 
         Args:
             hash_algorithm: Hash algorithm to use (md5, sha256, etc.)
+            cache_size: Maximum cache size (0 for unlimited)
         """
         self._hash_algorithm = hash_algorithm
         self._hash_cache = {}
+        self._cache_size = cache_size
+        self._cache_order = []  # Track insertion order for LRU
 
     def _compute_hash(self, content: str) -> str:
-        """Compute hash of content."""
+        """Compute hash of content with LRU caching."""
         if content in self._hash_cache:
             return self._hash_cache[content]
 
@@ -25,7 +28,16 @@ class ContentDeduplicator:
         hash_obj.update(content.encode("utf-8"))
         hash_value = hash_obj.hexdigest()
 
+        # Add to cache with LRU eviction
+        if self._cache_size > 0 and len(self._hash_cache) >= self._cache_size:
+            # Evict oldest entry
+            oldest = self._cache_order.pop(0)
+            self._hash_cache.pop(oldest, None)
+
         self._hash_cache[content] = hash_value
+        if self._cache_size > 0:
+            self._cache_order.append(content)
+
         return hash_value
 
     def deduplicate(self, items: List[str]) -> Tuple[List[str], List[int]]:
@@ -38,9 +50,12 @@ class ContentDeduplicator:
         Returns:
             Tuple of (unique_items, unique_indices)
         """
+        if not items:
+            return [], []
+
         seen_hashes: Set[str] = set()
-        unique_items = []
-        unique_indices = []
+        unique_items: List[str] = []
+        unique_indices: List[int] = []
 
         for idx, item in enumerate(items):
             item_hash = self._compute_hash(item)
@@ -62,10 +77,14 @@ class ContentDeduplicator:
     def clear_cache(self):
         """Clear the hash cache."""
         self._hash_cache.clear()
+        self._cache_order.clear()
 
     def get_cache_stats(self) -> dict:
         """Get cache statistics."""
-        return {"cached_hashes": len(self._hash_cache)}
+        return {
+            "cached_hashes": len(self._hash_cache),
+            "cache_size_limit": self._cache_size,
+        }
 
 
 # Global instance
