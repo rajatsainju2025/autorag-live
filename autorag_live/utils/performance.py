@@ -2,7 +2,7 @@
 Performance monitoring and profiling utilities for AutoRAG-Live.
 
 This module provides tools for monitoring system performance, collecting
-metrics, and profiling expensive operations.
+metrics, and profiling expensive operations with minimal overhead.
 """
 
 import statistics
@@ -20,6 +20,10 @@ logger = get_logger(__name__)
 
 T = TypeVar("T")
 
+# Cache process object to avoid repeated lookups
+_PROCESS = psutil.Process()
+_PROCESS_LOCK = threading.Lock()
+
 
 @dataclass
 class PerformanceMetrics:
@@ -34,19 +38,30 @@ class PerformanceMetrics:
     memory_peak_mb: Optional[float] = None
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def complete(self) -> None:
-        """Mark operation as complete and calculate metrics."""
-        self.end_time = time.time()
+    def complete(self, skip_system_metrics: bool = False) -> None:
+        """Mark operation as complete and calculate metrics.
+
+        Args:
+            skip_system_metrics: Skip expensive system metric collection
+        """
+        self.end_time = time.perf_counter()  # Use perf_counter for better precision
         self.duration = self.end_time - self.start_time
 
-        # Get system metrics
-        process = psutil.Process()
-        self.cpu_percent = process.cpu_percent()
-        memory_info = process.memory_info()
-        self.memory_mb = memory_info.rss / 1024 / 1024
+        if not skip_system_metrics:
+            # Get system metrics with cached process
+            with _PROCESS_LOCK:
+                try:
+                    self.cpu_percent = _PROCESS.cpu_percent()
+                    memory_info = _PROCESS.memory_info()
+                    self.memory_mb = (
+                        memory_info.rss / 1048576
+                    )  # Division is faster than / 1024 / 1024
 
-        # Peak memory (approximate)
-        self.memory_peak_mb = self.memory_mb
+                    # Peak memory (approximate)
+                    self.memory_peak_mb = self.memory_mb
+                except Exception:
+                    # Silently fail on metrics collection errors
+                    pass
 
 
 @dataclass
