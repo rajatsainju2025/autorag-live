@@ -1,51 +1,61 @@
 """Memory efficiency improvements for large operations."""
 
 import gc
-from typing import Iterator, List, TypeVar
+from typing import Callable, Iterator, List, TypeVar
 
 T = TypeVar("T")
+R = TypeVar("R")
 
 
 def memory_efficient_iteration(
     items: List[T],
     batch_size: int = 1000,
+    gc_interval: int = 10,
 ) -> Iterator[List[T]]:
     """
-    Iterate over items in batches with garbage collection.
+    Iterate over items in batches with optional garbage collection.
 
     Args:
         items: List of items to iterate
         batch_size: Batch size for iteration
+        gc_interval: Run GC every N batches (0 to disable)
 
-    Returns:
-        Iterator yielding batches
+    Yields:
+        Batches of items
     """
+    n_batches = 0
     for i in range(0, len(items), batch_size):
         batch = items[i : i + batch_size]
         yield batch
-        # Garbage collect between batches
-        if i % (batch_size * 10) == 0:
-            gc.collect()
+
+        # Conditional garbage collection to reduce overhead
+        if gc_interval > 0:
+            n_batches += 1
+            if n_batches % gc_interval == 0:
+                gc.collect(generation=0)  # Only collect generation 0 for speed
 
 
 def process_large_dataset(
     items: List[T],
-    processor,
+    processor: Callable[[T], R],
     batch_size: int = 1000,
-):
+    gc_interval: int = 10,
+) -> List[R]:
     """
     Process large dataset with memory efficiency.
 
     Args:
         items: List of items to process
         processor: Function to process each item
-        batch_size: Batch size
+        batch_size: Batch size for memory efficiency
+        gc_interval: GC interval (0 to disable)
 
     Returns:
-        Results
+        List of processed results
     """
-    results = []
-    for batch in memory_efficient_iteration(items, batch_size):
+    results: List[R] = []
+    for batch in memory_efficient_iteration(items, batch_size, gc_interval):
+        # Use list comprehension for better performance
         batch_results = [processor(item) for item in batch]
         results.extend(batch_results)
     return results
