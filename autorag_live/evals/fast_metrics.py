@@ -108,6 +108,7 @@ def f1_score_fast(
 ) -> float:
     """
     Fast F1 score computation combining precision and recall.
+    Optimized to compute both metrics in a single pass.
 
     Args:
         retrieved_docs: Retrieved documents
@@ -117,10 +118,26 @@ def f1_score_fast(
     Returns:
         F1 score
     """
-    precision = precision_at_k_fast(retrieved_docs, relevant_docs, k)
-    recall = recall_at_k_fast(retrieved_docs, relevant_docs, k)
-
-    if precision + recall == 0:
+    # Early exit for edge cases
+    if not retrieved_docs or not relevant_docs:
         return 0.0
+
+    k = min(k, len(retrieved_docs))
+    if k == 0:
+        return 0.0
+
+    # Single set conversion and pass
+    relevant_set = set(relevant_docs)
+    top_k_docs = retrieved_docs[:k]
+
+    # Count relevant in single pass
+    relevant_count = sum(1 for doc in top_k_docs if doc in relevant_set)
+
+    if relevant_count == 0:
+        return 0.0
+
+    # Compute precision and recall
+    precision = relevant_count / k
+    recall = relevant_count / len(relevant_docs)
 
     return 2 * (precision * recall) / (precision + recall)
