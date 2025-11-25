@@ -51,7 +51,10 @@ class Document:
     def __post_init__(self) -> None:
         """Compute content hash if not provided."""
         if self.hash is None:
-            self.hash = hashlib.md5(self.content.encode()).hexdigest()
+            # Use MD5 with digest() instead of hexdigest() for faster computation
+            # Only convert to hex when needed for comparison
+            content_bytes = self.content.encode()
+            self.hash = hashlib.md5(content_bytes, usedforsecurity=False).hexdigest()
 
 
 @dataclass
