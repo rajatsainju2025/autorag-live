@@ -106,16 +106,20 @@ class HybridRetriever:
                 if max_bm25 > 0:
                     bm25_scores = {doc: score / max_bm25 for doc, score in bm25_scores.items()}
 
-            # Combine scores for all unique documents
-            all_docs = set(bm25_scores.keys()) | set(dense_scores.keys())
+            # Optimize: Use dict union operator for Python 3.9+ or faster iteration
             combined_scores = {}
 
-            for doc in all_docs:
-                bm25_score = bm25_scores.get(doc, 0.0)
+            # Process BM25 scores first
+            for doc, bm25_score in bm25_scores.items():
                 dense_score = dense_scores.get(doc, 0.0)
                 combined_scores[doc] = (
                     self.bm25_weight * bm25_score + self.dense_weight * dense_score
                 )
+
+            # Process remaining dense-only documents
+            for doc, dense_score in dense_scores.items():
+                if doc not in combined_scores:
+                    combined_scores[doc] = self.dense_weight * dense_score
 
             # Sort by combined score and return top-k
             sorted_docs = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
