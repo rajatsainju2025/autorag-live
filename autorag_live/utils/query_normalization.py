@@ -4,6 +4,10 @@ import re
 from functools import lru_cache
 from typing import Callable, Optional
 
+# Pre-compile regex patterns for better performance
+_WHITESPACE_PATTERN = re.compile(r"\s+")
+_END_PUNCTUATION_PATTERN = re.compile(r"[?!]+$")
+
 
 class QueryNormalizer:
     """Normalizes queries with caching for consistent retrieval."""
@@ -15,24 +19,25 @@ class QueryNormalizer:
             custom_normalizer: Optional custom normalization function
         """
         self._custom_normalizer = custom_normalizer
-        # Cache normalized queries
+        # Cache normalized queries with size limit
         self._normalize_cache = {}
+        self._cache_size_limit = 5000
 
     @staticmethod
-    @lru_cache(maxsize=1024)
+    @lru_cache(maxsize=2048)
     def _normalize_default(query: str) -> str:
         """Default normalization: lowercase and remove extra whitespace."""
-        # Remove extra whitespace
-        normalized = re.sub(r"\s+", " ", query.strip())
-        # Lowercase
-        normalized = normalized.lower()
-        # Remove common stop patterns
-        normalized = re.sub(r"[?!]+$", "", normalized)
+        # Lowercase first for consistent caching
+        normalized = query.lower().strip()
+        # Remove extra whitespace using pre-compiled pattern
+        normalized = _WHITESPACE_PATTERN.sub(" ", normalized)
+        # Remove common stop patterns using pre-compiled pattern
+        normalized = _END_PUNCTUATION_PATTERN.sub("", normalized)
         return normalized
 
     def normalize(self, query: str) -> str:
         """
-        Normalize a query with caching.
+        Normalize a query with caching and size limits.
 
         Args:
             query: Raw query string
@@ -50,7 +55,11 @@ class QueryNormalizer:
         else:
             normalized = self._normalize_default(query)
 
-        # Cache result
+        # Cache result with size limit (simple LRU-like eviction)
+        if len(self._normalize_cache) >= self._cache_size_limit:
+            # Remove first (oldest) entry
+            self._normalize_cache.pop(next(iter(self._normalize_cache)))
+
         self._normalize_cache[query] = normalized
         return normalized
 
@@ -62,7 +71,7 @@ class QueryNormalizer:
         """Get cache statistics."""
         return {
             "cached_queries": len(self._normalize_cache),
-            "cache_size": sum(len(k) + len(v) for k, v in self._normalize_cache.items()),
+            "cache_limit": self._cache_size_limit,
         }
 
 
