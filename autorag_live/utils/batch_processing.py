@@ -3,7 +3,7 @@
 This module provides utilities for efficient batch processing with:
 - Configurable batch sizes for different hardware
 - Progress tracking for long-running operations
-- Memory-efficient streaming
+- Memory-efficient streaming with generators
 - Parallelization support
 
 Example:
@@ -15,14 +15,34 @@ Example:
     ... )
 """
 
-from typing import Any, Callable, Generic, List, Optional, TypeVar
+from typing import Any, Callable, Generic, Iterable, Iterator, List, Optional, TypeVar
 
 T = TypeVar("T")
 R = TypeVar("R")
 
 
+def chunk_iterable(iterable: Iterable[T], chunk_size: int) -> Iterator[List[T]]:
+    """Split an iterable into chunks efficiently.
+
+    Args:
+        iterable: Iterable to chunk
+        chunk_size: Size of each chunk
+
+    Yields:
+        Lists of items in chunks
+    """
+    chunk: List[T] = []
+    for item in iterable:
+        chunk.append(item)
+        if len(chunk) >= chunk_size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
 class BatchProcessor(Generic[T, R]):
-    """Efficient batch processor with configurable batch sizes."""
+    """Efficient batch processor with configurable batch sizes and generators."""
 
     def __init__(
         self,
@@ -44,7 +64,7 @@ class BatchProcessor(Generic[T, R]):
         processor_fn: Callable[[List[T]], List[R]],
         progress: bool = False,
     ) -> List[R]:
-        """Process items in batches.
+        """Process items in batches with optimized memory usage.
 
         Args:
             items: Items to process
@@ -60,19 +80,43 @@ class BatchProcessor(Generic[T, R]):
         results: List[R] = []
         n_batches = (len(items) + self.batch_size - 1) // self.batch_size
 
-        for batch_idx in range(n_batches):
-            start_idx = batch_idx * self.batch_size
+        # Use range with step for efficient batch iteration
+        for batch_idx, start_idx in enumerate(range(0, len(items), self.batch_size)):
             end_idx = min(start_idx + self.batch_size, len(items))
-
             batch = items[start_idx:end_idx]
 
             if self.verbose and progress:
-                print(f"Processing batch {batch_idx + 1}/{n_batches} " f"({len(batch)} items)")
+                print(f"Processing batch {batch_idx + 1}/{n_batches} ({len(batch)} items)")
 
             batch_results = processor_fn(batch)
             results.extend(batch_results)
 
         return results
+
+    def process_stream(
+        self,
+        items: Iterable[T],
+        processor_fn: Callable[[List[T]], List[R]],
+        progress: bool = False,
+    ) -> Iterator[R]:
+        """Process items in batches with streaming (generator-based).
+
+        Args:
+            items: Items to process
+            processor_fn: Function to process batch
+            progress: Whether to show progress
+
+        Yields:
+            Processed results one at a time
+        """
+        batch_idx = 0
+        for batch in chunk_iterable(items, self.batch_size):
+            if self.verbose and progress:
+                print(f"Processing batch {batch_idx + 1} ({len(batch)} items)")
+
+            batch_results = processor_fn(batch)
+            yield from batch_results
+            batch_idx += 1
 
     def process_with_overhead(
         self,
