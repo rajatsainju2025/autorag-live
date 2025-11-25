@@ -34,19 +34,18 @@ def top_k_similarity(
     Returns:
         Array of shape (n_queries, k) with top-k indices
     """
+    # Fast path for k >= matrix size
     if k >= similarity_matrix.shape[axis]:
-        # All items
-        return np.argsort(similarity_matrix, axis=axis)[:, -k:]
+        return np.argsort(similarity_matrix, axis=axis)[..., -k:]
 
-    # Partial sort for efficiency
-    indices = np.argpartition(similarity_matrix, -k, axis=axis)
-    return np.take_along_axis(
-        indices,
-        np.argsort(np.take_along_axis(similarity_matrix, indices[:, -k:], axis=axis), axis=axis)[
-            :, -k:
-        ],
-        axis=axis,
-    )
+    # Partial sort for efficiency - use negative k for top-k
+    partitioned_indices = np.argpartition(similarity_matrix, -k, axis=axis)[..., -k:]
+
+    # Sort only the top-k elements
+    partitioned_scores = np.take_along_axis(similarity_matrix, partitioned_indices, axis=axis)
+    sorted_indices_within_partition = np.argsort(partitioned_scores, axis=axis)[..., ::-1]
+
+    return np.take_along_axis(partitioned_indices, sorted_indices_within_partition, axis=axis)
 
 
 def batched_dot_product(
@@ -67,13 +66,16 @@ def batched_dot_product(
     n_queries = query_embeddings.shape[0]
     n_docs = corpus_embeddings.shape[0]
 
+    # Pre-transpose corpus for efficiency
+    corpus_T = corpus_embeddings.T
     similarities = np.empty((n_queries, n_docs), dtype=np.float32)
 
+    # Process in batches using range with step for efficiency
     for i in range(0, n_queries, batch_size):
         end_idx = min(i + batch_size, n_queries)
         batch_queries = query_embeddings[i:end_idx]
         # Use @ operator for efficient matrix multiplication
-        similarities[i:end_idx] = batch_queries @ corpus_embeddings.T
+        similarities[i:end_idx] = batch_queries @ corpus_T
 
     return similarities
 
