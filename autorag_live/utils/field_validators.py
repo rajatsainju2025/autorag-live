@@ -11,6 +11,9 @@ from urllib.parse import urlparse
 
 from ..types.types import ConfigurationError
 
+# Pre-compile regex patterns
+_EMAIL_PATTERN = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
+
 
 def validate_url(url: str, schemes: Optional[List[str]] = None) -> None:
     """
@@ -57,10 +60,7 @@ def validate_email(email: str) -> None:
     Raises:
         ConfigurationError: If email is invalid
     """
-    # Basic email regex pattern
-    pattern = r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$"
-
-    if not re.match(pattern, email):
+    if not _EMAIL_PATTERN.match(email):
         raise ConfigurationError(f"Invalid email format: '{email}'")
 
 
