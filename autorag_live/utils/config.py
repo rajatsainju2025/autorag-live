@@ -12,12 +12,12 @@ from .schema import AutoRAGConfig
 
 
 class ConfigManager:
-    """Central configuration manager for AutoRAG-Live."""
+    """Central configuration manager for AutoRAG-Live with lazy loading."""
 
     _instance: Optional["ConfigManager"] = None
     _config: Optional[DictConfig] = None
-    _config = None
     _config_cache: Cache = MemoryCache()
+    _initialized: bool = False
 
     def __new__(cls):
         if cls._instance is None:
@@ -25,11 +25,14 @@ class ConfigManager:
         return cls._instance
 
     def __init__(self) -> None:
-        if self._config is None:
-            self._initialize_config()
+        # Defer config initialization until first access
+        pass
 
     def _initialize_config(self) -> None:
-        """Initialize configuration from files."""
+        """Initialize configuration from files (lazy loaded)."""
+        if self._initialized:
+            return
+
         try:
             # Load base config - check for test override
             import os
@@ -73,12 +76,16 @@ class ConfigManager:
             # Make config immutable
             OmegaConf.set_readonly(self._config, True)
 
+            self._initialized = True
+
         except Exception as e:
-            raise ConfigurationError(f"Failed to initialize configuration: {str(e)}")
+            raise ConfigurationError(f"Failed to initialize configuration: {e!s}")
 
     @property
     def config(self) -> DictConfig:
-        """Get the full configuration."""
+        """Get the full configuration (lazy loaded)."""
+        if not self._initialized:
+            self._initialize_config()
         if self._config is None:
             raise ConfigurationError("Configuration not initialized")
         if not isinstance(self._config, DictConfig):
@@ -87,7 +94,7 @@ class ConfigManager:
 
     def get(self, key: str, default: Any = None) -> Any:
         """
-        Get a configuration value by key.
+        Get a configuration value by key with caching.
 
         Args:
             key: Dot-notation path to config value
@@ -98,6 +105,21 @@ class ConfigManager:
         """
         # Try to get from cache first
         cache_key = f"config_get_{key}"
+        cached_value = self._config_cache.get(cache_key)
+        if cached_value is not None:
+            return cached_value
+
+        # Ensure config is initialized
+        if not self._initialized:
+            self._initialize_config()
+
+        try:
+            value = OmegaConf.select(self.config, key, default=default)
+            # Cache the result
+            self._config_cache.set(cache_key, value, ttl=300.0)  # 5 minute cache
+            return value
+        except Exception:
+            return default
         cached_value = self._config_cache.get(cache_key)
         if cached_value is not None:
             return cached_value

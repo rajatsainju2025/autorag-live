@@ -163,8 +163,10 @@ def test_config_nonexistent_dir():
 
     os.environ["AUTORAG_CONFIG_DIR"] = "/nonexistent/directory"
 
+    manager = ConfigManager()
     with pytest.raises(ConfigurationError):
-        ConfigManager()
+        # Trigger lazy loading by accessing config
+        _ = manager.config
 
 
 def test_invalid_config_update(config_manager):
