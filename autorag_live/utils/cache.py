@@ -63,25 +63,32 @@ class Cache:
 
 
 class MemoryCache(Cache):
-    """In-memory cache with TTL support."""
+    """In-memory cache with TTL support and optimized eviction."""
 
     def __init__(self, max_size: int = 1000, default_ttl: Optional[float] = None):
         self._cache: Dict[str, CacheEntry] = {}
         self.max_size = max_size
         self.default_ttl = default_ttl
+        self._last_purge = time.time()
+        self._purge_interval = 60.0  # Purge expired entries every 60 seconds
 
     def _purge_expired(self) -> None:
-        """Remove expired entries eagerly."""
+        """Remove expired entries with rate limiting."""
+        now = time.time()
+        if now - self._last_purge < self._purge_interval:
+            return  # Skip purging if done recently
+
         expired_keys = [key for key, entry in self._cache.items() if entry.is_expired()]
         for key in expired_keys:
             del self._cache[key]
 
+        self._last_purge = now
+
     def get(self, key: str) -> Optional[Any]:
         """Get value from cache with TTL check."""
-        if key not in self._cache:
+        entry = self._cache.get(key)
+        if entry is None:
             return None
-
-        entry = self._cache[key]
 
         # Check TTL
         if entry.is_expired():
@@ -94,11 +101,16 @@ class MemoryCache(Cache):
     def set(self, key: str, value: Any, ttl: Optional[float] = None) -> None:
         """Set value in cache with optional TTL."""
         self._purge_expired()
+
         # Evict if at capacity (simple LRU-like)
-        if len(self._cache) >= self.max_size:
-            # Remove oldest entry
-            oldest_key = min(self._cache.keys(), key=lambda k: self._cache[k].timestamp)
-            del self._cache[oldest_key]
+        if len(self._cache) >= self.max_size and key not in self._cache:
+            # Remove entry with lowest access count (LFU-like)
+            if self._cache:
+                oldest_key = min(
+                    self._cache.keys(),
+                    key=lambda k: (self._cache[k].hits, self._cache[k].timestamp),
+                )
+                del self._cache[oldest_key]
 
         ttl_to_use = ttl if ttl is not None else self.default_ttl
         now = time.time()
@@ -118,19 +130,24 @@ class MemoryCache(Cache):
     def clear(self) -> None:
         """Clear all cache entries."""
         self._cache.clear()
+        self._last_purge = time.time()
 
     def size(self) -> int:
         """Get number of entries in cache."""
-        self._purge_expired()
         return len(self._cache)
 
     def _estimate_size(self, obj: Any) -> int:
-        """Estimate object size in bytes."""
+        """Estimate object size in bytes with optimized checks."""
+        # Fast path for common types
+        if isinstance(obj, str):
+            return len(obj.encode("utf-8"))
+        if isinstance(obj, (bytes, bytearray)):
+            return len(obj)
+        if isinstance(obj, (int, float, bool)):
+            return sys.getsizeof(obj)
+
+        # Slow path for complex objects
         try:
-            if isinstance(obj, (bytes, bytearray, memoryview)):
-                return len(obj)
-            if isinstance(obj, str):
-                return len(obj.encode("utf-8"))
             size = sys.getsizeof(obj)
             if size > 0:
                 return size
@@ -318,10 +335,11 @@ cache_manager = CacheManager()
 def cached(
     cache_name: str = "default", ttl: Optional[float] = None, key_func: Optional[Callable] = None
 ):
-    """Decorator for caching function results."""
+    """Decorator for caching function results with optimized key generation."""
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         cache = cache_manager.get_cache(cache_name)
+        func_name = func.__name__  # Cache function name
 
         @wraps(func)
         def wrapper(*args, **kwargs) -> T:
@@ -329,20 +347,23 @@ def cached(
             if key_func:
                 key = key_func(*args, **kwargs)
             else:
-                # Default key generation
-                key_data = {"func": func.__name__, "args": args, "kwargs": sorted(kwargs.items())}
-                key = hashlib.md5(
-                    json.dumps(key_data, sort_keys=True, default=str).encode()
-                ).hexdigest()
+                # Optimized key generation - avoid JSON encoding for simple cases
+                if not kwargs and all(isinstance(arg, (str, int, float, bool)) for arg in args):
+                    # Fast path for simple arguments
+                    key = f"{func_name}:{':'.join(map(str, args))}"
+                else:
+                    # Slow path for complex arguments
+                    key_data = {"func": func_name, "args": args, "kwargs": sorted(kwargs.items())}
+                    key = hashlib.md5(
+                        json.dumps(key_data, sort_keys=True, default=str).encode()
+                    ).hexdigest()
 
             # Try cache first
             cached_result = cache.get(key)
             if cached_result is not None:
-                logger.debug(f"Cache hit for {func.__name__}")
                 return cached_result
 
             # Compute result
-            logger.debug(f"Cache miss for {func.__name__}, computing...")
             result = func(*args, **kwargs)
 
             # Cache result
@@ -355,7 +376,12 @@ def cached(
 
 
 def generate_cache_key(*args, **kwargs) -> str:
-    """Generate a cache key from arguments."""
+    """Generate a cache key from arguments with optimized encoding."""
+    # Fast path for simple arguments
+    if not kwargs and all(isinstance(arg, (str, int, float, bool)) for arg in args):
+        return ":".join(map(str, args))
+
+    # Slow path for complex arguments
     key_data = {"args": args, "kwargs": sorted(kwargs.items())}
     return hashlib.md5(json.dumps(key_data, sort_keys=True, default=str).encode()).hexdigest()
 
