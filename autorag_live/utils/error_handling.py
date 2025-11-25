@@ -104,21 +104,17 @@ def handle_errors(
 
             except Exception as e:
                 # Wrap other exceptions with minimal overhead
-                context = {
-                    "function": func_name,
-                }
-                # Only include args/kwargs if they're small
-                if args:
-                    args_str = str(args)[:100]
-                    if len(args_str) < 100:
-                        context["args"] = args_str
-                if kwargs:
-                    kwargs_str = str(kwargs)[:100]
-                    if len(kwargs_str) < 100:
-                        context["kwargs"] = kwargs_str
+                error_msg = f"Error in {func_name}: {e!s}"
+                context = {"function": func_name}
+
+                # Only include args/kwargs if they're reasonably sized
+                if args and len(repr(args)) < 200:
+                    context["args"] = repr(args)[:100]
+                if kwargs and len(repr(kwargs)) < 200:
+                    context["kwargs"] = repr(kwargs)[:100]
 
                 wrapped_error = error_type(
-                    message=f"Error in {func_name}: {str(e)}",
+                    message=error_msg,
                     context=context,
                     cause=e,
                 )
@@ -127,7 +123,7 @@ def handle_errors(
                     error_dict = wrapped_error.to_dict()
                     # Remove 'message' key to avoid LogRecord conflict
                     error_dict.pop("message", None)
-                    logger.error(f"Error in {func_name}: {str(e)}", extra=error_dict, exc_info=True)
+                    logger.error(error_msg, extra=error_dict, exc_info=True)
 
                 if reraise:
                     raise wrapped_error
@@ -236,12 +232,12 @@ def safe_execute(
 
     except Exception as e:
         if log_errors:
-            logger.error(f"Error executing {func.__name__}: {str(e)}", exc_info=True)
+            logger.error(f"Error executing {func.__name__}: {e!s}", exc_info=True)
 
         if default_value is not None:
             return default_value
 
-        raise error_type(message=f"Error executing {func.__name__}: {str(e)}", cause=e)
+        raise error_type(message=f"Error executing {func.__name__}: {e!s}", cause=e)
 
 
 class ErrorContext:
@@ -274,12 +270,12 @@ class ErrorContext:
         if issubclass(exc_type, AutoRAGError):
             # AutoRAG error - just log and reraise
             if self.log_errors:
-                self.logger.error(f"AutoRAG error in {self.operation}: {str(exc_val)}")
+                self.logger.error(f"AutoRAG error in {self.operation}: {exc_val!s}")
             return not self.reraise
 
         # Wrap other exceptions
         wrapped_error = self.error_type(
-            message=f"Error in {self.operation}: {str(exc_val)}",
+            message=f"Error in {self.operation}: {exc_val!s}",
             context=self.context,
             cause=exc_val,
         )
@@ -288,7 +284,7 @@ class ErrorContext:
             error_dict = wrapped_error.to_dict()
             error_dict.pop("message", None)  # Avoid LogRecord conflict
             self.logger.error(
-                f"Error in {self.operation}: {str(exc_val)}", extra=error_dict, exc_info=True
+                f"Error in {self.operation}: {exc_val!s}", extra=error_dict, exc_info=True
             )
 
         if self.reraise:
