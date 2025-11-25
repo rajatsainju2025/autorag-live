@@ -8,10 +8,13 @@ import typer
 class CommandRegistry:
     """Registry for CLI commands with standardized help and error handling."""
 
+    __slots__ = ("_app", "_commands", "_help_cache")
+
     def __init__(self, typer_app: typer.Typer):
         """Initialize command registry with a Typer app."""
         self._app = typer_app
         self._commands: Dict[str, Callable] = {}
+        self._help_cache: Optional[str] = None
 
     def register(
         self,
@@ -34,6 +37,8 @@ class CommandRegistry:
         def decorator(func: Callable) -> Callable:
             # Store command reference
             self._commands[name] = func
+            # Invalidate help cache
+            self._help_cache = None
 
             # Add to Typer app
             @self._app.command(name=name, help=help_text)
@@ -44,7 +49,7 @@ class CommandRegistry:
                     if error_handler:
                         error_handler(name, e)
                     else:
-                        typer.echo(f"❌ Error in {name}: {str(e)}", err=True)
+                        typer.echo(f"❌ Error in {name}: {e!s}", err=True)
                         raise
 
             return wrapped_func
@@ -60,11 +65,15 @@ class CommandRegistry:
         return list(self._commands.keys())
 
     def get_help_text(self) -> str:
-        """Get formatted help text for all commands."""
+        """Get formatted help text for all commands with caching."""
+        if self._help_cache is not None:
+            return self._help_cache
+
         lines = ["Available commands:\n"]
         for name in sorted(self._commands.keys()):
             lines.append(f"  {name}")
-        return "\n".join(lines)
+        self._help_cache = "\n".join(lines)
+        return self._help_cache
 
 
 # Example usage function
