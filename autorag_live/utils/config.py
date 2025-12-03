@@ -91,7 +91,27 @@ class ConfigManager:
             self._initialized = True
 
         except Exception as e:
-            raise ConfigurationError(f"Failed to initialize configuration: {e!s}")
+            error_msg = f"Failed to initialize configuration: {e!s}"
+            suggestions = []
+
+            # Provide actionable suggestions based on error type
+            if "No such file" in str(e) or "does not exist" in str(e):
+                suggestions.append("Ensure config.yaml exists in the config/ directory")
+                suggestions.append(
+                    "Run 'python -m autorag_live.cli config init' to create default config"
+                )
+
+            if "invalid" in str(e).lower() or "validation" in str(e).lower():
+                suggestions.append("Check config file syntax (YAML format)")
+                suggestions.append("Verify all required fields are present")
+                suggestions.append(
+                    "Use 'python -m autorag_live.cli config validate' to check config"
+                )
+
+            if suggestions:
+                error_msg += "\n\nSuggestions:\n  - " + "\n  - ".join(suggestions)
+
+            raise ConfigurationError(error_msg)
 
     @property
     def config(self) -> DictConfig:
@@ -166,10 +186,15 @@ class ConfigManager:
             value: New value to set
 
         Raises:
-            ConfigurationError: If update fails
+            ConfigurationError: If update fails with suggestions for resolution
         """
         if key.startswith("_"):
-            raise ConfigurationError("Cannot update protected configuration fields")
+            raise ConfigurationError(
+                f"Cannot update protected configuration field: '{key}'\n\n"
+                f"Suggestions:\n"
+                f"  - Protected fields start with '_' and cannot be modified\n"
+                f"  - Use non-protected fields for configuration updates"
+            )
 
         try:
             # Check current type if key exists
@@ -177,7 +202,12 @@ class ConfigManager:
             if current_value is not None:
                 if not isinstance(value, type(current_value)):
                     raise ConfigurationError(
-                        f"Type mismatch: Cannot update '{key}' of type {type(current_value)} with value of type {type(value)}"
+                        f"Type mismatch for config key '{key}'\n"
+                        f"Expected: {type(current_value).__name__}\n"
+                        f"Got: {type(value).__name__}\n\n"
+                        f"Suggestions:\n"
+                        f"  - Convert value to {type(current_value).__name__} before updating\n"
+                        f"  - Check configuration schema for expected types"
                     )
 
             # Create a mutable copy
