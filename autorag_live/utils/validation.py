@@ -5,6 +5,7 @@ This module provides schema validation and version migration tools for configura
 It includes type checking, field validation, and environment variable merging.
 """
 import collections.abc
+import threading
 from dataclasses import Field
 from typing import Any, Dict, List, Set, Type, TypeVar, Union, cast, get_type_hints
 
@@ -16,11 +17,13 @@ T = TypeVar("T")  # Generic type for config classes
 
 # Cache type hints to avoid repeated lookups
 _TYPE_HINTS_CACHE: Dict[Type, Dict[str, Any]] = {}
+_TYPE_HINTS_CACHE_LOCK = threading.Lock()
+_MAX_CACHE_SIZE = 100  # Limit cache size to prevent memory issues
 
 
 def _get_cached_type_hints(schema_cls: Type) -> Dict[str, Any]:
     """
-    Get type hints with caching to avoid repeated lookups.
+    Get type hints with thread-safe caching and size limits.
 
     Args:
         schema_cls: The class to get type hints from.
@@ -28,9 +31,24 @@ def _get_cached_type_hints(schema_cls: Type) -> Dict[str, Any]:
     Returns:
         Dict[str, Any]: Cached type hints for the class.
     """
-    if schema_cls not in _TYPE_HINTS_CACHE:
+    # Fast path: check without lock
+    if schema_cls in _TYPE_HINTS_CACHE:
+        return _TYPE_HINTS_CACHE[schema_cls]
+
+    # Slow path: acquire lock and compute
+    with _TYPE_HINTS_CACHE_LOCK:
+        # Double-check after acquiring lock
+        if schema_cls in _TYPE_HINTS_CACHE:
+            return _TYPE_HINTS_CACHE[schema_cls]
+
+        # Evict oldest entry if cache is full (simple FIFO)
+        if len(_TYPE_HINTS_CACHE) >= _MAX_CACHE_SIZE:
+            first_key = next(iter(_TYPE_HINTS_CACHE))
+            del _TYPE_HINTS_CACHE[first_key]
+
+        # Compute and cache type hints
         _TYPE_HINTS_CACHE[schema_cls] = get_type_hints(schema_cls)
-    return _TYPE_HINTS_CACHE[schema_cls]
+        return _TYPE_HINTS_CACHE[schema_cls]
 
 
 def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
