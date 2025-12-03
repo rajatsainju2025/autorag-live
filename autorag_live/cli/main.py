@@ -59,42 +59,57 @@ def disagree(
     """
     Run disagreement analysis between different retrievers for a given query.
     """
-    logger.info(f"Running disagreement analysis for query: '{query}'")
+    try:
+        if not query or not query.strip():
+            logger.error("Query cannot be empty")
+            raise typer.BadParameter("Query cannot be empty")
 
-    # Ensure the reports directory exists
-    os.makedirs(os.path.dirname(report_path), exist_ok=True)
+        if k <= 0:
+            logger.error(f"Invalid k value: {k}")
+            raise typer.BadParameter("k must be positive")
 
-    # 1. Run all retrievers
-    bm25_results = bm25.bm25_retrieve(query, CORPUS, k)
-    dense_results = dense.dense_retrieve(query, CORPUS, k)
-    hybrid_results = hybrid.hybrid_retrieve(query, CORPUS, k)
+        logger.info(f"Running disagreement analysis for query: '{query}'")
 
-    results = {
-        "BM25": bm25_results,
-        "Dense": dense_results,
-        "Hybrid": hybrid_results,
-    }
+        # Ensure the reports directory exists
+        os.makedirs(os.path.dirname(report_path), exist_ok=True)
 
-    # 2. Compute disagreement metrics
-    disagreement_metrics = {
-        "jaccard_bm25_vs_dense": metrics.jaccard_at_k(bm25_results, dense_results),
-        "kendall_tau_bm25_vs_dense": metrics.kendall_tau_at_k(bm25_results, dense_results),
-        "jaccard_bm25_vs_hybrid": metrics.jaccard_at_k(bm25_results, hybrid_results),
-        "kendall_tau_bm25_vs_hybrid": metrics.kendall_tau_at_k(bm25_results, hybrid_results),
-        "jaccard_dense_vs_hybrid": metrics.jaccard_at_k(dense_results, hybrid_results),
-        "kendall_tau_dense_vs_hybrid": metrics.kendall_tau_at_k(dense_results, hybrid_results),
-    }
+        # 1. Run all retrievers
+        bm25_results = bm25.bm25_retrieve(query, CORPUS, k)
+        dense_results = dense.dense_retrieve(query, CORPUS, k)
+        hybrid_results = hybrid.hybrid_retrieve(query, CORPUS, k)
 
-    # 3. Generate report
-    report.generate_disagreement_report(query, results, disagreement_metrics, report_path)
+        results = {
+            "BM25": bm25_results,
+            "Dense": dense_results,
+            "Hybrid": hybrid_results,
+        }
 
-    # 4. Mine synonyms and update terms.yaml
-    mined = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
-    if mined:
-        update_terms_from_mining(mined)
-        logger.info(f"Updated terms.yaml with {len(mined)} synonym groups")
+        # 2. Compute disagreement metrics
+        disagreement_metrics = {
+            "jaccard_bm25_vs_dense": metrics.jaccard_at_k(bm25_results, dense_results),
+            "kendall_tau_bm25_vs_dense": metrics.kendall_tau_at_k(bm25_results, dense_results),
+            "jaccard_bm25_vs_hybrid": metrics.jaccard_at_k(bm25_results, hybrid_results),
+            "kendall_tau_bm25_vs_hybrid": metrics.kendall_tau_at_k(bm25_results, hybrid_results),
+            "jaccard_dense_vs_hybrid": metrics.jaccard_at_k(dense_results, hybrid_results),
+            "kendall_tau_dense_vs_hybrid": metrics.kendall_tau_at_k(dense_results, hybrid_results),
+        }
 
-    logger.info(f"Disagreement report saved to {report_path}")
+        # 3. Generate report
+        report.generate_disagreement_report(query, results, disagreement_metrics, report_path)
+
+        # 4. Mine synonyms and update terms.yaml
+        mined = mine_synonyms_from_disagreements(bm25_results, dense_results, hybrid_results)
+        if mined:
+            update_terms_from_mining(mined)
+            logger.info(f"Updated terms.yaml with {len(mined)} synonym groups")
+
+        logger.info(f"Disagreement report saved to {report_path}")
+
+    except typer.BadParameter:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to run disagreement analysis: {e}", exc_info=True)
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -105,15 +120,21 @@ def eval(
     ] = "deterministic",
 ):
     """Run evaluation suites (e.g., small)."""
-    if suite == "small":
-        summary = run_small_suite(judge_type=judge)
-        logger.info(f"EM={summary['metrics']['em']:.3f} F1={summary['metrics']['f1']:.3f}")
-        print(
-            f"Relevance={summary['metrics']['relevance']:.3f} Faithfulness={summary['metrics']['faithfulness']:.3f}"
-        )
-        logger.info(f"Wrote runs/{summary['run_id']}.json")
-    else:
-        raise typer.BadParameter(f"Unknown suite: {suite}")
+    try:
+        if suite == "small":
+            summary = run_small_suite(judge_type=judge)
+            logger.info(f"EM={summary['metrics']['em']:.3f} F1={summary['metrics']['f1']:.3f}")
+            print(
+                f"Relevance={summary['metrics']['relevance']:.3f} Faithfulness={summary['metrics']['faithfulness']:.3f}"
+            )
+            logger.info(f"Wrote runs/{summary['run_id']}.json")
+        else:
+            raise typer.BadParameter(f"Unknown suite: {suite}")
+    except typer.BadParameter:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to run evaluation: {e}", exc_info=True)
+        raise typer.Exit(code=1)
 
 
 @app.command()
@@ -125,22 +146,27 @@ def optimize(
     ],
 ):
     """Optimize hybrid retriever weights with acceptance policy."""
+    try:
 
-    def update_func():
-        weights, score = grid_search_hybrid_weights(queries, CORPUS, k=5, grid_size=4)
-        save_hybrid_config(weights)
-        logger.info(
-            f"New weights: BM25={weights.bm25_weight:.3f}, Dense={weights.dense_weight:.3f}"
-        )
-        logger.info(f"Diversity score: {score:.3f}")
+        def update_func():
+            weights, score = grid_search_hybrid_weights(queries, CORPUS, k=5, grid_size=4)
+            save_hybrid_config(weights)
+            logger.info(
+                f"New weights: BM25={weights.bm25_weight:.3f}, Dense={weights.dense_weight:.3f}"
+            )
+            logger.info(f"Diversity score: {score:.3f}")
 
-    policy = AcceptancePolicy(threshold=0.01)
-    accepted = safe_config_update(update_func, ["hybrid_config.json"], policy)
+        policy = AcceptancePolicy(threshold=0.01)
+        accepted = safe_config_update(update_func, ["hybrid_config.json"], policy)
 
-    if accepted:
-        logger.info("✅ Optimization accepted!")
-    else:
-        logger.info("❌ Optimization reverted.")
+        if accepted:
+            logger.info("✅ Optimization accepted!")
+        else:
+            logger.info("❌ Optimization reverted.")
+
+    except Exception as e:
+        logger.error(f"Failed to optimize: {e}", exc_info=True)
+        raise typer.Exit(code=1)
 
 
 @app.command()
