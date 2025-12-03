@@ -94,7 +94,7 @@ def handle_errors(
         func_name = func.__name__  # Cache function name at decoration time
 
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             try:
                 return func(*args, **kwargs)
 
@@ -161,7 +161,7 @@ def with_retry(
         func_name = func.__name__  # Cache function name
 
         @functools.wraps(func)
-        def wrapper(*args, **kwargs):
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
             last_exception = None
             current_delay = delay
 
