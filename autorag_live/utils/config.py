@@ -1,5 +1,9 @@
 """
 Configuration management utilities for AutoRAG-Live.
+
+This module provides centralized configuration management with lazy loading,
+caching, and validation. It supports environment variable overrides and
+component-specific configurations.
 """
 from pathlib import Path
 from typing import Any, Optional, cast
@@ -29,7 +33,15 @@ class ConfigManager:
         pass
 
     def _initialize_config(self) -> None:
-        """Initialize configuration from files (lazy loaded)."""
+        """
+        Initialize configuration from files with lazy loading.
+
+        Loads base config and component-specific configurations, merges them,
+        applies environment variable overrides, and validates the result.
+
+        Raises:
+            ConfigurationError: If initialization fails.
+        """
         if self._initialized:
             return
 
@@ -83,7 +95,15 @@ class ConfigManager:
 
     @property
     def config(self) -> DictConfig:
-        """Get the full configuration (lazy loaded)."""
+        """
+        Get the full configuration with lazy loading.
+
+        Returns:
+            DictConfig: The complete configuration object.
+
+        Raises:
+            ConfigurationError: If configuration is not initialized properly.
+        """
         if not self._initialized:
             self._initialize_config()
         if self._config is None:

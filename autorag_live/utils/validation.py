@@ -2,6 +2,7 @@
 Configuration validation utilities.
 
 This module provides schema validation and version migration tools for configuration management.
+It includes type checking, field validation, and environment variable merging.
 """
 import collections.abc
 from dataclasses import Field
@@ -18,7 +19,15 @@ _TYPE_HINTS_CACHE: Dict[Type, Dict[str, Any]] = {}
 
 
 def _get_cached_type_hints(schema_cls: Type) -> Dict[str, Any]:
-    """Get type hints with caching."""
+    """
+    Get type hints with caching to avoid repeated lookups.
+
+    Args:
+        schema_cls: The class to get type hints from.
+
+    Returns:
+        Dict[str, Any]: Cached type hints for the class.
+    """
     if schema_cls not in _TYPE_HINTS_CACHE:
         _TYPE_HINTS_CACHE[schema_cls] = get_type_hints(schema_cls)
     return _TYPE_HINTS_CACHE[schema_cls]
