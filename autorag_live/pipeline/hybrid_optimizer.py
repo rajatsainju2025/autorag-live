@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Tuple
 
@@ -26,6 +27,12 @@ def hybrid_retrieve_weighted(
     query: str, corpus: List[str], k: int, weights: HybridWeights
 ) -> List[str]:
     """Enhanced hybrid retrieval with custom weights."""
+    start_time = time.time()
+    logger.debug(
+        f"Starting hybrid retrieval with weights: BM25={weights.bm25_weight:.3f}, "
+        f"Dense={weights.dense_weight:.3f}, k={k}, corpus_size={len(corpus)}"
+    )
+
     # Get results from both retrievers
     bm25_results = bm25.bm25_retrieve(query, corpus, min(k * 2, len(corpus)))
     dense_results = dense.dense_retrieve(query, corpus, min(k * 2, len(corpus)))
@@ -43,7 +50,16 @@ def hybrid_retrieve_weighted(
 
     # Sort by combined score and return top k
     sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
-    return [doc for doc, _ in sorted_docs[:k]]
+    results = [doc for doc, _ in sorted_docs[:k]]
+
+    elapsed = time.time() - start_time
+    logger.info(
+        f"Hybrid retrieval completed in {elapsed:.3f}s, "
+        f"returned {len(results)} documents, "
+        f"unique_docs={len(set(bm25_results + dense_results))}"
+    )
+
+    return results
 
 
 def grid_search_hybrid_weights(
@@ -53,18 +69,23 @@ def grid_search_hybrid_weights(
     Simple grid search for optimal hybrid weights.
     Evaluates based on diversity (disagreement) between methods.
     """
+    start_time = time.time()
     logger.info(
-        f"Starting grid search for hybrid weights with {len(queries)} queries, grid_size={grid_size}"
+        f"Starting grid search optimization: queries={len(queries)}, "
+        f"corpus_size={len(corpus)}, k={k}, grid_size={grid_size}"
     )
 
     best_weights = HybridWeights()
     best_score = -1.0
+    eval_count = 0
 
     for i in range(grid_size + 1):
         bm25_w = i / grid_size
         dense_w = 1.0 - bm25_w
         weights = HybridWeights(bm25_w, dense_w)
-        logger.debug(f"Evaluating weights: BM25={bm25_w:.2f}, Dense={dense_w:.2f}")
+        logger.debug(
+            f"[{eval_count + 1}/{grid_size + 1}] Evaluating weights: BM25={bm25_w:.2f}, Dense={dense_w:.2f}"
+        )
 
         total_diversity = 0.0
         for query in queries:
@@ -86,10 +107,18 @@ def grid_search_hybrid_weights(
         if avg_diversity > best_score:
             best_score = avg_diversity
             best_weights = weights
-            logger.debug(f"New best weights found: diversity={best_score:.4f}")
+            logger.info(
+                f"✓ New best found: BM25={best_weights.bm25_weight:.2f}, "
+                f"Dense={best_weights.dense_weight:.2f}, diversity={best_score:.4f}"
+            )
 
+        eval_count += 1
+
+    elapsed = time.time() - start_time
     logger.info(
-        f"Grid search completed. Best weights: BM25={best_weights.bm25_weight:.2f}, Dense={best_weights.dense_weight:.2f}, diversity={best_score:.4f}"
+        f"Grid search completed in {elapsed:.2f}s. "
+        f"Best weights: BM25={best_weights.bm25_weight:.2f}, Dense={best_weights.dense_weight:.2f}, "
+        f"diversity={best_score:.4f}, evaluations={eval_count}"
     )
     return best_weights, best_score
 
