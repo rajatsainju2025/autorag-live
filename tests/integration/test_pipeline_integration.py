@@ -166,8 +166,10 @@ class TestErrorHandling:
 
     def test_empty_query_handling(self, sample_corpus):
         """Test handling of empty query."""
-        # Empty query should raise ValueError
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        # Empty query should raise RetrieverError
+        from autorag_live.types.types import RetrieverError
+
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             bm25.bm25_retrieve("", sample_corpus, k=3)
 
     def test_large_k_handling(self, sample_corpus, sample_queries):
@@ -178,8 +180,10 @@ class TestErrorHandling:
 
     def test_zero_k_handling(self, sample_corpus, sample_queries):
         """Test handling of k=0."""
-        # k=0 should raise ValueError
-        with pytest.raises(ValueError, match="k must be positive"):
+        # k=0 should raise RetrieverError
+        from autorag_live.types.types import RetrieverError
+
+        with pytest.raises(RetrieverError, match="k must be positive"):
             bm25.bm25_retrieve(sample_queries[0], sample_corpus, k=0)
 
 

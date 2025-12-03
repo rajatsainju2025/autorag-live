@@ -19,22 +19,22 @@ class TestRetrieverEdgeCases:
     def test_bm25_empty_query(self):
         """Test BM25 with empty query."""
         corpus = ["test document"]
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             bm25.bm25_retrieve("", corpus, 1)
 
     def test_bm25_whitespace_query(self):
         """Test BM25 with whitespace-only query."""
         corpus = ["test document"]
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             bm25.bm25_retrieve("   ", corpus, 1)
 
     def test_bm25_invalid_k(self):
         """Test BM25 with invalid k values."""
         corpus = ["test document"]
-        with pytest.raises(ValueError, match="k must be positive"):
+        with pytest.raises(RetrieverError, match="k must be positive"):
             bm25.bm25_retrieve("test", corpus, 0)
 
-        with pytest.raises(ValueError, match="k must be positive"):
+        with pytest.raises(RetrieverError, match="k must be positive"):
             bm25.bm25_retrieve("test", corpus, -1)
 
     def test_bm25_empty_corpus(self):
@@ -60,24 +60,24 @@ class TestRetrieverEdgeCases:
         assert result == []
 
     def test_hybrid_empty_query(self):
-        """Test hybrid retrieval with empty query."""
+        """Test hybrid with empty query."""
         corpus = ["test document"]
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             hybrid.hybrid_retrieve("", corpus, 1)
 
     def test_hybrid_invalid_k(self):
         """Test hybrid retrieval with invalid k values."""
         corpus = ["test document"]
-        with pytest.raises(ValueError, match="k must be positive"):
+        with pytest.raises(RetrieverError, match="k must be positive"):
             hybrid.hybrid_retrieve("test", corpus, 0)
 
     def test_hybrid_invalid_weights(self):
         """Test hybrid retrieval with invalid weights."""
         corpus = ["test document"]
-        with pytest.raises(ValueError, match="bm25_weight must be between 0.0 and 1.0"):
+        with pytest.raises(RetrieverError, match="bm25_weight must be between 0.0 and 1.0"):
             hybrid.hybrid_retrieve("test", corpus, 1, bm25_weight=-0.1)
 
-        with pytest.raises(ValueError, match="bm25_weight must be between 0.0 and 1.0"):
+        with pytest.raises(RetrieverError, match="bm25_weight must be between 0.0 and 1.0"):
             hybrid.hybrid_retrieve("test", corpus, 1, bm25_weight=1.5)
 
     def test_hybrid_empty_corpus(self):

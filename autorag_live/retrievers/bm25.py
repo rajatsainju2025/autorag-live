@@ -84,15 +84,26 @@ def _get_bm25_for_corpus(corpus: List[str]) -> Any:
 def bm25_retrieve(query: str, corpus: List[str], k: int) -> List[str]:
     """
     Retrieves top-k documents from the corpus using BM25.
+
+    Args:
+        query: The search query string.
+        corpus: List of document strings to search.
+        k: Number of top documents to retrieve.
+
+    Returns:
+        List of top-k documents sorted by relevance.
+
+    Raises:
+        RetrieverError: If query is empty or k is invalid.
     """
     if not corpus:
         return []
 
     if not query or not query.strip():
-        raise ValueError("Query cannot be empty")
+        raise RetrieverError("Query cannot be empty", context={"query_length": len(query)})
 
     if k <= 0:
-        raise ValueError("k must be positive")
+        raise RetrieverError(f"k must be positive, got {k}", context={"k": k})
 
     # Intern query for better cache performance
     interned_query = intern_query(query)

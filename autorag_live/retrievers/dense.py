@@ -353,15 +353,27 @@ def dense_retrieve(
 ) -> List[str]:
     """
     Retrieves top-k documents from the corpus using a dense retriever.
+
+    Args:
+        query: The search query string.
+        corpus: List of document strings to search.
+        k: Number of top documents to retrieve.
+        model_name: Name of the sentence transformer model to use.
+
+    Returns:
+        List of top-k documents sorted by relevance.
+
+    Raises:
+        RetrieverError: If query is empty, k is invalid, or retrieval fails.
     """
     if not corpus:
         return []
 
     if not query or not query.strip():
-        raise RetrieverError("Query cannot be empty")
+        raise RetrieverError("Query cannot be empty", context={"query_length": len(query)})
 
     if k <= 0:
-        raise RetrieverError("k must be positive")
+        raise RetrieverError(f"k must be positive, got {k}", context={"k": k})
 
     if SentenceTransformer is not None and cosine_similarity is not None:
         try:

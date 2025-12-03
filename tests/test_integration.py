@@ -365,19 +365,20 @@ class TestErrorHandlingIntegration:
 
     def test_malformed_query_handling(self, sample_corpus):
         """Test behavior with malformed queries."""
-        # Empty and whitespace-only queries should raise ValueError
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        # Empty and whitespace-only queries should raise RetrieverError
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             bm25.bm25_retrieve("", sample_corpus, 5)
         with pytest.raises(RetrieverError, match="Query cannot be empty"):
             dense.dense_retrieve("", sample_corpus, 5)
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             hybrid.hybrid_retrieve("", sample_corpus, 5)
 
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
             bm25.bm25_retrieve("   ", sample_corpus, 5)
         with pytest.raises(RetrieverError, match="Query cannot be empty"):
             dense.dense_retrieve("   ", sample_corpus, 5)
-        with pytest.raises(ValueError, match="Query cannot be empty"):
+        with pytest.raises(RetrieverError, match="Query cannot be empty"):
+            hybrid.hybrid_retrieve("   ", sample_corpus, 5)
             hybrid.hybrid_retrieve("   ", sample_corpus, 5)
 
         # Special characters should work (may return empty results)

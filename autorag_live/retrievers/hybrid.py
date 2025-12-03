@@ -1,5 +1,6 @@
 from typing import Dict, List
 
+from ..types.types import RetrieverError
 from . import bm25, dense
 
 
@@ -7,18 +8,33 @@ def hybrid_retrieve(query: str, corpus: List[str], k: int, bm25_weight: float = 
     """Retrieve top-k documents using hybrid BM25 and dense retrieval.
 
     Uses equal contribution strategy for fast, balanced results.
+
+    Args:
+        query: The search query string.
+        corpus: List of document strings to search.
+        k: Number of top documents to retrieve.
+        bm25_weight: Weight for BM25 scores (0.0 to 1.0), dense weight = 1 - bm25_weight.
+
+    Returns:
+        List of top-k documents sorted by combined relevance score.
+
+    Raises:
+        RetrieverError: If query is empty, k is invalid, or weight is out of range.
     """
     if not corpus:
         return []
 
     if not query or not query.strip():
-        raise ValueError("Query cannot be empty")
+        raise RetrieverError("Query cannot be empty", context={"query_length": len(query)})
 
     if k <= 0:
-        raise ValueError("k must be positive")
+        raise RetrieverError(f"k must be positive, got {k}", context={"k": k})
 
     if not (0.0 <= bm25_weight <= 1.0):
-        raise ValueError("bm25_weight must be between 0.0 and 1.0")
+        raise RetrieverError(
+            f"bm25_weight must be between 0.0 and 1.0, got {bm25_weight}",
+            context={"bm25_weight": bm25_weight},
+        )
 
     dense_weight = 1.0 - bm25_weight
 
