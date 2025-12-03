@@ -5,14 +5,58 @@ This package provides a comprehensive framework for retrieval-augmented generati
 with built-in disagreement analysis, automatic optimization, and self-improvement capabilities.
 """
 
+import sys
+import warnings
+
 __version__ = "0.1.0"
 
-from .disagreement.metrics import jaccard_at_k, kendall_tau_at_k  # noqa: F401
+# Minimum Python version check
+MIN_PYTHON = (3, 10)
+if sys.version_info < MIN_PYTHON:
+    sys.stderr.write(
+        f"ERROR: AutoRAG-Live requires Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]} or higher. "
+        f"You are using Python {sys.version_info[0]}.{sys.version_info[1]}.{sys.version_info[2]}.\n"
+    )
+    sys.exit(1)
 
-# Core fast imports (always needed)
-from .retrievers.bm25 import bm25_retrieve  # noqa: F401
-from .retrievers.dense import dense_retrieve  # noqa: F401
-from .retrievers.hybrid import hybrid_retrieve  # noqa: F401
+# Check critical dependencies versions
+try:
+    import numpy as np
+
+    if hasattr(np, "__version__"):
+        np_version = tuple(map(int, np.__version__.split(".")[:2]))
+        if np_version < (1, 20):
+            warnings.warn(
+                f"NumPy {np.__version__} is installed. AutoRAG-Live works best with NumPy >= 1.20.0",
+                UserWarning,
+                stacklevel=2,
+            )
+except ImportError:
+    warnings.warn(
+        "NumPy is not installed. Some features may not work properly.", UserWarning, stacklevel=2
+    )
+
+try:
+    from omegaconf import __version__ as omegaconf_version
+
+    oc_version = tuple(map(int, omegaconf_version.split(".")[:2]))
+    if oc_version < (2, 3):
+        warnings.warn(
+            f"OmegaConf {omegaconf_version} is installed. AutoRAG-Live requires OmegaConf >= 2.3.0",
+            UserWarning,
+            stacklevel=2,
+        )
+except (ImportError, AttributeError):
+    warnings.warn(
+        "OmegaConf version check failed. Please ensure OmegaConf >= 2.3.0 is installed.",
+        UserWarning,
+        stacklevel=2,
+    )
+
+from .disagreement.metrics import jaccard_at_k, kendall_tau_at_k  # noqa: E402, F401
+from .retrievers.bm25 import bm25_retrieve  # noqa: E402, F401
+from .retrievers.dense import dense_retrieve  # noqa: E402, F401
+from .retrievers.hybrid import hybrid_retrieve  # noqa: E402, F401
 
 # Optional heavy imports with try-except for better performance
 try:
