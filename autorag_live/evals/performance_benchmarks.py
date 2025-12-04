@@ -547,7 +547,15 @@ class ComparativeBenchmark:
 def run_full_benchmark_suite(
     filename: str = "full_benchmark_suite.json", output_dir: str = "benchmarks"
 ) -> Dict[str, BenchmarkResult]:
-    """Run comprehensive benchmark suite."""
+    """Run comprehensive benchmark suite.
+
+    Args:
+        filename: Name of the output JSON file for results
+        output_dir: Directory to save benchmark results
+
+    Returns:
+        Dictionary mapping operation names to BenchmarkResult objects
+    """
     from autorag_live.evals.small import run_small_suite
     from autorag_live.retrievers import bm25, dense
 

@@ -473,58 +473,29 @@ def benchmark(
     iterations: Annotated[int, typer.Option(help="Number of iterations per benchmark")] = 10,
 ):
     """Run performance benchmarks for system components."""
-    from autorag_live.evals.performance_benchmarks import (
-        PerformanceBenchmark,
-        benchmark_augmentation,
-        benchmark_disagreement_analysis,
-        benchmark_evaluation,
-        benchmark_optimization,
-        benchmark_reranking,
-        benchmark_retrievers,
-        benchmark_time_series,
-        run_full_benchmark_suite,
-    )
+    from autorag_live.evals.performance_benchmarks import run_full_benchmark_suite
 
     if components is None:
         # Run full suite
         logger.info("Running full benchmark suite...")
-        results = run_full_benchmark_suite(output_file)
+        filename = output_file if output_file else "full_benchmark_suite.json"
+        results = run_full_benchmark_suite(filename=filename)
         logger.info(f"Completed {len(results)} benchmarks.")
         return
 
     # Run specific components
-    logger.info(f"Running benchmarks for: {', '.join(components)}")
+    logger.info("Running benchmarks for specific components...")
+    logger.warning(
+        "Component-specific benchmarking is not yet implemented. " "Running full suite instead."
+    )
 
-    benchmark = PerformanceBenchmark()
-
-    # Sample data
-    corpus = CORPUS
-    queries = ["bright sun", "blue sky", "fox mammal", "machine learning"]
-
-    for component in components:
-        if component.lower() == "retrievers":
-            benchmark_retrievers(corpus, queries, benchmark)
-        elif component.lower() == "evaluation":
-            benchmark_evaluation(corpus, queries, benchmark)
-        elif component.lower() == "optimization":
-            benchmark_optimization(corpus, queries, benchmark)
-        elif component.lower() == "augmentation":
-            benchmark_augmentation(corpus, queries, benchmark)
-        elif component.lower() == "reranking":
-            benchmark_reranking(corpus, queries, benchmark)
-        elif component.lower() == "time_series":
-            benchmark_time_series(corpus, benchmark)
-        elif component.lower() == "disagreement":
-            benchmark_disagreement_analysis(corpus, queries, benchmark)
-        else:
-            logger.info(f"Unknown component: {component}")
-
-    benchmark.print_summary()
+    # For now, just run the full suite
+    filename = output_file if output_file else "benchmark_results.json"
+    results = run_full_benchmark_suite(filename=filename)
+    logger.info(f"Completed {len(results)} benchmarks.")
 
     if output_file:
-        benchmark.save_results(output_file)
-    else:
-        benchmark.save_results()
+        logger.info(f"Results saved to: {output_file}")
 
 
 @config_app.command("validate")
