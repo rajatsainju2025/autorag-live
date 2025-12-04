@@ -188,7 +188,27 @@ performance_monitor = PerformanceMonitor()
 
 @contextmanager
 def monitor_performance(operation_name: str, metadata: Optional[Dict[str, Any]] = None):
-    """Context manager for monitoring performance."""
+    """Context manager for monitoring performance metrics.
+
+    Automatically tracks execution time, memory usage, and custom metadata
+    for the code block. Metrics are recorded to the global performance monitor.
+
+    Args:
+        operation_name: Descriptive name for the operation being monitored.
+        metadata: Optional dictionary of additional context to record.
+
+    Yields:
+        PerformanceMetrics: Metrics object that can be updated during execution.
+
+    Example:
+        >>> with monitor_performance("dense_retrieval", {"corpus_size": 1000}):
+        ...     results = dense_retrieve(query, corpus)
+        >>>
+        >>> # Access metrics during execution
+        >>> with monitor_performance("complex_operation") as metrics:
+        ...     # Do work
+        ...     metrics.add_metadata("items_processed", 100)
+    """
     if not performance_monitor._enabled:
         yield
         return
@@ -205,7 +225,31 @@ def monitor_performance(operation_name: str, metadata: Optional[Dict[str, Any]] 
 
 
 def profile_function(operation_name: Optional[str] = None):
-    """Decorator for profiling function performance."""
+    """Decorator for profiling function performance.
+
+    Wraps a function to automatically track its execution metrics including
+    time, memory usage, and call frequency. If operation_name is not provided,
+    uses the function's module and name.
+
+    Args:
+        operation_name: Optional custom name for the operation.
+            If None, uses "module.function_name".
+
+    Returns:
+        Callable: Decorator function that wraps the target function.
+
+    Example:
+        >>> @profile_function("custom_retrieve")
+        ... def retrieve_documents(query: str, k: int = 5):
+        ...     # Function implementation
+        ...     pass
+        >>>
+        >>> # Auto-named profiling
+        >>> @profile_function()
+        ... def complex_calculation(data):
+        ...     # Function implementation
+        ...     pass
+    """
 
     def decorator(func: Callable[..., T]) -> Callable[..., T]:
         op_name = operation_name or f"{func.__module__}.{func.__name__}"

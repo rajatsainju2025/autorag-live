@@ -114,7 +114,29 @@ def lazy_import(module_path: str, attr_name: str):
 
 # Pre-configured loaders for common heavy dependencies
 def get_sentence_transformer(model_name: str = "all-MiniLM-L6-v2"):
-    """Lazy-load and get SentenceTransformer model."""
+    """Lazy-load and get SentenceTransformer model.
+
+    This function delays the import of sentence-transformers until needed,
+    reducing startup time and memory usage.
+
+    Args:
+        model_name: Name of the model to load. Defaults to "all-MiniLM-L6-v2".
+            Popular options include:
+            - "all-MiniLM-L6-v2": Fast, small model (80MB)
+            - "all-mpnet-base-v2": Higher quality (420MB)
+            - "paraphrase-multilingual-MiniLM-L12-v2": Multilingual support
+
+    Returns:
+        SentenceTransformer: Loaded model instance ready for encoding.
+
+    Raises:
+        ImportError: If sentence-transformers package is not installed.
+
+    Example:
+        >>> model = get_sentence_transformer()
+        >>> embeddings = model.encode(["Hello world", "Another sentence"])
+        >>> print(embeddings.shape)  # (2, 384)
+    """
     try:
         transformer_class = _global_loader.get("sentence_transformers", "SentenceTransformer")
         return transformer_class(model_name)
@@ -125,7 +147,34 @@ def get_sentence_transformer(model_name: str = "all-MiniLM-L6-v2"):
 
 
 def get_elasticsearch_client(hosts: Optional[list] = None, **kwargs):
-    """Lazy-load and create Elasticsearch client."""
+    """Lazy-load and create Elasticsearch client.
+
+    Args:
+        hosts: List of Elasticsearch host addresses.
+            Defaults to ["localhost:9200"].
+        **kwargs: Additional keyword arguments passed to Elasticsearch client.
+            Common options:
+            - timeout: Request timeout in seconds
+            - http_auth: (username, password) tuple for authentication
+            - use_ssl: Whether to use SSL/TLS
+
+    Returns:
+        Elasticsearch: Configured client instance.
+
+    Raises:
+        ImportError: If elasticsearch package is not installed.
+
+    Example:
+        >>> client = get_elasticsearch_client(["localhost:9200"])
+        >>> client.ping()  # Test connection
+        True
+        >>> # With authentication
+        >>> client = get_elasticsearch_client(
+        ...     hosts=["https://elastic.example.com:9200"],
+        ...     http_auth=("user", "pass"),
+        ...     use_ssl=True
+        ... )
+    """
     if hosts is None:
         hosts = ["localhost:9200"]
     try:
@@ -138,7 +187,32 @@ def get_elasticsearch_client(hosts: Optional[list] = None, **kwargs):
 
 
 def get_qdrant_client(url: Optional[str] = None, **kwargs):
-    """Lazy-load and create Qdrant client."""
+    """Lazy-load and create Qdrant client.
+
+    Args:
+        url: Qdrant server URL. Defaults to "http://localhost:6333".
+        **kwargs: Additional keyword arguments passed to QdrantClient.
+            Common options:
+            - api_key: API key for authentication
+            - timeout: Request timeout in seconds
+            - prefer_grpc: Whether to use gRPC protocol
+
+    Returns:
+        QdrantClient: Configured client instance.
+
+    Raises:
+        ImportError: If qdrant-client package is not installed.
+
+    Example:
+        >>> client = get_qdrant_client()
+        >>> # Check if collection exists
+        >>> collections = client.get_collections()
+        >>> # With cloud deployment
+        >>> client = get_qdrant_client(
+        ...     url="https://xyz.aws.qdrant.cloud:6333",
+        ...     api_key="your-api-key"
+        ... )
+    """
     if url is None:
         url = "http://localhost:6333"
     try:

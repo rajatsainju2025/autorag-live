@@ -448,7 +448,29 @@ class AutoRAGLogger:
 # Context managers for logging context
 @contextmanager
 def logging_context(**kwargs):
-    """Context manager for setting logging context variables."""
+    """Context manager for setting logging context variables.
+
+    Temporarily sets context variables for structured logging. Context is
+    automatically restored when exiting the context manager.
+
+    Args:
+        **kwargs: Key-value pairs to set as context variables.
+            Common context keys:
+            - user_id: Current user identifier
+            - request_id: Request tracking ID
+            - operation: Current operation name
+            - session_id: Session identifier
+
+    Example:
+        >>> with logging_context(user_id="user123", operation="retrieval"):
+        ...     logger.info("Performing search")  # Includes context
+        ...     # All logs in this block will include user_id and operation
+        >>>
+        >>> # Nested contexts are supported
+        >>> with logging_context(request_id="req-456"):
+        ...     with logging_context(query="search term"):
+        ...         logger.info("Processing query")  # Has both contexts
+    """
     tokens = {}
     for key, value in kwargs.items():
         context_var = globals().get(key)
