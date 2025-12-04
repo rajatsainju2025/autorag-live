@@ -1246,3 +1246,101 @@ class DenseRetriever(BaseRetriever):
 # Optimization: perf(mmap): add memory-mapped embeddings for large corpora
 
 # Optimization: perf(async): convert dense retrieval to true async
+
+
+def dense_retrieve_batch(
+    queries: List[str],
+    corpus: List[str],
+    k: int,
+    model_name: str = "all-MiniLM-L6-v2",
+    batch_size: int = 32,
+    enable_fp16: bool = False,
+) -> List[List[str]]:
+    """
+    Memory-efficient batch retrieval for multiple queries.
+
+    This function processes queries and corpus in batches to reduce peak memory usage.
+    Useful when dealing with large corpora or many queries.
+
+    Args:
+        queries: List of search query strings.
+        corpus: List of document strings to search.
+        k: Number of top documents to retrieve per query.
+        model_name: Name of the sentence transformer model to use.
+        batch_size: Number of documents to encode at once (reduces memory).
+        enable_fp16: Use float16 precision for 50% memory reduction.
+
+    Returns:
+        List of lists, where each inner list contains top-k documents for a query.
+
+    Raises:
+        RetrieverError: If queries are empty or retrieval fails.
+
+    Example:
+        >>> queries = ["machine learning", "deep learning"]
+        >>> corpus = ["ML is AI", "DL uses neural nets", "Data science"]
+        >>> results = dense_retrieve_batch(queries, corpus, k=2, batch_size=16)
+        >>> len(results)  # 2 (one per query)
+        2
+        >>> len(results[0])  # 2 (top-k documents)
+        2
+    """
+    if not queries:
+        raise RetrieverError("Queries list cannot be empty")
+
+    if not corpus:
+        return [[] for _ in queries]
+
+    try:
+        # Reuse cached model
+        model = _MODEL_CACHE_MANAGER.get_model(model_name)
+
+        # Encode all queries at once (typically small enough for memory)
+        query_embeddings = model.encode(
+            queries, convert_to_numpy=True, normalize_embeddings=True, batch_size=batch_size
+        )
+
+        # Convert to fp16 if requested
+        if enable_fp16:
+            query_embeddings = query_embeddings.astype(np.float16)
+
+        # Encode corpus in batches to limit memory usage
+        corpus_embeddings_list = []
+        for i in range(0, len(corpus), batch_size):
+            batch = corpus[i : i + batch_size]
+            batch_embeddings = model.encode(batch, convert_to_numpy=True, normalize_embeddings=True)
+            if enable_fp16:
+                batch_embeddings = batch_embeddings.astype(np.float16)
+            corpus_embeddings_list.append(batch_embeddings)
+
+        # Concatenate corpus embeddings
+        corpus_embeddings = np.vstack(corpus_embeddings_list)
+
+        # Compute similarities and get top-k for each query
+        results = []
+        for query_embedding in query_embeddings:
+            # Dot product for normalized embeddings
+            sims = np.dot(corpus_embeddings, query_embedding)
+
+            # Get top-k indices
+            k_eff = min(k, len(corpus))
+            if k_eff <= 0:
+                results.append([])
+                continue
+
+            top_k_part = np.argpartition(sims, -k_eff)[-k_eff:]
+            top_k_sorted_idx = top_k_part[np.argsort(sims[top_k_part])[::-1]]
+            results.append([corpus[i] for i in top_k_sorted_idx])
+
+        return results
+
+    except Exception as e:
+        logger.error(f"Batch retrieval failed: {e}")
+        raise RetrieverError(f"Batch retrieval failed: {e}")
+
+
+__all__ = [
+    "dense_retrieve",
+    "dense_retrieve_batch",
+    "DenseRetriever",
+]
