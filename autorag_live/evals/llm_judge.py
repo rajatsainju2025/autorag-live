@@ -2,8 +2,71 @@ from __future__ import annotations
 
 import json
 import os
+import time
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
+
+# Retry configuration
+MAX_RETRIES = 3
+INITIAL_RETRY_DELAY = 1.0  # seconds
+MAX_RETRY_DELAY = 16.0  # seconds
+
+
+def retry_with_exponential_backoff(func, max_retries=MAX_RETRIES):
+    """
+    Retry a function with exponential backoff for transient failures.
+
+    Args:
+        func: Function to retry
+        max_retries: Maximum number of retry attempts
+
+    Returns:
+        Result of the function call
+
+    Raises:
+        Exception: Last exception if all retries fail
+    """
+    delay = INITIAL_RETRY_DELAY
+    last_exception: Optional[Exception] = None
+
+    for attempt in range(max_retries):
+        try:
+            return func()
+        except Exception as e:
+            last_exception = e
+            error_msg = str(e).lower()
+
+            # Check if error is retryable (transient network/API errors)
+            retryable_errors = [
+                "timeout",
+                "rate limit",
+                "429",  # Too Many Requests
+                "500",  # Internal Server Error
+                "502",  # Bad Gateway
+                "503",  # Service Unavailable
+                "504",  # Gateway Timeout
+                "connection",
+                "network",
+            ]
+
+            is_retryable = any(err in error_msg for err in retryable_errors)
+
+            if not is_retryable or attempt == max_retries - 1:
+                # Not retryable or last attempt - raise immediately
+                raise
+
+            # Wait with exponential backoff
+            sleep_time = min(delay * (2**attempt), MAX_RETRY_DELAY)
+            print(
+                f"API call failed (attempt {attempt + 1}/{max_retries}): {e}. "
+                f"Retrying in {sleep_time:.1f}s..."
+            )
+            time.sleep(sleep_time)
+
+    # Should never reach here, but just in case
+    if last_exception:
+        raise last_exception
+    raise RuntimeError("Retry logic failed without exception")
 
 
 class LLMJudge(ABC):
@@ -95,15 +158,21 @@ class OpenAIJudge(LLMJudge):
         """
 
         try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=10,
-                temperature=0.1,
-            )
-            score_text = response.choices[0].message.content.strip()
-            score = float(score_text) / 10.0
-            return max(0.0, min(1.0, score))
+
+            def api_call():
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=10,
+                    temperature=0.1,
+                )
+                score_text = response.choices[0].message.content.strip()
+                score = float(score_text) / 10.0
+                return max(0.0, min(1.0, score))
+
+            # Use retry logic for API call
+            return retry_with_exponential_backoff(api_call)
+
         except Exception as e:
             print(f"OpenAI API error: {e}")
             # Fallback
@@ -130,15 +199,21 @@ class OpenAIJudge(LLMJudge):
         """
 
         try:
-            response = self._client.chat.completions.create(
-                model=self.model,
-                messages=[{"role": "user", "content": prompt}],
-                max_tokens=10,
-                temperature=0.1,
-            )
-            score_text = response.choices[0].message.content.strip()
-            score = float(score_text) / 10.0
-            return max(0.0, min(1.0, score))
+
+            def api_call():
+                response = self._client.chat.completions.create(
+                    model=self.model,
+                    messages=[{"role": "user", "content": prompt}],
+                    max_tokens=10,
+                    temperature=0.1,
+                )
+                score_text = response.choices[0].message.content.strip()
+                score = float(score_text) / 10.0
+                return max(0.0, min(1.0, score))
+
+            # Use retry logic for API call
+            return retry_with_exponential_backoff(api_call)
+
         except Exception as e:
             print(f"OpenAI API error: {e}")
             det_judge = DeterministicJudge()
