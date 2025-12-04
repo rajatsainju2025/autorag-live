@@ -147,6 +147,20 @@ def optimize(
 ):
     """Optimize hybrid retriever weights with acceptance policy."""
     try:
+        # Input validation
+        if not queries:
+            logger.error("Queries list cannot be empty")
+            raise typer.BadParameter("At least one query is required")
+
+        if any(not q or not q.strip() for q in queries):
+            logger.error("Empty queries found in list")
+            raise typer.BadParameter("All queries must be non-empty strings")
+
+        if len(queries) < 2:
+            logger.warning("Using only one query may produce suboptimal results")
+            logger.info(
+                "Recommendation: Provide at least 2-3 diverse queries for better optimization"
+            )
 
         def update_func():
             weights, score = grid_search_hybrid_weights(queries, CORPUS, k=5, grid_size=4)
@@ -179,6 +193,19 @@ def advanced_eval(
     output_file: Annotated[Optional[str], typer.Option(help="Output file for metrics")] = None,
 ):
     """Run advanced evaluation metrics for a query."""
+    # Input validation
+    if not query or not query.strip():
+        logger.error("Query cannot be empty")
+        raise typer.BadParameter("Query must be a non-empty string")
+
+    if not relevant_docs:
+        logger.error("Relevant documents list cannot be empty")
+        raise typer.BadParameter("At least one relevant document is required")
+
+    if any(not doc or not doc.strip() for doc in relevant_docs):
+        logger.error("Empty documents found in relevant_docs")
+        raise typer.BadParameter("All relevant documents must be non-empty strings")
+
     logger.info(f"Running advanced evaluation for query: '{query}'")
 
     # Get retrieved documents from different retrievers
@@ -298,6 +325,24 @@ def time_series_retrieve(
     time_window: Annotated[str, typer.Option(help="Time window (e.g., 7d, 30d)")] = "7d",
 ):
     """Retrieve documents using time-series aware retrieval."""
+    # Input validation
+    if not query or not query.strip():
+        logger.error("Query cannot be empty")
+        raise typer.BadParameter("Query must be a non-empty string")
+
+    # Validate time window format
+    if not time_window.endswith("d"):
+        logger.error(f"Invalid time window format: '{time_window}'")
+        raise typer.BadParameter("Time window must end with 'd' (e.g., 7d, 30d)")
+
+    try:
+        days = int(time_window[:-1])
+        if days <= 0:
+            raise ValueError()
+    except ValueError:
+        logger.error(f"Invalid time window value: '{time_window}'")
+        raise typer.BadParameter("Time window must be a positive number followed by 'd' (e.g., 7d)")
+
     logger.info(f"Running time-series retrieval for query: '{query}' with window: {time_window}")
 
     # Create sample time-series notes
@@ -347,6 +392,19 @@ def compare_retrievers(
     output_file: Annotated[Optional[str], typer.Option(help="Output file for comparison")] = None,
 ):
     """Compare all available retrievers on a query."""
+    # Input validation
+    if not query or not query.strip():
+        logger.error("Query cannot be empty")
+        raise typer.BadParameter("Query must be a non-empty string")
+
+    if k <= 0:
+        logger.error(f"Invalid k value: {k}")
+        raise typer.BadParameter("k must be a positive integer")
+
+    if k > 100:
+        logger.warning(f"Large k value ({k}) may impact performance")
+        logger.info("Recommendation: Use k <= 100 for better performance")
+
     logger.info(f"Comparing retrievers for query: '{query}'")
 
     retrievers = {
