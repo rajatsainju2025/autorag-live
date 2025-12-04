@@ -91,9 +91,15 @@ def validate_config(config: DictConfig, schema_cls: Type[T]) -> None:
         # Check required fields
         missing_fields = [f for f in required_fields if f not in config]
         if missing_fields:
-            raise ConfigurationError(
-                f"Missing required configuration fields: {', '.join(missing_fields)}"
-            )
+            error_msg = f"Missing required configuration fields: {', '.join(missing_fields)}\n\n"
+            error_msg += "Suggestions:\n"
+            error_msg += "  - Add the following fields to your config file:\n"
+            for field in missing_fields:
+                field_type = type_hints.get(field)
+                error_msg += f"    {field}: <{field_type}>\n"
+            error_msg += "\n  - Check documentation for field descriptions\n"
+            error_msg += "  - Use 'python -m autorag_live.cli config validate' to verify config"
+            raise ConfigurationError(error_msg)
 
         # Validate each field
         for field_name, field_type in type_hints.items():
@@ -136,7 +142,14 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
         origin = getattr(expected_type, "__origin__", None)
         if origin is list:
             if not isinstance(value, collections.abc.Sequence):
-                raise ConfigurationError(f"Field '{name}' must be a list")
+                raise ConfigurationError(
+                    f"Field '{name}' must be a list\n\n"
+                    f"Current type: {type(value).__name__}\n"
+                    f"Expected: list or sequence\n\n"
+                    f"Suggestions:\n"
+                    f"  - Ensure the value is a list: [{name}: [...]]\n"
+                    f"  - Check for proper YAML list syntax"
+                )
             # Only validate items if type args are present
             if hasattr(expected_type, "__args__") and expected_type.__args__:
                 item_type = expected_type.__args__[0]
@@ -147,7 +160,14 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
         # Handle Dicts (including OmegaConf DictConfig) - optimized with early check
         if origin is dict:
             if not isinstance(value, collections.abc.Mapping):
-                raise ConfigurationError(f"Field '{name}' must be a dict or DictConfig")
+                raise ConfigurationError(
+                    f"Field '{name}' must be a dict or DictConfig\n\n"
+                    f"Current type: {type(value).__name__}\n"
+                    f"Expected: dict or mapping\n\n"
+                    f"Suggestions:\n"
+                    f"  - Ensure the value is a dictionary: [{name}: {{key: value}}]\n"
+                    f"  - Check for proper YAML dict/mapping syntax"
+                )
             # Only validate nested if type args are present
             if hasattr(expected_type, "__args__") and len(expected_type.__args__) >= 2:
                 key_type, value_type = expected_type.__args__
@@ -170,7 +190,14 @@ def validate_field(name: str, value: Any, expected_type: Any) -> None:
         # Basic type checking - optimized with hasattr check
         if not isinstance(value, expected_type):
             raise ConfigurationError(
-                f"Field '{name}' has invalid type. Expected {expected_type}, got {type(value)}"
+                f"Field '{name}' has invalid type\n\n"
+                f"Expected: {expected_type.__name__ if hasattr(expected_type, '__name__') else expected_type}\n"
+                f"Got: {type(value).__name__}\n"
+                f"Value: {value!r}\n\n"
+                f"Suggestions:\n"
+                f"  - Convert value to correct type before setting\n"
+                f"  - Check configuration schema documentation\n"
+                f"  - Ensure YAML types match expected Python types"
             )
 
     except ConfigurationError:
