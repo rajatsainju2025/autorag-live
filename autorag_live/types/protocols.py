@@ -11,7 +11,7 @@ Example:
     ...     ...
 """
 
-from typing import List, Protocol, Tuple, Union
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union, runtime_checkable
 
 import numpy as np
 
@@ -36,6 +36,7 @@ RetrievalResultWithScores = List[ScoredResult]
 Metadata = dict
 
 
+@runtime_checkable
 class Retriever(Protocol):
     """Protocol for retriever implementations."""
 
@@ -52,6 +53,7 @@ class Retriever(Protocol):
         ...
 
 
+@runtime_checkable
 class EmbeddingModel(Protocol):
     """Protocol for embedding models."""
 
@@ -64,6 +66,7 @@ class EmbeddingModel(Protocol):
         ...
 
 
+@runtime_checkable
 class SimilarityFunction(Protocol):
     """Protocol for similarity computation functions."""
 
@@ -76,6 +79,7 @@ class SimilarityFunction(Protocol):
         ...
 
 
+@runtime_checkable
 class RankingFunction(Protocol):
     """Protocol for ranking/sorting functions."""
 
@@ -88,17 +92,58 @@ class RankingFunction(Protocol):
         ...
 
 
+@runtime_checkable
 class Cache(Protocol):
-    """Protocol for cache implementations."""
+    """Protocol for cache implementations with TTL support."""
 
-    def get(self, key: str):
+    def get(self, key: str) -> Optional[Any]:
         """Get cached value."""
         ...
 
-    def put(self, key: str, value):
-        """Store value in cache."""
+    def put(self, key: str, value: Any, ttl: Optional[int] = None) -> None:
+        """Store value in cache with optional TTL."""
         ...
 
     def clear(self) -> None:
         """Clear all cached values."""
+        ...
+
+
+@runtime_checkable
+class PerformanceMonitor(Protocol):
+    """Protocol for performance monitoring implementations."""
+
+    def track(
+        self, operation: str, duration: float, metadata: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Track operation performance metrics."""
+        ...
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get aggregated performance statistics."""
+        ...
+
+    def reset(self) -> None:
+        """Reset all tracked metrics."""
+        ...
+
+
+@runtime_checkable
+class ConfigManager(Protocol):
+    """Protocol for configuration management."""
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """Get configuration value by key (supports dot notation)."""
+        ...
+
+    def set(self, key: str, value: Any) -> None:
+        """Set configuration value by key (supports dot notation)."""
+        ...
+
+    def merge(self, config: Dict[str, Any]) -> None:
+        """Merge configuration from dictionary."""
+        ...
+
+    def validate(self) -> bool:
+        """Validate configuration schema."""
         ...
