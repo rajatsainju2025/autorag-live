@@ -4,6 +4,37 @@ Type system for AutoRAG-Live.
 This module provides comprehensive type definitions, protocols, and exceptions for
 the entire AutoRAG-Live system. It ensures type safety and proper interface
 implementations across the codebase.
+
+Core Types:
+    - DocumentId, QueryText, DocumentText: String aliases for semantic clarity
+    - Score, MetricsDict, ConfigDict: Common type aliases
+    - Embedding, VectorArray: Vector and embedding representations
+    - RetrievalResult: List of (document, score) tuples
+
+Protocols:
+    - Retriever: Interface for all retrieval implementations
+
+Exceptions:
+    - AutoRAGError: Base exception for all AutoRAG errors
+    - RetrieverError, EvaluationError, PipelineError: Domain-specific errors
+    - ValidationError, ConfigurationError: Configuration/validation errors
+
+Example:
+    >>> from autorag_live.types import RetrievalResult, RetrieverError
+    >>>
+    >>> def process_results(results: RetrievalResult) -> List[str]:
+    ...     return [doc for doc, score in results if score > 0.5]
+    >>>
+    >>> try:
+    ...     results = retriever.retrieve("query", k=5)
+    ... except RetrieverError as e:
+    ...     print(f"Retrieval failed: {e}")
+    ...     print(f"Context: {e.context}")
+
+Type Safety:
+    The module uses TypeVar and Protocol for generic programming while
+    maintaining type safety. All custom exceptions include rich context
+    for debugging and can be serialized to JSON.
 """
 from __future__ import annotations
 
