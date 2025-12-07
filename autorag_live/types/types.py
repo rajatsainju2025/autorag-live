@@ -310,7 +310,21 @@ class BenchmarkResult:
 
 # Exception Hierarchy
 class AutoRAGError(Exception):
-    """Base exception class for AutoRAG-Live."""
+    """
+    Base exception class for AutoRAG-Live with rich context.
+
+    All exceptions in AutoRAG-Live inherit from this class and provide
+    structured error information including context, suggestions, and
+    the original cause for better debugging.
+
+    Attributes:
+        message: Human-readable error message
+        error_code: Machine-readable error identifier
+        context: Additional context about the error
+        cause: Original exception that caused this error
+        timestamp: When the error occurred
+        suggestion: Actionable suggestion to resolve the error
+    """
 
     def __init__(
         self,
@@ -318,6 +332,7 @@ class AutoRAGError(Exception):
         error_code: Optional[str] = None,
         context: Optional[Dict[str, Any]] = None,
         cause: Optional[Exception] = None,
+        suggestion: Optional[str] = None,
     ):
         super().__init__(message)
         self.message = message
@@ -325,6 +340,11 @@ class AutoRAGError(Exception):
         self.context = context or {}
         self.cause = cause
         self.timestamp = datetime.now()
+        self.suggestion = suggestion or self._default_suggestion()
+
+    def _default_suggestion(self) -> str:
+        """Provide a default suggestion based on error type."""
+        return "Check the error context for details and ensure all inputs are valid."
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert error to dictionary for logging/serialization."""
@@ -333,9 +353,19 @@ class AutoRAGError(Exception):
             "error_code": self.error_code,
             "message": self.message,
             "context": self.context,
+            "suggestion": self.suggestion,
             "timestamp": self.timestamp.isoformat(),
             "cause": str(self.cause) if self.cause else None,
         }
+
+    def __str__(self) -> str:
+        """Return formatted error message with suggestion."""
+        base_msg = f"{self.error_code}: {self.message}"
+        if self.suggestion:
+            base_msg += f"\nSuggestion: {self.suggestion}"
+        if self.context:
+            base_msg += f"\nContext: {self.context}"
+        return base_msg
 
 
 class RetrieverError(AutoRAGError):
@@ -348,6 +378,12 @@ class RetrieverError(AutoRAGError):
         - Query processing error
     """
 
+    def _default_suggestion(self) -> str:
+        return (
+            "Verify that the corpus is valid and non-empty. "
+            "Check model initialization and ensure dependencies are installed."
+        )
+
 
 class ConfigurationError(AutoRAGError):
     """
@@ -358,6 +394,12 @@ class ConfigurationError(AutoRAGError):
         - Invalid config values
         - Config file not found
     """
+
+    def _default_suggestion(self) -> str:
+        return (
+            "Review your configuration file for missing or invalid values. "
+            "Consult the documentation for valid configuration options."
+        )
 
 
 class EvaluationError(AutoRAGError):
@@ -370,6 +412,12 @@ class EvaluationError(AutoRAGError):
         - Judge failure
     """
 
+    def _default_suggestion(self) -> str:
+        return (
+            "Ensure predictions and references have matching lengths. "
+            "Verify metric configurations and check for invalid values."
+        )
+
 
 class OptimizerError(AutoRAGError):
     """
@@ -381,18 +429,48 @@ class OptimizerError(AutoRAGError):
         - Search space error
     """
 
+    def _default_suggestion(self) -> str:
+        return (
+            "Check parameter bounds and search space configuration. "
+            "Consider increasing iterations or adjusting optimization strategy."
+        )
+
 
 class PipelineError(AutoRAGError):
     """Errors related to pipeline execution."""
+
+    def _default_suggestion(self) -> str:
+        return (
+            "Review pipeline configuration and component compatibility. "
+            "Ensure all pipeline stages are properly initialized."
+        )
 
 
 class ModelError(AutoRAGError):
     """Errors related to model operations."""
 
+    def _default_suggestion(self) -> str:
+        return (
+            "Verify model name and check if dependencies are installed. "
+            "Ensure sufficient memory and compatible hardware (CPU/GPU)."
+        )
+
 
 class DataError(AutoRAGError):
     """Errors related to data processing."""
 
+    def _default_suggestion(self) -> str:
+        return (
+            "Check input data format and ensure required fields are present. "
+            "Verify data types and handle missing values appropriately."
+        )
+
 
 class ValidationError(AutoRAGError):
     """Errors related to input/output validation."""
+
+    def _default_suggestion(self) -> str:
+        return (
+            "Review input parameters and ensure they meet validation criteria. "
+            "Check for None values, empty collections, or out-of-range values."
+        )

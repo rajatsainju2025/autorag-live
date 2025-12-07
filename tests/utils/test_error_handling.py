@@ -36,11 +36,14 @@ class TestAutoRAGError:
     def test_basic_error_creation(self):
         """Test creating a basic AutoRAGError."""
         error = AutoRAGError("Test error")
-        assert str(error) == "Test error"
+        # Now __str__ includes suggestion and context
+        assert "Test error" in str(error)
+        assert "AutoRAGError" in str(error)
         assert error.message == "Test error"
         assert error.error_code == "AutoRAGError"
         assert error.context == {}
         assert error.cause is None
+        assert error.suggestion is not None  # Has default suggestion
 
     def test_error_with_code_and_context(self):
         """Test error with custom code and context."""
@@ -206,7 +209,9 @@ class TestHandleErrors:
         with pytest.raises(RetrieverError) as exc_info:
             failing_func()
 
-        assert str(exc_info.value) == "Retrieval failed"
+        # Now includes suggestion in string representation
+        assert "Retrieval failed" in str(exc_info.value)
+        assert exc_info.value.error_code == "RetrieverError"
 
     def test_decorator_with_return_value(self):
         """Test decorator returns default value instead of raising."""
