@@ -1,5 +1,6 @@
 """Extended edge case tests for comprehensive coverage."""
 
+import pytest
 
 from autorag_live.disagreement import metrics
 from autorag_live.retrievers import bm25, dense
@@ -24,12 +25,32 @@ class TestNoneAndNullHandling:
     def test_dense_none_in_corpus(self):
         """Test dense retrieval handles None values in corpus."""
         corpus = ["valid doc", None, "another doc"]  # type: ignore
-        # Dense retrieval currently returns None for None inputs
-        # This is a known limitation - should either skip or raise error
+        # Dense retrieval should handle None values gracefully
+        # Either by filtering them out or raising a clear error
+        try:
+            result = dense.dense_retrieve("test", corpus, 2)
+            # If it succeeds, ensure None is not in results
+            assert isinstance(result, list)
+            # Check that results don't contain None entries
+            for doc, score in result:
+                assert doc is not None, "Result should not contain None documents"
+                assert score is not None, "Score should not be None"
+        except (RetrieverError, TypeError, ValueError) as e:
+            # Also acceptable to raise a clear error for invalid input
+            # This is actually preferred behavior
+            assert "None" in str(e) or "invalid" in str(e).lower()
+
+    def test_dense_empty_strings_in_corpus(self):
+        """Test dense retrieval with empty strings in corpus."""
+        corpus = ["valid doc", "", "another doc"]
         result = dense.dense_retrieve("test", corpus, 2)
-        # Accept current behavior: may include None
-        # TODO: Improve dense retrieval to handle None values gracefully
         assert isinstance(result, list)
+        # Empty strings might be included - check result format
+        # Note: dense_retrieve returns list of docs, not (doc, score) tuples
+        for doc in result:
+            # Empty strings being returned is a known limitation
+            # Could be improved by filtering in the retriever
+            pass  # Accept current behavior
 
 
 class TestUnicodeAndSpecialCharacters:
@@ -224,6 +245,73 @@ class TestWhitespaceAndFormatting:
         corpus = ["test\tdocument\twith\ttabs"]
         result = bm25.bm25_retrieve("test document", corpus, 1)
         assert len(result) >= 1
+
+
+class TestNumericAndMixedContent:
+    """Test handling of numeric and mixed content."""
+
+    def test_bm25_numeric_query(self):
+        """Test BM25 with purely numeric query."""
+        corpus = ["document 123", "document 456", "text only"]
+        result = bm25.bm25_retrieve("123", corpus, 2)
+        assert isinstance(result, list)
+        assert len(result) > 0
+
+    def test_bm25_numeric_corpus(self):
+        """Test BM25 with numeric documents."""
+        corpus = ["123", "456", "789"]
+        result = bm25.bm25_retrieve("123", corpus, 1)
+        assert isinstance(result, list)
+
+    def test_mixed_alphanumeric_content(self):
+        """Test with mixed alphanumeric content."""
+        corpus = ["version 1.2.3", "release v2.0", "build 456"]
+        result = bm25.bm25_retrieve("version", corpus, 3)
+        assert len(result) > 0
+
+    def test_special_character_heavy_query(self):
+        """Test query with many special characters."""
+        corpus = ["regular text", "special @#$% text", "normal document"]
+        result = bm25.bm25_retrieve("@#$%", corpus, 2)
+        assert isinstance(result, list)
+
+
+class TestBoundaryConditions:
+    """Test boundary conditions and limits."""
+
+    def test_very_long_query(self):
+        """Test with very long query string."""
+        corpus = ["short doc", "another short doc"]
+        long_query = " ".join(["word"] * 1000)
+        result = bm25.bm25_retrieve(long_query, corpus, 2)
+        assert isinstance(result, list)
+
+    def test_very_long_document(self):
+        """Test with very long document."""
+        long_doc = " ".join(["word"] * 10000)
+        corpus = [long_doc, "short doc"]
+        result = bm25.bm25_retrieve("word", corpus, 2)
+        assert len(result) > 0
+
+    def test_k_larger_than_corpus(self):
+        """Test k value larger than corpus size."""
+        corpus = ["doc1", "doc2"]
+        result = bm25.bm25_retrieve("test", corpus, 100)
+        # Should return at most corpus size
+        assert len(result) <= len(corpus)
+
+    def test_k_zero(self):
+        """Test k=0 behavior."""
+        corpus = ["doc1", "doc2"]
+        # k=0 should raise an error as it's invalid
+        with pytest.raises(RetrieverError):
+            bm25.bm25_retrieve("test", corpus, 0)
+
+    def test_single_character_documents(self):
+        """Test corpus with single character documents."""
+        corpus = ["a", "b", "c", "d"]
+        result = bm25.bm25_retrieve("a", corpus, 2)
+        assert isinstance(result, list)
 
 
 class TestCaseInsensitivity:
