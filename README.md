@@ -87,12 +87,42 @@ Generate detailed disagreement reports for analysis:
 conda run -n autorag-live poetry run python -m autorag_live.cli disagree --query "the sun" --report reports/disagreement.html
 ```
 
+### Health Checks
+Validate system health and dependencies:
+```bash
+python -m autorag_live.utils.health_check
+```
+
+Or in code:
+```python
+from autorag_live.utils.health_check import run_health_check
+
+result = run_health_check(verbose=True)
+if not result.is_healthy:
+    print(f"System issues detected: {len(result.failed_checks)} checks failed")
+```
+
+### Performance Metrics
+Track retrieval performance and cache efficiency:
+```python
+from autorag_live.utils.metrics_collector import get_metrics, print_metrics_report
+
+metrics = get_metrics()
+metrics.increment("retrieval.requests")
+metrics.record_latency("retrieval.dense", 0.123)
+
+# View metrics
+print_metrics_report()
+```
+
 ## Feature Highlights
 - **Tri-View Retrieval**: Combines BM25, dense, and hybrid retrieval for robust performance.
 - **Disagreement Metrics**: Identifies areas of improvement through disagreement analysis.
 - **Self-Optimization**: Automatically tunes parameters to improve evaluation metrics.
 - **Streamlit Dashboard**: Visualize results and insights interactively.
 - **Extensible Architecture**: Easily add new retrievers, metrics, and evaluation suites.
+- **Health Monitoring**: Built-in health checks and metrics collection for production deployments.
+- **Input Validation**: Comprehensive validation utilities for robust error handling.
 
 ## Roadmap
 - FAISS/Qdrant adapters, bandit hybrid tuning, LLM judges, PyPI release.
