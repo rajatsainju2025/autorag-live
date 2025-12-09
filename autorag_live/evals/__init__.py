@@ -8,6 +8,22 @@ This module provides evaluation and benchmarking components for:
 - Performance benchmarks: System performance testing
 """
 
+from autorag_live.evals.ragas_evaluation import (
+    BenchmarkSuite,
+    EvaluationResult,
+    MetricScore,
+    MetricType,
+    RAGASEvaluator,
+)
+
+__all__ = [
+    "RAGASEvaluator",
+    "BenchmarkSuite",
+    "EvaluationResult",
+    "MetricScore",
+    "MetricType",
+]
+
 from .advanced_metrics import aggregate_metrics, comprehensive_evaluation
 from .llm_judge import DeterministicJudge, LLMJudge
 from .performance_benchmarks import run_full_benchmark_suite
