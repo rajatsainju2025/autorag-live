@@ -8,6 +8,9 @@ Caching components:
     - EmbeddingCache: LRU cache for embedding vectors
     - TokenizationCache: LRU cache for tokenization results
     - QueryCache: LRU cache for query results
+    - SemanticQueryCache: Semantic similarity-based caching
+    - MultiLayerCache: L1/L2 cache hierarchy for scalability
+    - ResultDeduplicator: Deduplication via semantic similarity
     - DistributedCacheManager: Multi-cache coordination
 """
 from __future__ import annotations

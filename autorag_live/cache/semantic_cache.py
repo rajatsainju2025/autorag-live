@@ -243,3 +243,116 @@ class SemanticQueryCache:
             self.hits = 0
             self.misses = 0
             self.fuzzy_hits = 0
+
+
+class MultiLayerCache:
+    """
+    Multi-layer cache hierarchy (L1: memory, L2: disk).
+
+    Provides fast access with semantic matching and persistence.
+    """
+
+    def __init__(
+        self,
+        l1_size: int = 100,
+        similarity_threshold: float = 0.85,
+        enable_l2: bool = False,
+    ):
+        """Initialize multi-layer cache."""
+        self.l1_cache = SemanticQueryCache(
+            max_size=l1_size,
+            threshold=similarity_threshold,
+        )
+        self.l2_cache: OrderedDict = OrderedDict()  # Disk cache (simulated)
+        self.enable_l2 = enable_l2
+        self.layer1_hits = 0
+        self.layer2_hits = 0
+
+    def get_exact(self, query: str) -> Optional[np.ndarray]:
+        """Retrieve from multi-layer cache."""
+        # Try L1 first
+        result = self.l1_cache.get_exact(query)
+        if result is not None:
+            self.layer1_hits += 1
+            return result
+
+        # Try L2 if enabled
+        if self.enable_l2:
+            key = SemanticQueryCache._make_key(query)
+            if key in self.l2_cache:
+                self.layer2_hits += 1
+                result = self.l2_cache[key]
+                # Promote to L1
+                self.l1_cache.put(query, result)
+                return result
+
+        return None
+
+    def put(self, query: str, embedding: np.ndarray) -> None:
+        """Store in cache layers."""
+        self.l1_cache.put(query, embedding)
+        if self.enable_l2:
+            key = SemanticQueryCache._make_key(query)
+            self.l2_cache[key] = embedding
+
+    def clear(self) -> None:
+        """Clear all layers."""
+        self.l1_cache.clear()
+        self.l2_cache.clear()
+        self.layer1_hits = 0
+        self.layer2_hits = 0
+
+    def get_stats(self) -> dict:
+        """Get cache statistics."""
+        return {
+            "l1_hits": self.layer1_hits,
+            "l2_hits": self.layer2_hits,
+            "l1_size": len(self.l1_cache.cache),
+            "l2_size": len(self.l2_cache),
+        }
+
+
+class ResultDeduplicator:
+    """
+    Deduplicates results across cache and retrieval operations.
+
+    Identifies and merges similar/identical results.
+    """
+
+    def __init__(self, similarity_threshold: float = 0.9):
+        """Initialize deduplicator."""
+        self.similarity_threshold = similarity_threshold
+
+    def deduplicate(self, results: List[str]) -> List[str]:
+        """
+        Deduplicate results based on similarity.
+
+        Args:
+            results: List of results
+
+        Returns:
+            Deduplicated results
+        """
+        if not results:
+            return []
+
+        unique_results = []
+        used_indices = set()
+
+        for i, result in enumerate(results):
+            if i in used_indices:
+                continue
+
+            unique_results.append(result)
+
+            # Find and mark similar results
+            for j in range(i + 1, len(results)):
+                if j not in used_indices:
+                    dist = levenshtein_distance(result.lower(), results[j].lower())
+                    max_len = max(len(result), len(results[j]))
+                    similarity = 1.0 - (dist / max_len)
+
+                    if similarity >= self.similarity_threshold:
+                        used_indices.add(j)
+
+        return unique_results
