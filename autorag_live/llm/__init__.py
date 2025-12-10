@@ -13,6 +13,15 @@ from .async_providers import (
     AsyncOpenAIProvider,
     create_async_provider,
 )
+from .fallback import (
+    AsyncProviderFallbackChain,
+    FallbackConfig,
+    ProviderFallbackChain,
+    ProviderHealth,
+    ProviderStatus,
+    create_async_fallback_chain,
+    create_fallback_chain,
+)
 from .providers import (
     AnthropicProvider,
     CostTracker,
@@ -46,4 +55,12 @@ __all__ = [
     "AsyncLLMResponse",
     "AsyncLLMPool",
     "create_async_provider",
+    # Fallback chain
+    "ProviderFallbackChain",
+    "AsyncProviderFallbackChain",
+    "FallbackConfig",
+    "ProviderHealth",
+    "ProviderStatus",
+    "create_fallback_chain",
+    "create_async_fallback_chain",
 ]
