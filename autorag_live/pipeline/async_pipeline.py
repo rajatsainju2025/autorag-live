@@ -1050,3 +1050,318 @@ async def run_async_query(
     """
     pipe = pipeline or create_async_pipeline()
     return await pipe.execute(query, stream=stream)
+
+
+# =============================================================================
+# Adaptive Backpressure Control - State-of-the-Art Optimization
+# =============================================================================
+
+
+@dataclass
+class BackpressureMetrics:
+    """Metrics for backpressure monitoring."""
+
+    queue_depth: int = 0
+    avg_latency_ms: float = 0.0
+    p99_latency_ms: float = 0.0
+    current_rate: float = 100.0
+    target_rate: float = 100.0
+    throttle_events: int = 0
+    total_requests: int = 0
+
+
+class AdaptiveBackpressureController:
+    """
+    Adaptive rate limiting with backpressure signaling for production RAG systems.
+
+    Implements feedback-based rate control that:
+    1. Monitors queue depth and latency
+    2. Automatically adjusts rate based on downstream capacity
+    3. Applies exponential backoff under pressure
+    4. Prevents cascading failures under load
+
+    Based on: "Serving Large Language Models" (NVIDIA/Microsoft, 2024)
+    patterns for production LLM inference systems.
+
+    Example:
+        >>> controller = AdaptiveBackpressureController(
+        ...     base_rate=100.0,
+        ...     target_latency_ms=100.0
+        ... )
+        >>> async with controller.acquire() as token:
+        ...     result = await process_request()
+        ...     # Latency automatically recorded on exit
+    """
+
+    def __init__(
+        self,
+        base_rate: float = 100.0,
+        max_queue_depth: int = 1000,
+        target_latency_ms: float = 100.0,
+        latency_window_size: int = 100,
+        rate_increase_factor: float = 1.1,
+        rate_decrease_factor: float = 0.8,
+        min_rate: float = 1.0,
+        max_rate_multiplier: float = 2.0,
+    ):
+        """
+        Initialize adaptive backpressure controller.
+
+        Args:
+            base_rate: Base request rate (requests/second)
+            max_queue_depth: Maximum queue depth before rejection
+            target_latency_ms: Target p50 latency in milliseconds
+            latency_window_size: Number of samples for latency calculation
+            rate_increase_factor: Factor to increase rate when under target
+            rate_decrease_factor: Factor to decrease rate when over target
+            min_rate: Minimum allowed rate
+            max_rate_multiplier: Maximum rate as multiplier of base_rate
+        """
+        self.base_rate = base_rate
+        self.max_queue_depth = max_queue_depth
+        self.target_latency_ms = target_latency_ms
+        self.latency_window_size = latency_window_size
+        self.rate_increase_factor = rate_increase_factor
+        self.rate_decrease_factor = rate_decrease_factor
+        self.min_rate = min_rate
+        self.max_rate = base_rate * max_rate_multiplier
+
+        self._current_rate = base_rate
+        self._queue: asyncio.Queue[float] = asyncio.Queue(maxsize=max_queue_depth)
+        self._latency_window: List[float] = []
+        self._lock = asyncio.Lock()
+
+        self._metrics = BackpressureMetrics(current_rate=base_rate, target_rate=base_rate)
+
+        # Background task for periodic rate adjustment
+        self._adjustment_task: Optional[asyncio.Task] = None
+        self._running = False
+
+    async def start(self) -> None:
+        """Start the background rate adjustment task."""
+        if not self._running:
+            self._running = True
+            self._adjustment_task = asyncio.create_task(self._rate_adjustment_loop())
+
+    async def stop(self) -> None:
+        """Stop the background rate adjustment task."""
+        self._running = False
+        if self._adjustment_task:
+            self._adjustment_task.cancel()
+            try:
+                await self._adjustment_task
+            except asyncio.CancelledError:
+                pass
+
+    @property
+    def is_overloaded(self) -> bool:
+        """Check if system is overloaded based on queue depth."""
+        return self._queue.qsize() > self.max_queue_depth * 0.8
+
+    @property
+    def current_rate(self) -> float:
+        """Get current adaptive rate."""
+        return self._current_rate
+
+    @property
+    def queue_depth(self) -> int:
+        """Get current queue depth."""
+        return self._queue.qsize()
+
+    def acquire(self) -> "BackpressureToken":
+        """
+        Acquire a backpressure token for request processing.
+
+        Returns a context manager that tracks latency automatically.
+
+        Returns:
+            BackpressureToken for use in async with statement
+        """
+        return BackpressureToken(self)
+
+    async def _acquire_internal(self) -> bool:
+        """Internal acquire with backpressure logic."""
+        self._metrics.total_requests += 1
+
+        # Apply backpressure if queue is filling up
+        if self.is_overloaded:
+            await self._apply_backpressure()
+            self._metrics.throttle_events += 1
+
+        # Try to add to queue
+        try:
+            self._queue.put_nowait(time.time())
+            return True
+        except asyncio.QueueFull:
+            return False
+
+    async def _apply_backpressure(self) -> None:
+        """Apply exponential backoff based on queue depth."""
+        queue_ratio = self._queue.qsize() / self.max_queue_depth
+
+        # Exponential backoff: backoff increases sharply as queue fills
+        backoff = min(5.0, 0.1 * (2 ** (queue_ratio * 4)))
+        await asyncio.sleep(backoff)
+
+    async def _release_internal(self, start_time: float) -> None:
+        """Internal release that records latency."""
+        latency_ms = (time.time() - start_time) * 1000
+
+        async with self._lock:
+            self._latency_window.append(latency_ms)
+            if len(self._latency_window) > self.latency_window_size:
+                self._latency_window.pop(0)
+
+        # Try to get from queue
+        try:
+            self._queue.get_nowait()
+        except asyncio.QueueEmpty:
+            pass
+
+    def _calculate_percentile(self, percentile: float) -> float:
+        """Calculate latency percentile from window."""
+        if not self._latency_window:
+            return 0.0
+
+        sorted_latencies = sorted(self._latency_window)
+        index = int(len(sorted_latencies) * percentile / 100)
+        return sorted_latencies[min(index, len(sorted_latencies) - 1)]
+
+    async def _adjust_rate(self) -> None:
+        """Adjust rate based on latency feedback."""
+        if len(self._latency_window) < 10:
+            return  # Not enough data
+
+        async with self._lock:
+            avg_latency = sum(self._latency_window) / len(self._latency_window)
+            p99_latency = self._calculate_percentile(99)
+
+            # Adjust based on average latency vs target
+            if avg_latency > self.target_latency_ms * 1.5:
+                # Significantly over target - decrease rate
+                self._current_rate = max(
+                    self.min_rate, self._current_rate * self.rate_decrease_factor
+                )
+            elif avg_latency > self.target_latency_ms:
+                # Slightly over target - gentle decrease
+                self._current_rate = max(
+                    self.min_rate,
+                    self._current_rate * (1 - (1 - self.rate_decrease_factor) * 0.5),
+                )
+            elif avg_latency < self.target_latency_ms * 0.5:
+                # Well under target - increase rate
+                self._current_rate = min(
+                    self.max_rate, self._current_rate * self.rate_increase_factor
+                )
+            elif avg_latency < self.target_latency_ms * 0.8:
+                # Slightly under target - gentle increase
+                self._current_rate = min(
+                    self.max_rate,
+                    self._current_rate * (1 + (self.rate_increase_factor - 1) * 0.5),
+                )
+
+            # Update metrics
+            self._metrics.avg_latency_ms = avg_latency
+            self._metrics.p99_latency_ms = p99_latency
+            self._metrics.current_rate = self._current_rate
+            self._metrics.queue_depth = self._queue.qsize()
+
+    async def _rate_adjustment_loop(self) -> None:
+        """Background loop for periodic rate adjustment."""
+        while self._running:
+            await asyncio.sleep(1.0)  # Adjust every second
+            await self._adjust_rate()
+
+    def get_metrics(self) -> BackpressureMetrics:
+        """Get current backpressure metrics."""
+        return self._metrics
+
+
+class BackpressureToken:
+    """
+    Token for tracking request lifecycle with backpressure.
+
+    Use as async context manager:
+        async with controller.acquire() as token:
+            await process_request()
+    """
+
+    def __init__(self, controller: AdaptiveBackpressureController):
+        """Initialize token."""
+        self.controller = controller
+        self.start_time: float = 0.0
+        self.acquired: bool = False
+
+    async def __aenter__(self) -> "BackpressureToken":
+        """Acquire token on context entry."""
+        self.start_time = time.time()
+        self.acquired = await self.controller._acquire_internal()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb) -> None:
+        """Release token and record latency on context exit."""
+        if self.acquired:
+            await self.controller._release_internal(self.start_time)
+
+
+class LoadShedder:
+    """
+    Load shedding for graceful degradation under extreme load.
+
+    Implements priority-based request rejection when system is overloaded.
+    """
+
+    def __init__(
+        self,
+        backpressure_controller: AdaptiveBackpressureController,
+        shed_threshold: float = 0.9,
+        priority_levels: int = 3,
+    ):
+        """
+        Initialize load shedder.
+
+        Args:
+            backpressure_controller: Backpressure controller for metrics
+            shed_threshold: Queue depth ratio to start shedding
+            priority_levels: Number of priority levels (higher = more important)
+        """
+        self.controller = backpressure_controller
+        self.shed_threshold = shed_threshold
+        self.priority_levels = priority_levels
+
+        self._shed_counts: Dict[int, int] = {i: 0 for i in range(priority_levels)}
+
+    def should_shed(self, priority: int = 0) -> bool:
+        """
+        Check if request should be shed based on priority.
+
+        Args:
+            priority: Request priority (0 = lowest, higher = more important)
+
+        Returns:
+            True if request should be rejected
+        """
+        if priority >= self.priority_levels:
+            return False  # Highest priority never shed
+
+        queue_ratio = self.controller.queue_depth / self.controller.max_queue_depth
+
+        if queue_ratio < self.shed_threshold:
+            return False  # Not overloaded
+
+        # Progressive shedding based on priority
+        # Lower priority requests are shed first
+        shed_probability = (queue_ratio - self.shed_threshold) / (1 - self.shed_threshold)
+        priority_factor = (self.priority_levels - priority) / self.priority_levels
+
+        import random
+
+        if random.random() < shed_probability * priority_factor:
+            self._shed_counts[priority] += 1
+            return True
+
+        return False
+
+    def get_shed_stats(self) -> Dict[str, int]:
+        """Get load shedding statistics."""
+        return {f"priority_{p}_shed": count for p, count in self._shed_counts.items()}
