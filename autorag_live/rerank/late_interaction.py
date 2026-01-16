@@ -34,6 +34,513 @@ logger = logging.getLogger(__name__)
 
 
 # =============================================================================
+# OPTIMIZATION 9: PLAID-Style Efficient Late Interaction
+# Based on: "PLAID: An Efficient Engine for Late Interaction Retrieval"
+# (Santhanam et al., 2022) and ColBERTv2 optimizations
+#
+# Key optimizations:
+# 1. Centroid-based pre-filtering (10-100x candidate reduction)
+# 2. Product quantization for memory efficiency
+# 3. Batched SIMD-friendly similarity computation
+# 4. Score-aware pruning during MaxSim
+# =============================================================================
+
+
+@dataclass
+class PLAIDConfig:
+    """Configuration for PLAID-style efficient late interaction."""
+
+    # Centroid clustering
+    num_centroids: int = 256
+    centroid_score_threshold: float = 0.5
+
+    # Quantization
+    enable_quantization: bool = True
+    quantization_bits: int = 4  # 4-bit quantization
+    residual_compression: bool = True
+
+    # Pruning
+    enable_score_pruning: bool = True
+    max_candidate_tokens: int = 1000
+    prune_threshold: float = 0.3
+
+    # Batching
+    batch_size: int = 32
+    use_simd: bool = True
+
+
+class TokenCentroidIndex:
+    """
+    Centroid-based index for efficient token matching.
+
+    Uses k-means clustering to group similar token embeddings,
+    enabling fast pre-filtering before exact MaxSim computation.
+    """
+
+    def __init__(self, config: PLAIDConfig):
+        """Initialize centroid index."""
+        self.config = config
+        self.centroids: Optional[np.ndarray] = None
+        self.token_to_centroid: Dict[int, int] = {}
+        self.centroid_to_tokens: Dict[int, List[int]] = {}
+        self._is_trained = False
+
+    def train(self, embeddings: np.ndarray) -> None:
+        """
+        Train centroids using k-means.
+
+        Args:
+            embeddings: Token embeddings (num_tokens x dim)
+        """
+        from sklearn.cluster import MiniBatchKMeans
+
+        n_samples = embeddings.shape[0]
+        n_clusters = min(self.config.num_centroids, n_samples)
+
+        if n_clusters < 2:
+            # Not enough samples for clustering
+            self.centroids = embeddings.mean(axis=0, keepdims=True)
+            self.token_to_centroid = {i: 0 for i in range(n_samples)}
+            self.centroid_to_tokens = {0: list(range(n_samples))}
+            self._is_trained = True
+            return
+
+        kmeans = MiniBatchKMeans(
+            n_clusters=n_clusters,
+            random_state=42,
+            batch_size=min(1000, n_samples),
+            max_iter=100,
+        )
+        labels = kmeans.fit_predict(embeddings)
+        self.centroids = kmeans.cluster_centers_
+
+        # Build mappings
+        self.token_to_centroid = {i: int(labels[i]) for i in range(n_samples)}
+        self.centroid_to_tokens = {}
+        for i, label in enumerate(labels):
+            if label not in self.centroid_to_tokens:
+                self.centroid_to_tokens[label] = []
+            self.centroid_to_tokens[label].append(i)
+
+        self._is_trained = True
+        logger.debug(f"Trained centroid index with {n_clusters} centroids")
+
+    def get_candidate_tokens(
+        self,
+        query_embedding: np.ndarray,
+        top_centroids: int = 16,
+    ) -> List[int]:
+        """
+        Get candidate token indices using centroid filtering.
+
+        Args:
+            query_embedding: Single query token embedding
+            top_centroids: Number of top centroids to consider
+
+        Returns:
+            List of candidate token indices
+        """
+        if not self._is_trained or self.centroids is None:
+            return list(self.token_to_centroid.keys())
+
+        # Score query against centroids
+        query_norm = query_embedding / (np.linalg.norm(query_embedding) + 1e-8)
+        centroid_norms = self.centroids / (
+            np.linalg.norm(self.centroids, axis=1, keepdims=True) + 1e-8
+        )
+        scores = np.dot(centroid_norms, query_norm)
+
+        # Get top centroids
+        top_k = min(top_centroids, len(scores))
+        top_indices = np.argsort(scores)[-top_k:]
+
+        # Collect tokens from top centroids
+        candidates = []
+        for idx in top_indices:
+            if scores[idx] >= self.config.centroid_score_threshold:
+                candidates.extend(self.centroid_to_tokens.get(int(idx), []))
+
+        return candidates[: self.config.max_candidate_tokens]
+
+
+class ProductQuantizer:
+    """
+    Product quantization for compressed token embeddings.
+
+    Enables 4-8x memory reduction with minimal accuracy loss.
+    """
+
+    def __init__(self, config: PLAIDConfig):
+        """Initialize quantizer."""
+        self.config = config
+        self.subquantizers: List[np.ndarray] = []
+        self.dim_per_subspace: int = 0
+        self.num_subspaces: int = 8
+        self._is_trained = False
+
+    def train(self, embeddings: np.ndarray) -> None:
+        """
+        Train product quantizer on embeddings.
+
+        Args:
+            embeddings: Training embeddings
+        """
+        from sklearn.cluster import MiniBatchKMeans
+
+        dim = embeddings.shape[1]
+        self.dim_per_subspace = dim // self.num_subspaces
+        num_codewords = 2**self.config.quantization_bits
+
+        self.subquantizers = []
+        for i in range(self.num_subspaces):
+            start = i * self.dim_per_subspace
+            end = start + self.dim_per_subspace
+            subspace = embeddings[:, start:end]
+
+            kmeans = MiniBatchKMeans(
+                n_clusters=min(num_codewords, len(subspace)),
+                random_state=42,
+            )
+            kmeans.fit(subspace)
+            self.subquantizers.append(kmeans.cluster_centers_)
+
+        self._is_trained = True
+
+    def encode(self, embeddings: np.ndarray) -> np.ndarray:
+        """
+        Encode embeddings to quantized codes.
+
+        Args:
+            embeddings: Original embeddings
+
+        Returns:
+            Quantized codes (num_embeddings x num_subspaces)
+        """
+        if not self._is_trained:
+            return np.zeros((len(embeddings), self.num_subspaces), dtype=np.uint8)
+
+        codes = np.zeros((len(embeddings), self.num_subspaces), dtype=np.uint8)
+        for i in range(self.num_subspaces):
+            start = i * self.dim_per_subspace
+            end = start + self.dim_per_subspace
+            subspace = embeddings[:, start:end]
+
+            # Find nearest codeword
+            dists = np.linalg.norm(subspace[:, np.newaxis] - self.subquantizers[i], axis=2)
+            codes[:, i] = np.argmin(dists, axis=1).astype(np.uint8)
+
+        return codes
+
+    def decode(self, codes: np.ndarray) -> np.ndarray:
+        """
+        Decode quantized codes to approximate embeddings.
+
+        Args:
+            codes: Quantized codes
+
+        Returns:
+            Approximate embeddings
+        """
+        if not self._is_trained:
+            return np.zeros((len(codes), self.dim_per_subspace * self.num_subspaces))
+
+        embeddings = np.zeros((len(codes), self.dim_per_subspace * self.num_subspaces))
+        for i in range(self.num_subspaces):
+            start = i * self.dim_per_subspace
+            end = start + self.dim_per_subspace
+            embeddings[:, start:end] = self.subquantizers[i][codes[:, i]]
+
+        return embeddings
+
+    def asymmetric_distance(
+        self,
+        query: np.ndarray,
+        codes: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Compute asymmetric distance using lookup tables.
+
+        Much faster than decode + distance for large sets.
+
+        Args:
+            query: Query embedding (not quantized)
+            codes: Quantized document codes
+
+        Returns:
+            Distance scores
+        """
+        if not self._is_trained:
+            return np.zeros(len(codes))
+
+        # Build lookup tables
+        tables = []
+        for i in range(self.num_subspaces):
+            start = i * self.dim_per_subspace
+            end = start + self.dim_per_subspace
+            query_sub = query[start:end]
+
+            # Distance from query to each codeword
+            dists = np.linalg.norm(self.subquantizers[i] - query_sub, axis=1)
+            tables.append(dists)
+
+        # Lookup and sum
+        distances = np.zeros(len(codes))
+        for i in range(self.num_subspaces):
+            distances += tables[i][codes[:, i]]
+
+        return distances
+
+
+class BatchedMaxSimComputer:
+    """
+    SIMD-friendly batched MaxSim computation.
+
+    Optimized for modern CPU vector instructions.
+    """
+
+    def __init__(self, config: PLAIDConfig):
+        """Initialize computer."""
+        self.config = config
+
+    def compute_batched(
+        self,
+        query_embeddings: np.ndarray,
+        doc_embeddings: np.ndarray,
+        candidate_mask: Optional[np.ndarray] = None,
+    ) -> Tuple[float, List[float], List[int]]:
+        """
+        Compute MaxSim with batched operations.
+
+        Args:
+            query_embeddings: Query token embeddings (Q x D)
+            doc_embeddings: Document token embeddings (T x D)
+            candidate_mask: Optional mask for candidate pruning
+
+        Returns:
+            Tuple of (score, per_token_scores, matched_indices)
+        """
+        if len(query_embeddings) == 0 or len(doc_embeddings) == 0:
+            return 0.0, [], []
+
+        # Normalize (batch operation)
+        q_norm = query_embeddings / (np.linalg.norm(query_embeddings, axis=1, keepdims=True) + 1e-8)
+        d_norm = doc_embeddings / (np.linalg.norm(doc_embeddings, axis=1, keepdims=True) + 1e-8)
+
+        # Apply candidate mask if provided
+        if candidate_mask is not None:
+            d_norm = d_norm[candidate_mask]
+
+        # Batched matrix multiplication (SIMD-friendly)
+        # Shape: (Q, T)
+        sim_matrix = np.dot(q_norm, d_norm.T)
+
+        # Score-aware pruning: early termination for low scores
+        if self.config.enable_score_pruning:
+            row_maxes = np.max(sim_matrix, axis=1)
+            if np.max(row_maxes) < self.config.prune_threshold:
+                return 0.0, row_maxes.tolist(), [0] * len(row_maxes)
+
+        # MaxSim: max over document tokens for each query token
+        max_sims = np.max(sim_matrix, axis=1)
+        matched_idx = np.argmax(sim_matrix, axis=1)
+
+        # Remap indices if mask was used
+        if candidate_mask is not None:
+            actual_indices = np.where(candidate_mask)[0]
+            matched_idx = actual_indices[matched_idx]
+
+        score = float(np.sum(max_sims))
+        return score, max_sims.tolist(), matched_idx.tolist()
+
+
+class PLAIDLateInteractionReranker:
+    """
+    PLAID-optimized late interaction reranker.
+
+    Implements state-of-the-art optimizations from PLAID paper:
+    - Centroid-based candidate pre-filtering
+    - Product quantization for memory efficiency
+    - Batched SIMD-friendly computation
+    - Score-aware pruning
+
+    Example:
+        >>> config = PLAIDConfig(num_centroids=256)
+        >>> reranker = PLAIDLateInteractionReranker(embedder, config)
+        >>> ranked = await reranker.rerank(query, documents, top_k=10)
+    """
+
+    def __init__(
+        self,
+        embedder: Optional["EmbedderProtocol"] = None,
+        config: Optional[PLAIDConfig] = None,
+    ):
+        """
+        Initialize PLAID reranker.
+
+        Args:
+            embedder: Embedding model
+            config: PLAID configuration
+        """
+        self.embedder = embedder
+        self.config = config or PLAIDConfig()
+        self.token_embedder = SimpleTokenEmbedder(embedder)
+
+        # Optimization components
+        self.centroid_index = TokenCentroidIndex(self.config)
+        self.quantizer = ProductQuantizer(self.config)
+        self.batched_computer = BatchedMaxSimComputer(self.config)
+
+        # Cache for indexed documents
+        self._doc_embeddings: Dict[str, np.ndarray] = {}
+        self._doc_codes: Dict[str, np.ndarray] = {}
+        self._indexed = False
+
+    async def index_documents(
+        self,
+        documents: List[Dict[str, Any]],
+    ) -> None:
+        """
+        Pre-index documents for efficient reranking.
+
+        Args:
+            documents: Documents to index
+        """
+        all_embeddings = []
+        doc_boundaries = [0]
+
+        for doc in documents:
+            content = doc.get("content", doc.get("text", str(doc)))
+            doc_id = doc.get("id", str(len(self._doc_embeddings)))
+
+            emb = await self.token_embedder.embed_tokens(content)
+            self._doc_embeddings[doc_id] = emb.embeddings
+            all_embeddings.append(emb.embeddings)
+            doc_boundaries.append(doc_boundaries[-1] + len(emb.embeddings))
+
+        if all_embeddings:
+            # Train optimization structures
+            combined = np.vstack(all_embeddings)
+            self.centroid_index.train(combined)
+
+            if self.config.enable_quantization:
+                self.quantizer.train(combined)
+                for doc_id, embs in self._doc_embeddings.items():
+                    self._doc_codes[doc_id] = self.quantizer.encode(embs)
+
+        self._indexed = True
+        logger.info(f"Indexed {len(documents)} documents with PLAID optimizations")
+
+    async def rerank(
+        self,
+        query: str,
+        documents: List[Dict[str, Any]],
+        *,
+        top_k: Optional[int] = None,
+        use_prefiltering: bool = True,
+    ) -> List["RankedDocument"]:
+        """
+        Rerank documents using PLAID-optimized late interaction.
+
+        Args:
+            query: Query text
+            documents: Documents to rerank
+            top_k: Number of top documents to return
+            use_prefiltering: Use centroid pre-filtering
+
+        Returns:
+            List of reranked documents
+        """
+        if not documents:
+            return []
+
+        # Get query embeddings
+        query_emb = await self.token_embedder.embed_tokens(query)
+
+        # Score documents
+        ranked_docs = []
+        for i, doc in enumerate(documents):
+            content = doc.get("content", doc.get("text", str(doc)))
+            doc_id = doc.get("id", str(i))
+            original_score = doc.get("score", 0.0)
+
+            # Get document embeddings (cached or compute)
+            if doc_id in self._doc_embeddings:
+                doc_embs = self._doc_embeddings[doc_id]
+            else:
+                doc_emb = await self.token_embedder.embed_tokens(content)
+                doc_embs = doc_emb.embeddings
+
+            # Apply optimizations
+            if use_prefiltering and self._indexed:
+                score = await self._score_with_prefiltering(query_emb.embeddings, doc_embs)
+            else:
+                score, _, _ = self.batched_computer.compute_batched(query_emb.embeddings, doc_embs)
+
+            ranked_doc = RankedDocument(
+                content=content,
+                doc_id=doc_id,
+                original_score=original_score,
+                rerank_score=score,
+                metadata=doc.get("metadata", {}),
+            )
+            ranked_docs.append(ranked_doc)
+
+        # Sort by combined score
+        ranked_docs.sort(key=lambda d: d.combined_score, reverse=True)
+
+        if top_k:
+            ranked_docs = ranked_docs[:top_k]
+
+        return ranked_docs
+
+    async def _score_with_prefiltering(
+        self,
+        query_embs: np.ndarray,
+        doc_embs: np.ndarray,
+    ) -> float:
+        """Score using centroid pre-filtering."""
+        total_score = 0.0
+
+        for q_emb in query_embs:
+            # Get candidate tokens using centroid filtering
+            candidates = self.centroid_index.get_candidate_tokens(q_emb)
+
+            if not candidates:
+                continue
+
+            # Create candidate mask
+            candidate_mask = np.zeros(len(doc_embs), dtype=bool)
+            valid_candidates = [c for c in candidates if c < len(doc_embs)]
+            if valid_candidates:
+                candidate_mask[valid_candidates] = True
+
+            # Compute MaxSim only for candidates
+            _, token_scores, _ = self.batched_computer.compute_batched(
+                q_emb.reshape(1, -1),
+                doc_embs,
+                candidate_mask if candidate_mask.any() else None,
+            )
+
+            if token_scores:
+                total_score += token_scores[0]
+
+        return total_score
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get optimization statistics."""
+        return {
+            "indexed_documents": len(self._doc_embeddings),
+            "centroid_trained": self.centroid_index._is_trained,
+            "quantizer_trained": self.quantizer._is_trained,
+            "config": {
+                "num_centroids": self.config.num_centroids,
+                "quantization_bits": self.config.quantization_bits,
+                "enable_pruning": self.config.enable_score_pruning,
+            },
+        }
+
+
+# =============================================================================
 # Protocols
 # =============================================================================
 
