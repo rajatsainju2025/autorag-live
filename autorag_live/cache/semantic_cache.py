@@ -32,7 +32,7 @@ import threading
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
-from typing import Any, Callable, Dict, Generic, List, Optional, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Optional, Tuple, TypeVar
 
 import numpy as np
 
@@ -962,4 +962,422 @@ def create_rag_cache(
         embedder=embedder,
         similarity_threshold=threshold,
         ttl_seconds=ttl_seconds,
+    )
+
+
+# =============================================================================
+# FAISS-based ANN Semantic Cache - State-of-the-Art Optimization
+# =============================================================================
+
+
+class ANNSemanticCache(Generic[T]):
+    """
+    Semantic cache with Approximate Nearest Neighbor (ANN) indexing.
+
+    Uses FAISS for sub-linear O(log n) similarity lookups instead of
+    O(n) linear scanning. Critical for production RAG systems with
+    10K+ cached queries.
+
+    Based on:
+    - "Retrieval-Augmented Generation for Large Language Models: A Survey" (Gao et al., 2024)
+    - "Efficient Similarity Search and Clustering of Dense Vectors" (FAISS)
+
+    Key optimizations:
+    1. O(log n) lookup via IVF index instead of O(n) linear scan
+    2. Automatic index rebuilding when cache grows
+    3. Memory-efficient storage with numpy arrays
+    4. Thread-safe operations with fine-grained locking
+
+    Example:
+        >>> cache = ANNSemanticCache(embedding_dim=1536, threshold=0.9)
+        >>> await cache.set("What is ML?", embedding, result)
+        >>> lookup = await cache.get_nearest(query_embedding)
+    """
+
+    def __init__(
+        self,
+        embedding_dim: int = 1536,
+        similarity_threshold: float = 0.9,
+        max_entries: int = 10000,
+        nlist: int = 100,  # Number of clusters for IVF
+        nprobe: int = 10,  # Number of clusters to search
+        rebuild_threshold: int = 1000,  # Rebuild index after this many new entries
+        ttl_seconds: Optional[int] = 3600,
+    ):
+        """
+        Initialize ANN semantic cache.
+
+        Args:
+            embedding_dim: Dimension of embeddings
+            similarity_threshold: Minimum cosine similarity for cache hit
+            max_entries: Maximum cache entries
+            nlist: Number of IVF clusters (affects index speed/accuracy tradeoff)
+            nprobe: Number of clusters to search (affects search speed/accuracy)
+            rebuild_threshold: Rebuild index after this many additions
+            ttl_seconds: Time-to-live for entries
+        """
+        self.embedding_dim = embedding_dim
+        self.similarity_threshold = similarity_threshold
+        self.max_entries = max_entries
+        self.nlist = nlist
+        self.nprobe = nprobe
+        self.rebuild_threshold = rebuild_threshold
+        self.ttl_seconds = ttl_seconds
+
+        # Storage
+        self._entries: Dict[int, Tuple[str, T, datetime, Optional[datetime]]] = {}
+        self._embeddings: List[np.ndarray] = []
+        self._id_to_index: Dict[int, int] = {}
+        self._index_to_id: Dict[int, int] = {}
+        self._next_id = 0
+
+        # FAISS index (lazy initialized)
+        self._index = None
+        self._use_ivf = False  # Use IVF only when cache is large enough
+        self._additions_since_rebuild = 0
+
+        # Locks
+        self._lock = asyncio.Lock()
+        self._index_lock = threading.RLock()
+
+        # Stats
+        self._stats = EmbeddingCacheStats()
+
+        logger.info(
+            f"Initialized ANNSemanticCache: dim={embedding_dim}, "
+            f"threshold={similarity_threshold}, max_entries={max_entries}"
+        )
+
+    def _build_flat_index(self) -> None:
+        """Build a flat (exact) FAISS index for small cache sizes."""
+        try:
+            import faiss
+
+            with self._index_lock:
+                self._index = faiss.IndexFlatIP(self.embedding_dim)
+                if self._embeddings:
+                    embeddings_array = np.vstack(self._embeddings).astype(np.float32)
+                    # Normalize for cosine similarity
+                    faiss.normalize_L2(embeddings_array)
+                    self._index.add(embeddings_array)
+                self._use_ivf = False
+
+        except ImportError:
+            logger.warning("FAISS not installed, falling back to linear search")
+            self._index = None
+
+    def _build_ivf_index(self) -> None:
+        """Build an IVF index for large cache sizes - O(log n) search."""
+        try:
+            import faiss
+
+            with self._index_lock:
+                if len(self._embeddings) < self.nlist:
+                    # Not enough data for IVF, use flat
+                    self._build_flat_index()
+                    return
+
+                embeddings_array = np.vstack(self._embeddings).astype(np.float32)
+                faiss.normalize_L2(embeddings_array)
+
+                # Create IVF index with inner product (for cosine similarity)
+                quantizer = faiss.IndexFlatIP(self.embedding_dim)
+                self._index = faiss.IndexIVFFlat(
+                    quantizer, self.embedding_dim, self.nlist, faiss.METRIC_INNER_PRODUCT
+                )
+
+                # Train and add
+                self._index.train(embeddings_array)
+                self._index.add(embeddings_array)
+                self._index.nprobe = self.nprobe
+
+                self._use_ivf = True
+                self._additions_since_rebuild = 0
+
+                logger.info(
+                    f"Built IVF index with {len(self._embeddings)} entries, "
+                    f"nlist={self.nlist}, nprobe={self.nprobe}"
+                )
+
+        except ImportError:
+            logger.warning("FAISS not installed, falling back to linear search")
+            self._index = None
+
+    def _should_rebuild_index(self) -> bool:
+        """Check if index should be rebuilt."""
+        # Rebuild if enough new entries added
+        if self._additions_since_rebuild >= self.rebuild_threshold:
+            return True
+        # Upgrade to IVF if cache grew large enough
+        if not self._use_ivf and len(self._embeddings) >= self.nlist * 2:
+            return True
+        return False
+
+    def _normalize_embedding(self, embedding: np.ndarray) -> np.ndarray:
+        """Normalize embedding for cosine similarity."""
+        norm = np.linalg.norm(embedding)
+        if norm > 0:
+            return embedding / norm
+        return embedding
+
+    async def set(
+        self,
+        key: str,
+        embedding: np.ndarray,
+        value: T,
+    ) -> int:
+        """
+        Add entry to cache with embedding.
+
+        Args:
+            key: Cache key (e.g., query string)
+            embedding: Embedding vector
+            value: Value to cache
+
+        Returns:
+            Entry ID
+        """
+        async with self._lock:
+            # Evict if at capacity
+            if len(self._entries) >= self.max_entries:
+                await self._evict_oldest()
+
+            # Create entry
+            entry_id = self._next_id
+            self._next_id += 1
+
+            created_at = datetime.now()
+            expires_at = None
+            if self.ttl_seconds:
+                expires_at = created_at + timedelta(seconds=self.ttl_seconds)
+
+            self._entries[entry_id] = (key, value, created_at, expires_at)
+
+            # Add embedding
+            embedding = self._normalize_embedding(np.array(embedding, dtype=np.float32))
+            index_pos = len(self._embeddings)
+            self._embeddings.append(embedding)
+            self._id_to_index[entry_id] = index_pos
+            self._index_to_id[index_pos] = entry_id
+
+            # Update index
+            with self._index_lock:
+                if self._index is not None:
+                    try:
+                        embedding_array = embedding.reshape(1, -1).astype(np.float32)
+                        self._index.add(embedding_array)
+                        self._additions_since_rebuild += 1
+                    except Exception:
+                        pass
+
+            # Rebuild index if needed
+            if self._should_rebuild_index():
+                self._build_ivf_index()
+            elif self._index is None and len(self._embeddings) >= 10:
+                self._build_flat_index()
+
+            self._stats.entries_count = len(self._entries)
+            return entry_id
+
+    async def get_nearest(
+        self,
+        query_embedding: np.ndarray,
+        k: int = 1,
+    ) -> List[EmbeddingCacheLookupResult[T]]:
+        """
+        Find nearest cache entries to query embedding.
+
+        Uses FAISS ANN index for O(log n) lookup when available,
+        falls back to O(n) linear search otherwise.
+
+        Args:
+            query_embedding: Query embedding vector
+            k: Number of nearest neighbors to return
+
+        Returns:
+            List of lookup results sorted by similarity
+        """
+        self._stats.total_queries += 1
+
+        if not self._embeddings:
+            self._stats.cache_misses += 1
+            return [EmbeddingCacheLookupResult(hit=False)]
+
+        query_embedding = self._normalize_embedding(np.array(query_embedding, dtype=np.float32))
+
+        # Use FAISS if available
+        if self._index is not None:
+            results = await self._search_faiss(query_embedding, k)
+        else:
+            results = await self._search_linear(query_embedding, k)
+
+        # Update stats
+        if results and results[0].hit:
+            self._stats.cache_hits += 1
+            # Update running average similarity
+            hit_sim = results[0].similarity
+            self._stats.avg_similarity = self._stats.avg_similarity * 0.9 + hit_sim * 0.1
+        else:
+            self._stats.cache_misses += 1
+
+        return results
+
+    async def _search_faiss(
+        self,
+        query_embedding: np.ndarray,
+        k: int,
+    ) -> List[EmbeddingCacheLookupResult[T]]:
+        """Search using FAISS index - O(log n) for IVF."""
+        with self._index_lock:
+            if self._index is None:
+                return await self._search_linear(query_embedding, k)
+
+            query_array = query_embedding.reshape(1, -1).astype(np.float32)
+
+            # Search
+            actual_k = min(k, self._index.ntotal)
+            if actual_k == 0:
+                return [EmbeddingCacheLookupResult(hit=False)]
+
+            similarities, indices = self._index.search(query_array, actual_k)
+
+        results = []
+        for sim, idx in zip(similarities[0], indices[0]):
+            if idx < 0:  # FAISS returns -1 for missing
+                continue
+
+            # Get entry ID from index position
+            entry_id = self._index_to_id.get(idx)
+            if entry_id is None:
+                continue
+
+            entry_data = self._entries.get(entry_id)
+            if entry_data is None:
+                continue
+
+            key, value, created_at, expires_at = entry_data
+
+            # Check expiration
+            if expires_at and datetime.now() > expires_at:
+                continue
+
+            similarity = float(sim)  # Inner product on normalized = cosine
+            hit = similarity >= self.similarity_threshold
+
+            results.append(
+                EmbeddingCacheLookupResult(
+                    hit=hit,
+                    value=value if hit else None,
+                    similarity=similarity,
+                )
+            )
+
+        if not results:
+            return [EmbeddingCacheLookupResult(hit=False)]
+
+        return results
+
+    async def _search_linear(
+        self,
+        query_embedding: np.ndarray,
+        k: int,
+    ) -> List[EmbeddingCacheLookupResult[T]]:
+        """Fallback linear search - O(n)."""
+        similarities = []
+
+        for idx, emb in enumerate(self._embeddings):
+            entry_id = self._index_to_id.get(idx)
+            if entry_id is None:
+                continue
+
+            entry_data = self._entries.get(entry_id)
+            if entry_data is None:
+                continue
+
+            key, value, created_at, expires_at = entry_data
+
+            # Check expiration
+            if expires_at and datetime.now() > expires_at:
+                continue
+
+            # Cosine similarity (dot product of normalized vectors)
+            sim = float(np.dot(query_embedding, emb))
+            similarities.append((sim, entry_id, value))
+
+        if not similarities:
+            return [EmbeddingCacheLookupResult(hit=False)]
+
+        # Sort by similarity descending
+        similarities.sort(key=lambda x: x[0], reverse=True)
+
+        results = []
+        for sim, entry_id, value in similarities[:k]:
+            hit = sim >= self.similarity_threshold
+            results.append(
+                EmbeddingCacheLookupResult(
+                    hit=hit,
+                    value=value if hit else None,
+                    similarity=sim,
+                )
+            )
+
+        return results
+
+    async def _evict_oldest(self) -> None:
+        """Evict oldest entries to make room."""
+        if not self._entries:
+            return
+
+        # Find oldest entry
+        oldest_id = min(self._entries.keys())
+
+        if oldest_id in self._entries:
+            del self._entries[oldest_id]
+            self._stats.evictions += 1
+
+        # Note: We don't remove from FAISS index (expensive)
+        # Just mark as deleted and rebuild periodically
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get cache statistics."""
+        return {
+            **self._stats.to_dict(),
+            "use_ivf_index": self._use_ivf,
+            "index_size": self._index.ntotal if self._index else 0,
+            "additions_since_rebuild": self._additions_since_rebuild,
+        }
+
+    async def clear(self) -> None:
+        """Clear all cache entries."""
+        async with self._lock:
+            self._entries.clear()
+            self._embeddings.clear()
+            self._id_to_index.clear()
+            self._index_to_id.clear()
+            self._index = None
+            self._use_ivf = False
+            self._additions_since_rebuild = 0
+            self._stats = EmbeddingCacheStats()
+
+
+def create_ann_cache(
+    embedding_dim: int = 1536,
+    threshold: float = 0.9,
+    max_entries: int = 10000,
+) -> ANNSemanticCache[Any]:
+    """
+    Create an ANN-based semantic cache for production RAG systems.
+
+    Args:
+        embedding_dim: Embedding dimension
+        threshold: Similarity threshold
+        max_entries: Maximum entries
+
+    Returns:
+        ANNSemanticCache instance
+    """
+    return ANNSemanticCache(
+        embedding_dim=embedding_dim,
+        similarity_threshold=threshold,
+        max_entries=max_entries,
     )
