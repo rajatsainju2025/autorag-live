@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
@@ -379,24 +381,191 @@ class ColBERTRetriever:
 # =============================================================================
 
 
+@dataclass
+class QueryPrediction:
+    """Predicted query with confidence score."""
+
+    query: str
+    score: float
+    source: str = "heuristic"
+
+
+@dataclass
+class SpeculativeCacheEntry:
+    """Cached speculative retrieval result."""
+
+    documents: List[RetrievedDocument]
+    created_at: float = field(default_factory=time.time)
+    ttl_seconds: float = 120.0
+    confidence: float = 0.0
+
+    @property
+    def is_expired(self) -> bool:
+        return time.time() - self.created_at > self.ttl_seconds
+
+
+class SpeculativePrefetchCache:
+    """TTL cache for speculative retrieval results."""
+
+    def __init__(self, max_entries: int = 200, ttl_seconds: float = 120.0):
+        self.max_entries = max_entries
+        self.ttl_seconds = ttl_seconds
+        self._cache: Dict[str, SpeculativeCacheEntry] = {}
+
+    def get(self, query: str) -> Optional[SpeculativeCacheEntry]:
+        entry = self._cache.get(query)
+        if entry and entry.is_expired:
+            self._cache.pop(query, None)
+            return None
+        return entry
+
+    def set(
+        self,
+        query: str,
+        documents: List[RetrievedDocument],
+        confidence: float,
+    ) -> None:
+        if len(self._cache) >= self.max_entries:
+            # Evict oldest entry
+            oldest_key = min(self._cache, key=lambda k: self._cache[k].created_at)
+            self._cache.pop(oldest_key, None)
+
+        self._cache[query] = SpeculativeCacheEntry(
+            documents=documents,
+            ttl_seconds=self.ttl_seconds,
+            confidence=confidence,
+        )
+
+    def clear(self) -> None:
+        self._cache.clear()
+
+
+class SpeculativeQueryPredictor:
+    """
+    Lightweight query predictor for speculative retrieval.
+
+    Uses recent query history plus optional LLM expansion to
+    generate high-probability query variants for prefetching.
+    """
+
+    def __init__(
+        self,
+        llm: Optional[LLMProtocol] = None,
+        max_history: int = 200,
+        min_similarity: float = 0.35,
+    ):
+        self.llm = llm
+        self.max_history = max_history
+        self.min_similarity = min_similarity
+        self._history: deque[str] = deque(maxlen=max_history)
+
+    def observe(self, query: str) -> None:
+        """Record observed query for future prediction."""
+        if query:
+            self._history.append(query)
+
+    async def predict(self, query: str, limit: int = 3) -> List[QueryPrediction]:
+        """Predict likely follow-up queries."""
+        predictions: List[QueryPrediction] = []
+
+        # Heuristic similarity-based predictions
+        candidates = self._predict_from_history(query, limit=limit)
+        predictions.extend(candidates)
+
+        # Optional LLM-based variants
+        if self.llm and len(predictions) < limit:
+            llm_preds = await self._predict_with_llm(query, limit=limit - len(predictions))
+            predictions.extend(llm_preds)
+
+        # Deduplicate and return highest confidence
+        deduped: Dict[str, QueryPrediction] = {}
+        for pred in predictions:
+            existing = deduped.get(pred.query)
+            if not existing or pred.score > existing.score:
+                deduped[pred.query] = pred
+
+        ranked = sorted(deduped.values(), key=lambda p: p.score, reverse=True)
+        return ranked[:limit]
+
+    def _predict_from_history(self, query: str, limit: int) -> List[QueryPrediction]:
+        """Predict using query history similarity."""
+        if not self._history:
+            return []
+
+        query_tokens = set(self._tokenize(query))
+        if not query_tokens:
+            return []
+
+        scored: List[QueryPrediction] = []
+        for past_query in reversed(self._history):
+            past_tokens = set(self._tokenize(past_query))
+            if not past_tokens:
+                continue
+            intersection = len(query_tokens & past_tokens)
+            union = len(query_tokens | past_tokens)
+            similarity = intersection / max(1, union)
+            if similarity >= self.min_similarity and past_query != query:
+                scored.append(
+                    QueryPrediction(
+                        query=past_query,
+                        score=similarity,
+                        source="history",
+                    )
+                )
+
+        scored.sort(key=lambda p: p.score, reverse=True)
+        return scored[:limit]
+
+    async def _predict_with_llm(self, query: str, limit: int) -> List[QueryPrediction]:
+        """Predict using LLM prompt."""
+        if not self.llm or limit <= 0:
+            return []
+
+        prompt = (
+            f"Generate {limit} concise search query variations for: '{query}'. "
+            "Return one query per line, no numbering."
+        )
+
+        response = await self.llm.generate(prompt, temperature=0.6)
+        queries = [q.strip() for q in response.split("\n") if q.strip()]
+        return [QueryPrediction(query=q, score=0.6, source="llm") for q in queries[:limit]]
+
+    @staticmethod
+    def _tokenize(text: str) -> List[str]:
+        return [t for t in text.lower().split() if t]
+
+
 class SpeculativeRetriever:
     """
     Speculative retrieval with parallel query execution.
 
-    Generates multiple query variations and retrieves in parallel,
-    then aggregates results.
+    Adds query prediction, prefetch caching, and weighted RRF aggregation
+    for state-of-the-art speculative RAG.
     """
 
     def __init__(
         self,
         base_retriever: RetrieverProtocol,
         llm: Optional[LLMProtocol] = None,
+        predictor: Optional[SpeculativeQueryPredictor] = None,
         num_speculations: int = 3,
+        speculative_timeout: float = 1.5,
+        min_prediction_score: float = 0.35,
+        cache_ttl_seconds: float = 120.0,
+        cache_max_entries: int = 200,
     ):
         """Initialize speculative retriever."""
         self.base_retriever = base_retriever
         self.llm = llm
         self.num_speculations = num_speculations
+        self.speculative_timeout = speculative_timeout
+        self.min_prediction_score = min_prediction_score
+
+        self.predictor = predictor or SpeculativeQueryPredictor(llm=llm)
+        self._prefetch_cache = SpeculativePrefetchCache(
+            max_entries=cache_max_entries,
+            ttl_seconds=cache_ttl_seconds,
+        )
 
     @property
     def name(self) -> str:
@@ -407,51 +576,103 @@ class SpeculativeRetriever:
         query: str,
         top_k: int = 10,
     ) -> List[RetrievedDocument]:
-        """Retrieve with speculative queries."""
-        # Generate speculative queries
-        queries = [query]
-        if self.llm:
-            speculative = await self._generate_speculations(query)
-            queries.extend(speculative)
+        """Retrieve with speculative queries and prediction."""
+        if self.predictor:
+            self.predictor.observe(query)
 
-        # Retrieve in parallel
-        tasks = [self.base_retriever.retrieve(q, top_k=top_k) for q in queries]
-        results_list = await asyncio.gather(*tasks)
+        predictions = []
+        if self.predictor:
+            predictions = await self.predictor.predict(query, limit=self.num_speculations)
 
-        # Aggregate results using RRF
-        aggregated = self._aggregate_rrf(results_list)
+        query_weights = self._normalize_queries(query, predictions)
 
+        results_list: List[List[RetrievedDocument]] = []
+        weights: List[float] = []
+        tasks: List[asyncio.Task] = []
+        task_queries: List[str] = []
+        task_weights: List[float] = []
+
+        for q, weight in query_weights.items():
+            cached_entry = self._prefetch_cache.get(q)
+            if cached_entry:
+                results_list.append(cached_entry.documents)
+                weights.append(max(weight, cached_entry.confidence))
+            else:
+                timeout = None if q == query else self.speculative_timeout
+                tasks.append(asyncio.create_task(self._run_retrieve(q, top_k, timeout)))
+                task_queries.append(q)
+                task_weights.append(weight)
+
+        if tasks:
+            task_results = await asyncio.gather(*tasks)
+            for q, w, docs in zip(task_queries, task_weights, task_results):
+                results_list.append(docs)
+                weights.append(w)
+                if q != query and docs:
+                    self._prefetch_cache.set(q, docs, confidence=w)
+
+        aggregated = self._aggregate_rrf_weighted(results_list, weights)
         return aggregated[:top_k]
 
-    async def _generate_speculations(self, query: str) -> List[str]:
-        """Generate speculative query variations."""
-        if not self.llm:
+    async def prefetch(self, query: str, top_k: int = 10) -> None:
+        """Prefetch speculative results for a query."""
+        if not self.predictor:
+            return
+
+        predictions = await self.predictor.predict(query, limit=self.num_speculations)
+        for pred in predictions:
+            if pred.score < self.min_prediction_score:
+                continue
+            if self._prefetch_cache.get(pred.query):
+                continue
+            docs = await self._run_retrieve(pred.query, top_k, self.speculative_timeout)
+            if docs:
+                self._prefetch_cache.set(pred.query, docs, confidence=pred.score)
+
+    async def _run_retrieve(
+        self,
+        query: str,
+        top_k: int,
+        timeout: Optional[float],
+    ) -> List[RetrievedDocument]:
+        """Run retrieval with optional timeout."""
+        coro = self.base_retriever.retrieve(query, top_k=top_k)
+        if timeout is None:
+            return await coro
+
+        try:
+            return await asyncio.wait_for(coro, timeout=timeout)
+        except asyncio.TimeoutError:
+            logger.debug(f"Speculative retrieval timed out for query: {query}")
             return []
 
-        prompt = f"""Generate {self.num_speculations} alternative phrasings of this search query.
-Each should capture slightly different aspects or phrasings.
+    def _normalize_queries(
+        self,
+        query: str,
+        predictions: List[QueryPrediction],
+    ) -> Dict[str, float]:
+        """Combine primary query with predictions and weights."""
+        weights: Dict[str, float] = {query: 1.0}
+        for pred in predictions:
+            if pred.score < self.min_prediction_score:
+                continue
+            weights[pred.query] = max(weights.get(pred.query, 0.0), pred.score)
+        return weights
 
-Original: {query}
-
-Alternatives (one per line):"""
-
-        response = await self.llm.generate(prompt, temperature=0.8)
-        queries = [q.strip() for q in response.strip().split("\n") if q.strip()]
-        return queries[: self.num_speculations]
-
-    def _aggregate_rrf(
+    def _aggregate_rrf_weighted(
         self,
         results_list: List[List[RetrievedDocument]],
+        weights: List[float],
         k: int = 60,
     ) -> List[RetrievedDocument]:
-        """Aggregate results using Reciprocal Rank Fusion."""
+        """Aggregate results using weighted Reciprocal Rank Fusion."""
         doc_scores: Dict[str, float] = {}
         doc_objects: Dict[str, RetrievedDocument] = {}
 
-        for results in results_list:
+        for weight, results in zip(weights, results_list):
             for rank, doc in enumerate(results, 1):
                 doc_id = doc.id
-                rrf_score = 1.0 / (k + rank)
+                rrf_score = weight * (1.0 / (k + rank))
 
                 if doc_id not in doc_scores:
                     doc_scores[doc_id] = 0.0
@@ -459,7 +680,6 @@ Alternatives (one per line):"""
 
                 doc_scores[doc_id] += rrf_score
 
-        # Sort by aggregated score
         sorted_ids = sorted(doc_scores.keys(), key=lambda x: doc_scores[x], reverse=True)
 
         results = []
