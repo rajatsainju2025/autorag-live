@@ -8,9 +8,11 @@ characteristics and multi-step task decomposition.
 from __future__ import annotations
 
 import logging
+import math
+import random
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Protocol, Tuple
 
 
 class QueryType(Enum):
@@ -480,3 +482,530 @@ class Router:
             f"{analysis.query_type.value} type in "
             f"{analysis.domain.value} domain"
         )
+
+
+# =============================================================================
+# OPTIMIZATION 7: Adaptive Query Router with Learned Intent Classification
+# Based on: "Learning to Route Queries in Large-Scale RAG Systems"
+# and "RAFT: Adapting Language Model to Domain Specific RAG" (2024)
+#
+# Implements a neural query router that:
+# 1. Learns intent embeddings for query classification
+# 2. Adapts routing decisions based on performance feedback
+# 3. Supports complex intent hierarchies for agentic workflows
+# 4. Uses Thompson Sampling for exploration-exploitation tradeoff
+# =============================================================================
+
+
+class EmbeddingProtocol(Protocol):
+    """Protocol for embedding providers."""
+
+    async def embed(self, text: str) -> List[float]:
+        """Embed text into vector."""
+        ...
+
+
+class LLMProtocol(Protocol):
+    """Protocol for LLM interactions."""
+
+    async def generate(self, prompt: str, **kwargs: Any) -> str:
+        """Generate response from prompt."""
+        ...
+
+
+@dataclass
+class IntentDefinition:
+    """Definition of a query intent for routing."""
+
+    name: str
+    description: str
+    examples: List[str] = field(default_factory=list)
+    handler: Optional[str] = None
+    priority: int = 0
+    requires_retrieval: bool = True
+    requires_reasoning: bool = False
+    min_confidence: float = 0.5
+
+    # Learned embedding (computed from examples)
+    embedding: Optional[List[float]] = None
+
+
+@dataclass
+class RouteDecision:
+    """A routing decision with confidence scores."""
+
+    intent: str
+    confidence: float
+    handler: str
+    alternatives: List[Tuple[str, float]] = field(default_factory=list)
+    reasoning: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class RoutingFeedback:
+    """Feedback on a routing decision."""
+
+    query: str
+    selected_intent: str
+    was_correct: bool
+    actual_intent: Optional[str] = None
+    response_quality: float = 0.0
+    latency_ms: float = 0.0
+
+
+class AdaptiveIntentRouter:
+    """
+    Neural adaptive query router with learned intent classification.
+
+    Uses intent embeddings and Thompson Sampling for optimal routing
+    in agentic RAG systems with multiple specialized handlers.
+
+    Example:
+        >>> router = AdaptiveIntentRouter(embedder)
+        >>> router.register_intent(IntentDefinition(
+        ...     name="factual_lookup",
+        ...     description="Simple fact retrieval",
+        ...     examples=["What is X?", "Who invented Y?"],
+        ...     handler="dense_retriever"
+        ... ))
+        >>> decision = await router.route("What is machine learning?")
+    """
+
+    def __init__(
+        self,
+        embedder: Optional[EmbeddingProtocol] = None,
+        llm: Optional[LLMProtocol] = None,
+        similarity_threshold: float = 0.7,
+        use_thompson_sampling: bool = True,
+    ):
+        """
+        Initialize adaptive router.
+
+        Args:
+            embedder: Embedding provider for intent matching
+            llm: LLM for complex intent classification
+            similarity_threshold: Minimum similarity for intent match
+            use_thompson_sampling: Use Thompson Sampling for exploration
+        """
+        self.embedder = embedder
+        self.llm = llm
+        self.similarity_threshold = similarity_threshold
+        self.use_thompson_sampling = use_thompson_sampling
+
+        # Intent registry
+        self.intents: Dict[str, IntentDefinition] = {}
+        self._intent_embeddings: Dict[str, List[float]] = {}
+
+        # Thompson Sampling state (Beta distribution parameters)
+        self._alpha: Dict[str, float] = {}  # Successes + 1
+        self._beta: Dict[str, float] = {}  # Failures + 1
+
+        # Statistics
+        self._stats = {
+            "total_routes": 0,
+            "feedback_count": 0,
+            "intent_accuracy": {},
+        }
+
+    def register_intent(self, intent: IntentDefinition) -> None:
+        """Register an intent for routing."""
+        self.intents[intent.name] = intent
+
+        # Initialize Thompson Sampling parameters
+        self._alpha[intent.name] = 1.0
+        self._beta[intent.name] = 1.0
+
+    async def compute_intent_embeddings(self) -> None:
+        """Compute embeddings for all intent examples."""
+        if not self.embedder:
+            return
+
+        for intent_name, intent in self.intents.items():
+            if intent.examples:
+                # Compute mean embedding of examples
+                embeddings = []
+                for example in intent.examples:
+                    emb = await self.embedder.embed(example)
+                    embeddings.append(emb)
+
+                # Average embeddings
+                if embeddings:
+                    avg_embedding = [
+                        sum(e[i] for e in embeddings) / len(embeddings)
+                        for i in range(len(embeddings[0]))
+                    ]
+                    self._intent_embeddings[intent_name] = avg_embedding
+                    intent.embedding = avg_embedding
+
+    async def route(self, query: str, context: Optional[str] = None) -> RouteDecision:
+        """
+        Route query to appropriate handler.
+
+        Args:
+            query: User query
+            context: Optional context for routing
+
+        Returns:
+            RouteDecision with handler and confidence
+        """
+        self._stats["total_routes"] += 1
+
+        # Get intent scores
+        scores = await self._score_intents(query)
+
+        if not scores:
+            return RouteDecision(
+                intent="default",
+                confidence=0.0,
+                handler="semantic_retriever",
+                reasoning="No intents registered",
+            )
+
+        # Apply Thompson Sampling if enabled
+        if self.use_thompson_sampling:
+            scores = self._apply_thompson_sampling(scores)
+
+        # Sort by score
+        sorted_scores = sorted(scores.items(), key=lambda x: x[1], reverse=True)
+
+        best_intent, best_score = sorted_scores[0]
+        alternatives = sorted_scores[1:4]  # Top 3 alternatives
+
+        intent_def = self.intents[best_intent]
+
+        return RouteDecision(
+            intent=best_intent,
+            confidence=best_score,
+            handler=intent_def.handler or "semantic_retriever",
+            alternatives=alternatives,
+            reasoning=f"Matched intent '{best_intent}' with confidence {best_score:.2f}",
+            metadata={
+                "requires_retrieval": intent_def.requires_retrieval,
+                "requires_reasoning": intent_def.requires_reasoning,
+            },
+        )
+
+    async def _score_intents(self, query: str) -> Dict[str, float]:
+        """Score all intents for the query."""
+        scores: Dict[str, float] = {}
+
+        if self.embedder and self._intent_embeddings:
+            # Use embedding similarity
+            query_emb = await self.embedder.embed(query)
+
+            for intent_name, intent_emb in self._intent_embeddings.items():
+                similarity = self._cosine_similarity(query_emb, intent_emb)
+                scores[intent_name] = similarity
+        else:
+            # Fallback to keyword matching
+            for intent_name, intent in self.intents.items():
+                score = self._keyword_match_score(query, intent)
+                scores[intent_name] = score
+
+        return scores
+
+    def _apply_thompson_sampling(self, scores: Dict[str, float]) -> Dict[str, float]:
+        """Apply Thompson Sampling for exploration-exploitation."""
+        adjusted_scores: Dict[str, float] = {}
+
+        for intent_name, base_score in scores.items():
+            # Sample from Beta distribution
+            alpha = self._alpha.get(intent_name, 1.0)
+            beta = self._beta.get(intent_name, 1.0)
+
+            # Sample success probability
+            sampled_prob = random.betavariate(alpha, beta)
+
+            # Combine base score with sampled probability
+            adjusted_scores[intent_name] = 0.7 * base_score + 0.3 * sampled_prob
+
+        return adjusted_scores
+
+    def record_feedback(self, feedback: RoutingFeedback) -> None:
+        """
+        Record feedback to update routing policy.
+
+        Args:
+            feedback: Routing feedback
+        """
+        self._stats["feedback_count"] += 1
+
+        intent = feedback.selected_intent
+        if intent not in self.intents:
+            return
+
+        # Update Thompson Sampling parameters
+        if feedback.was_correct:
+            self._alpha[intent] = self._alpha.get(intent, 1.0) + 1
+        else:
+            self._beta[intent] = self._beta.get(intent, 1.0) + 1
+
+        # Update accuracy stats
+        if intent not in self._stats["intent_accuracy"]:
+            self._stats["intent_accuracy"][intent] = {"correct": 0, "total": 0}
+
+        self._stats["intent_accuracy"][intent]["total"] += 1
+        if feedback.was_correct:
+            self._stats["intent_accuracy"][intent]["correct"] += 1
+
+    def _cosine_similarity(self, a: List[float], b: List[float]) -> float:
+        """Compute cosine similarity between vectors."""
+        if not a or not b or len(a) != len(b):
+            return 0.0
+
+        dot = sum(x * y for x, y in zip(a, b))
+        norm_a = math.sqrt(sum(x * x for x in a))
+        norm_b = math.sqrt(sum(x * x for x in b))
+
+        if norm_a == 0 or norm_b == 0:
+            return 0.0
+
+        return dot / (norm_a * norm_b)
+
+    def _keyword_match_score(self, query: str, intent: IntentDefinition) -> float:
+        """Score intent based on keyword matching."""
+        query_lower = query.lower()
+        score = 0.0
+
+        # Check description keywords
+        desc_words = intent.description.lower().split()
+        matches = sum(1 for w in desc_words if w in query_lower)
+        score += matches * 0.1
+
+        # Check example similarity
+        for example in intent.examples:
+            example_words = set(example.lower().split())
+            query_words = set(query_lower.split())
+            overlap = len(example_words & query_words)
+            score += overlap * 0.05
+
+        return min(1.0, score)
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get routing statistics."""
+        return dict(self._stats)
+
+
+class HierarchicalIntentRouter:
+    """
+    Hierarchical router for complex intent taxonomies.
+
+    Supports multi-level intent classification for agentic workflows
+    with specialized sub-routers at each level.
+    """
+
+    def __init__(
+        self,
+        root_router: AdaptiveIntentRouter,
+        sub_routers: Optional[Dict[str, AdaptiveIntentRouter]] = None,
+    ):
+        """
+        Initialize hierarchical router.
+
+        Args:
+            root_router: Top-level router
+            sub_routers: Sub-routers keyed by parent intent
+        """
+        self.root_router = root_router
+        self.sub_routers = sub_routers or {}
+
+    async def route(self, query: str) -> RouteDecision:
+        """
+        Route through hierarchy.
+
+        Args:
+            query: User query
+
+        Returns:
+            Final RouteDecision
+        """
+        # First-level routing
+        root_decision = await self.root_router.route(query)
+
+        # Check for sub-router
+        if root_decision.intent in self.sub_routers:
+            sub_router = self.sub_routers[root_decision.intent]
+            sub_decision = await sub_router.route(query)
+
+            # Combine decisions
+            return RouteDecision(
+                intent=f"{root_decision.intent}.{sub_decision.intent}",
+                confidence=root_decision.confidence * sub_decision.confidence,
+                handler=sub_decision.handler,
+                alternatives=sub_decision.alternatives,
+                reasoning=(
+                    f"Hierarchical: {root_decision.reasoning} -> " f"{sub_decision.reasoning}"
+                ),
+            )
+
+        return root_decision
+
+    def add_sub_router(self, parent_intent: str, sub_router: AdaptiveIntentRouter) -> None:
+        """Add a sub-router for a parent intent."""
+        self.sub_routers[parent_intent] = sub_router
+
+
+class LLMIntentRouter:
+    """
+    LLM-based intent router for complex queries.
+
+    Uses LLM reasoning for queries that don't match clear intent patterns.
+    """
+
+    def __init__(
+        self,
+        llm: Optional[LLMProtocol] = None,
+        available_intents: Optional[List[IntentDefinition]] = None,
+    ):
+        """Initialize LLM router."""
+        self.llm = llm
+        self.intents = available_intents or []
+
+    async def route(self, query: str) -> RouteDecision:
+        """Route using LLM reasoning."""
+        if not self.llm:
+            return RouteDecision(
+                intent="default",
+                confidence=0.0,
+                handler="semantic_retriever",
+            )
+
+        # Build intent options
+        intent_list = "\n".join(f"- {intent.name}: {intent.description}" for intent in self.intents)
+
+        prompt = f"""Classify this query into one of the available intents.
+
+Query: "{query}"
+
+Available intents:
+{intent_list}
+
+Respond with:
+INTENT: <intent_name>
+CONFIDENCE: <0.0-1.0>
+REASONING: <brief explanation>
+
+Classification:"""
+
+        response = await self.llm.generate(prompt, temperature=0.1)
+
+        # Parse response
+        intent, confidence, reasoning = self._parse_response(response)
+
+        # Find handler
+        handler = "semantic_retriever"
+        for intent_def in self.intents:
+            if intent_def.name == intent:
+                handler = intent_def.handler or handler
+                break
+
+        return RouteDecision(
+            intent=intent,
+            confidence=confidence,
+            handler=handler,
+            reasoning=reasoning,
+        )
+
+    def _parse_response(self, response: str) -> Tuple[str, float, str]:
+        """Parse LLM classification response."""
+        import re
+
+        intent = "default"
+        confidence = 0.5
+        reasoning = ""
+
+        # Extract intent
+        intent_match = re.search(r"INTENT:\s*(\w+)", response, re.I)
+        if intent_match:
+            intent = intent_match.group(1)
+
+        # Extract confidence
+        conf_match = re.search(r"CONFIDENCE:\s*([0-9.]+)", response, re.I)
+        if conf_match:
+            try:
+                confidence = float(conf_match.group(1))
+            except ValueError:
+                pass
+
+        # Extract reasoning
+        reason_match = re.search(r"REASONING:\s*(.+)", response, re.I | re.DOTALL)
+        if reason_match:
+            reasoning = reason_match.group(1).strip()
+
+        return intent, confidence, reasoning
+
+
+def create_rag_intent_router(
+    embedder: Optional[EmbeddingProtocol] = None,
+) -> AdaptiveIntentRouter:
+    """
+    Create a pre-configured RAG intent router.
+
+    Args:
+        embedder: Embedding provider
+
+    Returns:
+        Configured AdaptiveIntentRouter
+    """
+    router = AdaptiveIntentRouter(embedder=embedder)
+
+    # Register common RAG intents
+    router.register_intent(
+        IntentDefinition(
+            name="factual_lookup",
+            description="Simple fact retrieval questions",
+            examples=[
+                "What is machine learning?",
+                "Who invented the telephone?",
+                "When was Python created?",
+            ],
+            handler="dense_retriever",
+            requires_retrieval=True,
+        )
+    )
+
+    router.register_intent(
+        IntentDefinition(
+            name="multi_hop_reasoning",
+            description="Questions requiring multiple reasoning steps",
+            examples=[
+                "How does X relate to Y?",
+                "What caused the event that led to Z?",
+                "Compare the approaches of A and B",
+            ],
+            handler="reasoning_agent",
+            requires_retrieval=True,
+            requires_reasoning=True,
+        )
+    )
+
+    router.register_intent(
+        IntentDefinition(
+            name="summarization",
+            description="Summarize or synthesize information",
+            examples=[
+                "Summarize the key points of X",
+                "What are the main ideas in this document?",
+                "Give me an overview of Y",
+            ],
+            handler="summarization_agent",
+            requires_retrieval=True,
+        )
+    )
+
+    router.register_intent(
+        IntentDefinition(
+            name="procedural",
+            description="How-to questions and procedures",
+            examples=[
+                "How do I configure X?",
+                "What are the steps to do Y?",
+                "How can I implement Z?",
+            ],
+            handler="procedural_retriever",
+            requires_retrieval=True,
+        )
+    )
+
+    return router
