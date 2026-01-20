@@ -887,3 +887,534 @@ async def verify_and_revise(
         return revised, result
 
     return response, result
+
+
+# =============================================================================
+# OPTIMIZATION 4: Self-RAG Verification Token Generation
+# Based on: "Self-RAG: Learning to Retrieve, Generate, and Critique
+# through Self-Reflection" (Asai et al., 2023)
+#
+# Implements special verification tokens that the LLM generates during
+# response generation to self-assess retrieval necessity, relevance,
+# and factual support.
+# =============================================================================
+
+
+class SelfRAGToken(str, Enum):
+    """
+    Special tokens for Self-RAG verification.
+
+    These tokens are generated inline during LLM response to signal
+    self-assessment of retrieval needs and factual grounding.
+    """
+
+    # Retrieval necessity tokens
+    RETRIEVE_YES = "[Retrieve]"
+    RETRIEVE_NO = "[No Retrieve]"
+
+    # Document relevance tokens
+    RELEVANT = "[Relevant]"
+    IRRELEVANT = "[Irrelevant]"
+    PARTIALLY_RELEVANT = "[Partially Relevant]"
+
+    # Support level tokens
+    FULLY_SUPPORTED = "[Fully Supported]"
+    PARTIALLY_SUPPORTED = "[Partially Supported]"
+    NO_SUPPORT = "[No Support]"
+
+    # Utility tokens
+    USEFUL = "[Useful]"
+    NOT_USEFUL = "[Not Useful]"
+
+    # Critique tokens
+    IS_RELEVANT = "[IsRel]"
+    IS_SUPPORTED = "[IsSup]"
+    IS_USEFUL = "[IsUse]"
+
+
+@dataclass
+class SelfRAGAssessment:
+    """Assessment result from Self-RAG verification tokens."""
+
+    needs_retrieval: Optional[bool] = None
+    relevance_score: float = 0.0
+    support_score: float = 0.0
+    utility_score: float = 0.0
+    tokens_found: List[str] = field(default_factory=list)
+    segment_text: str = ""
+
+    @property
+    def overall_score(self) -> float:
+        """Compute overall quality score."""
+        weights = {"relevance": 0.3, "support": 0.5, "utility": 0.2}
+        return (
+            weights["relevance"] * self.relevance_score
+            + weights["support"] * self.support_score
+            + weights["utility"] * self.utility_score
+        )
+
+
+@dataclass
+class SelfRAGResult:
+    """Complete result from Self-RAG verification."""
+
+    response: str
+    segments: List[str] = field(default_factory=list)
+    assessments: List[SelfRAGAssessment] = field(default_factory=list)
+    overall_support: float = 0.0
+    retrieval_decisions: List[bool] = field(default_factory=list)
+    revised_response: Optional[str] = None
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class SelfRAGVerifier:
+    """
+    Self-RAG verification with inline reflection tokens.
+
+    Implements the Self-RAG paradigm where the model learns to:
+    1. Decide when retrieval is needed ([Retrieve]/[No Retrieve])
+    2. Assess document relevance ([Relevant]/[Irrelevant])
+    3. Evaluate factual support ([Fully Supported]/[No Support])
+    4. Judge overall utility ([Useful]/[Not Useful])
+
+    Example:
+        >>> verifier = SelfRAGVerifier(llm, retriever)
+        >>> result = await verifier.generate_with_verification(
+        ...     query="What is quantum computing?",
+        ...     passages=retrieved_docs
+        ... )
+        >>> print(f"Support score: {result.overall_support}")
+    """
+
+    # Token patterns for extraction
+    TOKEN_PATTERNS = {
+        "retrieve": re.compile(r"\[(Retrieve|No Retrieve)\]", re.I),
+        "relevance": re.compile(r"\[(Relevant|Irrelevant|Partially Relevant)\]", re.I),
+        "support": re.compile(r"\[(Fully Supported|Partially Supported|No Support)\]", re.I),
+        "utility": re.compile(r"\[(Useful|Not Useful)\]", re.I),
+    }
+
+    # Token to score mapping
+    TOKEN_SCORES = {
+        "relevant": 1.0,
+        "partially relevant": 0.5,
+        "irrelevant": 0.0,
+        "fully supported": 1.0,
+        "partially supported": 0.5,
+        "no support": 0.0,
+        "useful": 1.0,
+        "not useful": 0.0,
+    }
+
+    def __init__(
+        self,
+        llm: Optional[LLMProtocol] = None,
+        retriever: Optional[RetrieverProtocol] = None,
+        support_threshold: float = 0.5,
+        auto_retrieve_threshold: float = 0.3,
+        max_retrievals_per_response: int = 3,
+    ):
+        """
+        Initialize Self-RAG verifier.
+
+        Args:
+            llm: Language model for generation/verification
+            retriever: Document retriever for on-demand retrieval
+            support_threshold: Minimum support score to accept segment
+            auto_retrieve_threshold: Score below which to auto-retrieve
+            max_retrievals_per_response: Maximum retrieval operations
+        """
+        self.llm = llm
+        self.retriever = retriever
+        self.support_threshold = support_threshold
+        self.auto_retrieve_threshold = auto_retrieve_threshold
+        self.max_retrievals = max_retrievals_per_response
+
+        # Statistics
+        self._stats = {
+            "generations": 0,
+            "retrievals_triggered": 0,
+            "segments_revised": 0,
+            "avg_support_score": 0.0,
+        }
+
+    async def generate_with_verification(
+        self,
+        query: str,
+        passages: Optional[List[str]] = None,
+        context: Optional[str] = None,
+    ) -> SelfRAGResult:
+        """
+        Generate response with Self-RAG verification tokens.
+
+        Args:
+            query: User query
+            passages: Pre-retrieved passages
+            context: Additional context
+
+        Returns:
+            SelfRAGResult with verification assessment
+        """
+        if not self.llm:
+            return SelfRAGResult(response="")
+
+        # Build prompt with Self-RAG instructions
+        prompt = self._build_selfrag_prompt(query, passages, context)
+
+        # Generate response with tokens
+        raw_response = await self.llm.generate(prompt, temperature=0.3)
+
+        # Parse and assess
+        return await self._parse_and_assess(raw_response, query, passages)
+
+    def _build_selfrag_prompt(
+        self,
+        query: str,
+        passages: Optional[List[str]] = None,
+        context: Optional[str] = None,
+    ) -> str:
+        """Build prompt with Self-RAG token instructions."""
+        passage_text = ""
+        if passages:
+            passage_text = "\n\nProvided Passages:\n" + "\n---\n".join(passages[:5])
+
+        context_text = f"\n\nContext: {context}" if context else ""
+
+        return f"""You are a Self-RAG assistant that generates responses with inline verification tokens.
+
+INSTRUCTIONS:
+As you generate your response, include special tokens to self-assess:
+
+1. Before generating content, decide if retrieval is needed:
+   [Retrieve] - need additional information
+   [No Retrieve] - can answer from passages/knowledge
+
+2. After using a passage, assess its relevance:
+   [Relevant] - directly addresses the query
+   [Partially Relevant] - somewhat related
+   [Irrelevant] - not useful for this query
+
+3. For each factual claim, assess support level:
+   [Fully Supported] - clearly supported by passages
+   [Partially Supported] - some support but not complete
+   [No Support] - cannot verify from passages
+
+4. Assess overall utility of your response:
+   [Useful] - directly answers the user's need
+   [Not Useful] - doesn't adequately address query
+
+EXAMPLE:
+Query: What causes climate change?
+[No Retrieve] Based on the passages provided, [Relevant] greenhouse gas emissions
+from human activities [Fully Supported] are the primary cause of climate change.
+[Useful]
+
+Now respond to this query:
+Query: {query}
+{passage_text}
+{context_text}
+
+Response with verification tokens:"""
+
+    async def _parse_and_assess(
+        self,
+        raw_response: str,
+        query: str,
+        passages: Optional[List[str]] = None,
+    ) -> SelfRAGResult:
+        """Parse response and extract assessments."""
+        # Split into segments by sentences or token boundaries
+        segments = self._segment_response(raw_response)
+
+        assessments = []
+        retrieval_decisions = []
+        total_support = 0.0
+
+        retrieval_count = 0
+
+        for segment in segments:
+            assessment = self._assess_segment(segment)
+            assessments.append(assessment)
+
+            # Track retrieval decisions
+            if assessment.needs_retrieval is not None:
+                retrieval_decisions.append(assessment.needs_retrieval)
+
+            total_support += assessment.support_score
+
+            # Auto-retrieve if support is low
+            if (
+                assessment.support_score < self.auto_retrieve_threshold
+                and retrieval_count < self.max_retrievals
+                and self.retriever
+            ):
+                # Trigger retrieval for more context
+                new_passages = await self.retriever.retrieve(query, k=3)
+                if new_passages:
+                    retrieval_count += 1
+                    self._stats["retrievals_triggered"] += 1
+
+        # Compute overall support
+        overall_support = total_support / max(1, len(segments))
+
+        # Clean response (remove tokens for final output)
+        clean_response = self._clean_response(raw_response)
+
+        self._stats["generations"] += 1
+        self._stats["avg_support_score"] = (
+            self._stats["avg_support_score"] * 0.9 + overall_support * 0.1
+        )
+
+        return SelfRAGResult(
+            response=clean_response,
+            segments=segments,
+            assessments=assessments,
+            overall_support=overall_support,
+            retrieval_decisions=retrieval_decisions,
+            metadata={"raw_response": raw_response},
+        )
+
+    def _segment_response(self, response: str) -> List[str]:
+        """Segment response by sentences and tokens."""
+        # Split by sentence boundaries while keeping tokens
+        sentences = re.split(r"(?<=[.!?])\s+", response)
+        return [s.strip() for s in sentences if s.strip()]
+
+    def _assess_segment(self, segment: str) -> SelfRAGAssessment:
+        """Assess a single segment for Self-RAG tokens."""
+        assessment = SelfRAGAssessment(segment_text=segment)
+
+        # Check retrieval tokens
+        retrieve_match = self.TOKEN_PATTERNS["retrieve"].search(segment)
+        if retrieve_match:
+            token = retrieve_match.group(1).lower()
+            assessment.needs_retrieval = token == "retrieve"
+            assessment.tokens_found.append(retrieve_match.group(0))
+
+        # Check relevance tokens
+        relevance_match = self.TOKEN_PATTERNS["relevance"].search(segment)
+        if relevance_match:
+            token = relevance_match.group(1).lower()
+            assessment.relevance_score = self.TOKEN_SCORES.get(token, 0.5)
+            assessment.tokens_found.append(relevance_match.group(0))
+
+        # Check support tokens
+        support_match = self.TOKEN_PATTERNS["support"].search(segment)
+        if support_match:
+            token = support_match.group(1).lower()
+            assessment.support_score = self.TOKEN_SCORES.get(token, 0.5)
+            assessment.tokens_found.append(support_match.group(0))
+
+        # Check utility tokens
+        utility_match = self.TOKEN_PATTERNS["utility"].search(segment)
+        if utility_match:
+            token = utility_match.group(1).lower()
+            assessment.utility_score = self.TOKEN_SCORES.get(token, 0.5)
+            assessment.tokens_found.append(utility_match.group(0))
+
+        return assessment
+
+    def _clean_response(self, response: str) -> str:
+        """Remove Self-RAG tokens from response."""
+        clean = response
+        for pattern in self.TOKEN_PATTERNS.values():
+            clean = pattern.sub("", clean)
+        # Clean up extra whitespace
+        clean = re.sub(r"\s+", " ", clean).strip()
+        return clean
+
+    async def verify_with_critique(
+        self,
+        response: str,
+        query: str,
+        passages: Optional[List[str]] = None,
+    ) -> SelfRAGResult:
+        """
+        Verify existing response using Self-RAG critique.
+
+        Args:
+            response: Response to verify
+            query: Original query
+            passages: Source passages
+
+        Returns:
+            SelfRAGResult with critique
+        """
+        if not self.llm:
+            return SelfRAGResult(response=response)
+
+        prompt = f"""Analyze this response using Self-RAG verification tokens.
+
+For each sentence, add verification tokens to assess:
+- [Relevant]/[Partially Relevant]/[Irrelevant] for query relevance
+- [Fully Supported]/[Partially Supported]/[No Support] for factual support
+- [Useful]/[Not Useful] for overall utility
+
+Query: {query}
+
+Passages:
+{chr(10).join(passages[:3]) if passages else 'No passages provided'}
+
+Response to analyze:
+{response}
+
+Analyzed response with tokens:"""
+
+        analyzed = await self.llm.generate(prompt, temperature=0.1)
+        return await self._parse_and_assess(analyzed, query, passages)
+
+    async def revise_low_support_segments(
+        self,
+        result: SelfRAGResult,
+        query: str,
+        passages: Optional[List[str]] = None,
+    ) -> SelfRAGResult:
+        """
+        Revise segments with low support scores.
+
+        Args:
+            result: Previous SelfRAGResult
+            query: Original query
+            passages: Source passages
+
+        Returns:
+            SelfRAGResult with revised segments
+        """
+        if not self.llm:
+            return result
+
+        revised_segments = []
+
+        for segment, assessment in zip(result.segments, result.assessments):
+            if assessment.support_score < self.support_threshold:
+                # Revise this segment
+                revision_prompt = f"""Revise this response segment to be more accurate and supported.
+
+Query: {query}
+Original segment: {segment}
+
+Available passages:
+{chr(10).join(passages[:3]) if passages else 'None'}
+
+Provide a revised segment that is factually supported:"""
+
+                revised = await self.llm.generate(revision_prompt, temperature=0.3)
+                revised_segments.append(revised.strip())
+                self._stats["segments_revised"] += 1
+            else:
+                revised_segments.append(self._clean_response(segment))
+
+        # Combine revised segments
+        revised_response = " ".join(revised_segments)
+
+        # Create new result with revision
+        new_result = SelfRAGResult(
+            response=result.response,
+            segments=result.segments,
+            assessments=result.assessments,
+            overall_support=result.overall_support,
+            retrieval_decisions=result.retrieval_decisions,
+            revised_response=revised_response,
+            metadata=result.metadata,
+        )
+
+        return new_result
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get Self-RAG verification statistics."""
+        return dict(self._stats)
+
+
+class AdaptiveSelfRAG:
+    """
+    Adaptive Self-RAG that learns retrieval patterns.
+
+    Tracks when retrieval improves response quality and adapts
+    the retrieval threshold based on historical performance.
+    """
+
+    def __init__(
+        self,
+        base_verifier: SelfRAGVerifier,
+        learning_rate: float = 0.1,
+        min_samples_for_adaptation: int = 10,
+    ):
+        """
+        Initialize adaptive Self-RAG.
+
+        Args:
+            base_verifier: Base SelfRAGVerifier
+            learning_rate: Rate of threshold adaptation
+            min_samples_for_adaptation: Samples before adapting
+        """
+        self.verifier = base_verifier
+        self.learning_rate = learning_rate
+        self.min_samples = min_samples_for_adaptation
+
+        # Track retrieval outcomes
+        self._retrieval_outcomes: List[Dict[str, float]] = []
+        self._current_threshold = base_verifier.auto_retrieve_threshold
+
+    async def generate_adaptive(
+        self,
+        query: str,
+        passages: Optional[List[str]] = None,
+    ) -> SelfRAGResult:
+        """Generate with adaptive retrieval thresholds."""
+        # Update verifier threshold
+        self.verifier.auto_retrieve_threshold = self._current_threshold
+
+        result = await self.verifier.generate_with_verification(query, passages)
+
+        # Track outcome for adaptation
+        self._retrieval_outcomes.append(
+            {
+                "support_score": result.overall_support,
+                "retrieval_triggered": any(result.retrieval_decisions),
+                "threshold_used": self._current_threshold,
+            }
+        )
+
+        # Adapt threshold if enough samples
+        if len(self._retrieval_outcomes) >= self.min_samples:
+            self._adapt_threshold()
+
+        return result
+
+    def _adapt_threshold(self) -> None:
+        """Adapt retrieval threshold based on outcomes."""
+        recent = self._retrieval_outcomes[-self.min_samples :]
+
+        # Compare outcomes with vs without retrieval
+        with_retrieval = [o for o in recent if o["retrieval_triggered"]]
+        without_retrieval = [o for o in recent if not o["retrieval_triggered"]]
+
+        if with_retrieval and without_retrieval:
+            avg_with = sum(o["support_score"] for o in with_retrieval) / len(with_retrieval)
+            avg_without = sum(o["support_score"] for o in without_retrieval) / len(
+                without_retrieval
+            )
+
+            # If retrieval helps, lower threshold (retrieve more often)
+            # If retrieval doesn't help, raise threshold (retrieve less)
+            if avg_with > avg_without + 0.1:
+                self._current_threshold = max(0.1, self._current_threshold - self.learning_rate)
+            elif avg_without > avg_with + 0.1:
+                self._current_threshold = min(0.9, self._current_threshold + self.learning_rate)
+
+
+def create_selfrag_verifier(
+    llm: Optional[LLMProtocol] = None,
+    retriever: Optional[RetrieverProtocol] = None,
+) -> SelfRAGVerifier:
+    """
+    Create a Self-RAG verifier.
+
+    Args:
+        llm: Language model
+        retriever: Document retriever
+
+    Returns:
+        SelfRAGVerifier instance
+    """
+    return SelfRAGVerifier(llm=llm, retriever=retriever)
