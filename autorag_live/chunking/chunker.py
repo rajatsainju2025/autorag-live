@@ -26,53 +26,43 @@ import re
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum, auto
-from typing import (
-    Any,
-    Callable,
-    Dict,
-    Iterator,
-    List,
-    Optional,
-    Pattern,
-    Tuple,
-    Union,
-)
+from typing import Any, Dict, List, Optional, Protocol, Tuple, Union
 
 logger = logging.getLogger(__name__)
 
 
 class ChunkingStrategy(Enum):
     """Available chunking strategies."""
-    
-    FIXED = auto()           # Fixed character/token size
-    SENTENCE = auto()        # Split by sentences
-    PARAGRAPH = auto()       # Split by paragraphs
-    SEMANTIC = auto()        # Semantic similarity based
-    RECURSIVE = auto()       # Recursive character splitting
-    CODE = auto()            # Code-aware splitting
-    MARKDOWN = auto()        # Markdown structure aware
+
+    FIXED = auto()  # Fixed character/token size
+    SENTENCE = auto()  # Split by sentences
+    PARAGRAPH = auto()  # Split by paragraphs
+    SEMANTIC = auto()  # Semantic similarity based
+    RECURSIVE = auto()  # Recursive character splitting
+    CODE = auto()  # Code-aware splitting
+    MARKDOWN = auto()  # Markdown structure aware
     SLIDING_WINDOW = auto()  # Sliding window approach
 
 
 @dataclass
 class ChunkMetadata:
     """Metadata for a text chunk."""
-    
+
     # Position info
     start_char: int = 0
     end_char: int = 0
     start_line: int = 0
     end_line: int = 0
-    
+
     # Source info
     source_id: Optional[str] = None
     page_number: Optional[int] = None
     section: Optional[str] = None
-    
+
     # Chunk info
     has_overlap: bool = False
     overlap_chars: int = 0
-    
+
     # Custom metadata
     custom: Dict[str, Any] = field(default_factory=dict)
 
@@ -80,54 +70,54 @@ class ChunkMetadata:
 @dataclass
 class TextChunk:
     """A chunk of text with metadata."""
-    
+
     text: str
     index: int
-    
+
     # Metadata
     metadata: ChunkMetadata = field(default_factory=ChunkMetadata)
-    
+
     # Token count (if computed)
     token_count: Optional[int] = None
-    
+
     # Embedding (if computed)
     embedding: Optional[List[float]] = None
-    
+
     @property
     def char_count(self) -> int:
         """Get character count."""
         return len(self.text)
-    
+
     @property
     def word_count(self) -> int:
         """Get word count."""
         return len(self.text.split())
-    
+
     def to_dict(self) -> Dict[str, Any]:
         """Convert to dictionary."""
         return {
-            'text': self.text,
-            'index': self.index,
-            'char_count': self.char_count,
-            'word_count': self.word_count,
-            'token_count': self.token_count,
-            'metadata': {
-                'start_char': self.metadata.start_char,
-                'end_char': self.metadata.end_char,
-                'source_id': self.metadata.source_id,
+            "text": self.text,
+            "index": self.index,
+            "char_count": self.char_count,
+            "word_count": self.word_count,
+            "token_count": self.token_count,
+            "metadata": {
+                "start_char": self.metadata.start_char,
+                "end_char": self.metadata.end_char,
+                "source_id": self.metadata.source_id,
             },
         }
 
 
 class BaseChunker(ABC):
     """Base class for text chunkers."""
-    
+
     @property
     @abstractmethod
     def name(self) -> str:
         """Chunker name."""
         pass
-    
+
     @abstractmethod
     def chunk(
         self,
@@ -140,7 +130,7 @@ class BaseChunker(ABC):
 
 class FixedSizeChunker(BaseChunker):
     """Fixed-size character chunking."""
-    
+
     def __init__(
         self,
         chunk_size: int = 1000,
@@ -149,7 +139,7 @@ class FixedSizeChunker(BaseChunker):
     ):
         """
         Initialize fixed-size chunker.
-        
+
         Args:
             chunk_size: Target chunk size in characters
             overlap: Overlap between chunks
@@ -158,11 +148,11 @@ class FixedSizeChunker(BaseChunker):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.strip_whitespace = strip_whitespace
-    
+
     @property
     def name(self) -> str:
         return "fixed_size"
-    
+
     def chunk(
         self,
         text: str,
@@ -170,23 +160,23 @@ class FixedSizeChunker(BaseChunker):
     ) -> List[TextChunk]:
         """Split text into fixed-size chunks."""
         chunks = []
-        
+
         if not text:
             return chunks
-        
+
         start = 0
         index = 0
-        
+
         while start < len(text):
             # Calculate end position
             end = min(start + self.chunk_size, len(text))
-            
+
             # Extract chunk text
             chunk_text = text[start:end]
-            
+
             if self.strip_whitespace:
                 chunk_text = chunk_text.strip()
-            
+
             if chunk_text:  # Only add non-empty chunks
                 chunk_metadata = ChunkMetadata(
                     start_char=start,
@@ -194,29 +184,31 @@ class FixedSizeChunker(BaseChunker):
                     has_overlap=index > 0 and self.overlap > 0,
                     overlap_chars=min(self.overlap, start) if index > 0 else 0,
                 )
-                
+
                 if metadata:
                     chunk_metadata.custom.update(metadata)
-                
-                chunks.append(TextChunk(
-                    text=chunk_text,
-                    index=index,
-                    metadata=chunk_metadata,
-                ))
-                
+
+                chunks.append(
+                    TextChunk(
+                        text=chunk_text,
+                        index=index,
+                        metadata=chunk_metadata,
+                    )
+                )
+
                 index += 1
-            
+
             # Move start position
             start = end - self.overlap if end < len(text) else end
-        
+
         return chunks
 
 
 class SentenceChunker(BaseChunker):
     """Sentence-based chunking."""
-    
-    SENTENCE_ENDINGS = re.compile(r'(?<=[.!?])\s+')
-    
+
+    SENTENCE_ENDINGS = re.compile(r"(?<=[.!?])\s+")
+
     def __init__(
         self,
         max_chunk_size: int = 1000,
@@ -225,7 +217,7 @@ class SentenceChunker(BaseChunker):
     ):
         """
         Initialize sentence chunker.
-        
+
         Args:
             max_chunk_size: Maximum chunk size
             min_chunk_size: Minimum chunk size
@@ -234,16 +226,16 @@ class SentenceChunker(BaseChunker):
         self.max_chunk_size = max_chunk_size
         self.min_chunk_size = min_chunk_size
         self.overlap_sentences = overlap_sentences
-    
+
     @property
     def name(self) -> str:
         return "sentence"
-    
+
     def _split_sentences(self, text: str) -> List[str]:
         """Split text into sentences."""
         sentences = self.SENTENCE_ENDINGS.split(text)
         return [s.strip() for s in sentences if s.strip()]
-    
+
     def chunk(
         self,
         text: str,
@@ -251,55 +243,57 @@ class SentenceChunker(BaseChunker):
     ) -> List[TextChunk]:
         """Split text by sentences."""
         chunks = []
-        
+
         sentences = self._split_sentences(text)
         if not sentences:
             return chunks
-        
+
         current_chunk = []
         current_length = 0
         index = 0
         char_pos = 0
-        
+
         for i, sentence in enumerate(sentences):
             sentence_len = len(sentence) + 1  # +1 for space
-            
+
             # Check if adding sentence exceeds max
             if current_length + sentence_len > self.max_chunk_size and current_chunk:
                 # Create chunk from current sentences
-                chunk_text = ' '.join(current_chunk)
-                
+                chunk_text = " ".join(current_chunk)
+
                 chunk_metadata = ChunkMetadata(
                     start_char=char_pos - len(chunk_text),
                     end_char=char_pos,
                 )
                 if metadata:
                     chunk_metadata.custom.update(metadata)
-                
-                chunks.append(TextChunk(
-                    text=chunk_text,
-                    index=index,
-                    metadata=chunk_metadata,
-                ))
-                
+
+                chunks.append(
+                    TextChunk(
+                        text=chunk_text,
+                        index=index,
+                        metadata=chunk_metadata,
+                    )
+                )
+
                 index += 1
-                
+
                 # Keep overlap sentences
                 if self.overlap_sentences > 0:
-                    current_chunk = current_chunk[-self.overlap_sentences:]
+                    current_chunk = current_chunk[-self.overlap_sentences :]
                     current_length = sum(len(s) + 1 for s in current_chunk)
                 else:
                     current_chunk = []
                     current_length = 0
-            
+
             current_chunk.append(sentence)
             current_length += sentence_len
             char_pos += sentence_len
-        
+
         # Add remaining sentences
         if current_chunk:
-            chunk_text = ' '.join(current_chunk)
-            
+            chunk_text = " ".join(current_chunk)
+
             if len(chunk_text) >= self.min_chunk_size or not chunks:
                 chunk_metadata = ChunkMetadata(
                     start_char=char_pos - len(chunk_text),
@@ -307,21 +301,23 @@ class SentenceChunker(BaseChunker):
                 )
                 if metadata:
                     chunk_metadata.custom.update(metadata)
-                
-                chunks.append(TextChunk(
-                    text=chunk_text,
-                    index=index,
-                    metadata=chunk_metadata,
-                ))
-        
+
+                chunks.append(
+                    TextChunk(
+                        text=chunk_text,
+                        index=index,
+                        metadata=chunk_metadata,
+                    )
+                )
+
         return chunks
 
 
 class ParagraphChunker(BaseChunker):
     """Paragraph-based chunking."""
-    
-    PARAGRAPH_PATTERN = re.compile(r'\n\s*\n')
-    
+
+    PARAGRAPH_PATTERN = re.compile(r"\n\s*\n")
+
     def __init__(
         self,
         max_chunk_size: int = 2000,
@@ -330,7 +326,7 @@ class ParagraphChunker(BaseChunker):
     ):
         """
         Initialize paragraph chunker.
-        
+
         Args:
             max_chunk_size: Maximum chunk size
             combine_small: Combine small paragraphs
@@ -339,11 +335,11 @@ class ParagraphChunker(BaseChunker):
         self.max_chunk_size = max_chunk_size
         self.combine_small = combine_small
         self.min_paragraph_size = min_paragraph_size
-    
+
     @property
     def name(self) -> str:
         return "paragraph"
-    
+
     def chunk(
         self,
         text: str,
@@ -351,38 +347,40 @@ class ParagraphChunker(BaseChunker):
     ) -> List[TextChunk]:
         """Split text by paragraphs."""
         chunks = []
-        
+
         paragraphs = self.PARAGRAPH_PATTERN.split(text)
         paragraphs = [p.strip() for p in paragraphs if p.strip()]
-        
+
         if not paragraphs:
             return chunks
-        
+
         current_chunk = []
         current_length = 0
         index = 0
-        
+
         for para in paragraphs:
             para_len = len(para)
-            
+
             # Check if paragraph alone exceeds max
             if para_len > self.max_chunk_size:
                 # Save current chunk first
                 if current_chunk:
-                    chunk_text = '\n\n'.join(current_chunk)
+                    chunk_text = "\n\n".join(current_chunk)
                     chunk_metadata = ChunkMetadata()
                     if metadata:
                         chunk_metadata.custom.update(metadata)
-                    
-                    chunks.append(TextChunk(
-                        text=chunk_text,
-                        index=index,
-                        metadata=chunk_metadata,
-                    ))
+
+                    chunks.append(
+                        TextChunk(
+                            text=chunk_text,
+                            index=index,
+                            metadata=chunk_metadata,
+                        )
+                    )
                     index += 1
                     current_chunk = []
                     current_length = 0
-                
+
                 # Split large paragraph
                 sub_chunker = FixedSizeChunker(
                     chunk_size=self.max_chunk_size,
@@ -393,47 +391,51 @@ class ParagraphChunker(BaseChunker):
                     chunks.append(sub_chunk)
                     index += 1
                 continue
-            
+
             # Check if adding paragraph exceeds max
             if current_length + para_len > self.max_chunk_size and current_chunk:
-                chunk_text = '\n\n'.join(current_chunk)
+                chunk_text = "\n\n".join(current_chunk)
                 chunk_metadata = ChunkMetadata()
                 if metadata:
                     chunk_metadata.custom.update(metadata)
-                
-                chunks.append(TextChunk(
-                    text=chunk_text,
-                    index=index,
-                    metadata=chunk_metadata,
-                ))
+
+                chunks.append(
+                    TextChunk(
+                        text=chunk_text,
+                        index=index,
+                        metadata=chunk_metadata,
+                    )
+                )
                 index += 1
                 current_chunk = []
                 current_length = 0
-            
+
             current_chunk.append(para)
             current_length += para_len + 2  # +2 for paragraph separator
-        
+
         # Add remaining
         if current_chunk:
-            chunk_text = '\n\n'.join(current_chunk)
+            chunk_text = "\n\n".join(current_chunk)
             chunk_metadata = ChunkMetadata()
             if metadata:
                 chunk_metadata.custom.update(metadata)
-            
-            chunks.append(TextChunk(
-                text=chunk_text,
-                index=index,
-                metadata=chunk_metadata,
-            ))
-        
+
+            chunks.append(
+                TextChunk(
+                    text=chunk_text,
+                    index=index,
+                    metadata=chunk_metadata,
+                )
+            )
+
         return chunks
 
 
 class RecursiveChunker(BaseChunker):
     """Recursive character text splitting."""
-    
-    DEFAULT_SEPARATORS = ['\n\n', '\n', '. ', ', ', ' ', '']
-    
+
+    DEFAULT_SEPARATORS = ["\n\n", "\n", ". ", ", ", " ", ""]
+
     def __init__(
         self,
         chunk_size: int = 1000,
@@ -442,7 +444,7 @@ class RecursiveChunker(BaseChunker):
     ):
         """
         Initialize recursive chunker.
-        
+
         Args:
             chunk_size: Target chunk size
             overlap: Overlap between chunks
@@ -451,11 +453,11 @@ class RecursiveChunker(BaseChunker):
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.separators = separators or self.DEFAULT_SEPARATORS
-    
+
     @property
     def name(self) -> str:
         return "recursive"
-    
+
     def _split_text(
         self,
         text: str,
@@ -464,40 +466,40 @@ class RecursiveChunker(BaseChunker):
         """Recursively split text."""
         if not separators:
             return [text]
-        
+
         separator = separators[0]
         remaining_separators = separators[1:]
-        
+
         if separator:
             splits = text.split(separator)
         else:
             # Character-level split
             splits = list(text)
-        
+
         chunks = []
         current_chunk = []
         current_length = 0
-        
+
         for split in splits:
             split_len = len(split) + len(separator)
-            
+
             if current_length + split_len > self.chunk_size:
                 if current_chunk:
                     merged = separator.join(current_chunk)
-                    
+
                     if len(merged) > self.chunk_size and remaining_separators:
                         # Recursively split
                         sub_chunks = self._split_text(merged, remaining_separators)
                         chunks.extend(sub_chunks)
                     else:
                         chunks.append(merged)
-                    
+
                     current_chunk = []
                     current_length = 0
-            
+
             current_chunk.append(split)
             current_length += split_len
-        
+
         if current_chunk:
             merged = separator.join(current_chunk)
             if len(merged) > self.chunk_size and remaining_separators:
@@ -505,9 +507,9 @@ class RecursiveChunker(BaseChunker):
                 chunks.extend(sub_chunks)
             else:
                 chunks.append(merged)
-        
+
         return chunks
-    
+
     def chunk(
         self,
         text: str,
@@ -515,52 +517,54 @@ class RecursiveChunker(BaseChunker):
     ) -> List[TextChunk]:
         """Recursively split text into chunks."""
         raw_chunks = self._split_text(text, self.separators)
-        
+
         chunks = []
         char_pos = 0
-        
+
         for i, chunk_text in enumerate(raw_chunks):
             chunk_text = chunk_text.strip()
             if not chunk_text:
                 continue
-            
+
             chunk_metadata = ChunkMetadata(
                 start_char=char_pos,
                 end_char=char_pos + len(chunk_text),
             )
             if metadata:
                 chunk_metadata.custom.update(metadata)
-            
-            chunks.append(TextChunk(
-                text=chunk_text,
-                index=len(chunks),
-                metadata=chunk_metadata,
-            ))
-            
+
+            chunks.append(
+                TextChunk(
+                    text=chunk_text,
+                    index=len(chunks),
+                    metadata=chunk_metadata,
+                )
+            )
+
             char_pos += len(chunk_text)
-        
+
         return chunks
 
 
 class CodeChunker(BaseChunker):
     """Code-aware chunking."""
-    
+
     # Patterns for code structure
     FUNCTION_PATTERNS = {
-        'python': re.compile(r'^(async\s+)?(def|class)\s+\w+', re.MULTILINE),
-        'javascript': re.compile(r'^(async\s+)?(function|class|const|let|var)\s+\w+', re.MULTILINE),
-        'generic': re.compile(r'^[a-zA-Z_]\w*\s*[({]', re.MULTILINE),
+        "python": re.compile(r"^(async\s+)?(def|class)\s+\w+", re.MULTILINE),
+        "javascript": re.compile(r"^(async\s+)?(function|class|const|let|var)\s+\w+", re.MULTILINE),
+        "generic": re.compile(r"^[a-zA-Z_]\w*\s*[({]", re.MULTILINE),
     }
-    
+
     def __init__(
         self,
         chunk_size: int = 1500,
-        language: str = 'python',
+        language: str = "python",
         preserve_functions: bool = True,
     ):
         """
         Initialize code chunker.
-        
+
         Args:
             chunk_size: Target chunk size
             language: Programming language
@@ -569,34 +573,31 @@ class CodeChunker(BaseChunker):
         self.chunk_size = chunk_size
         self.language = language
         self.preserve_functions = preserve_functions
-        self._pattern = self.FUNCTION_PATTERNS.get(
-            language,
-            self.FUNCTION_PATTERNS['generic']
-        )
-    
+        self._pattern = self.FUNCTION_PATTERNS.get(language, self.FUNCTION_PATTERNS["generic"])
+
     @property
     def name(self) -> str:
         return "code"
-    
+
     def _find_code_blocks(self, text: str) -> List[Tuple[int, int]]:
         """Find code block boundaries."""
         blocks = []
-        
+
         for match in self._pattern.finditer(text):
             start = match.start()
-            
+
             # Find end of block (next block or end of text)
             end = len(text)
-            
+
             # Look for next function/class
             next_match = self._pattern.search(text, match.end())
             if next_match:
                 end = next_match.start()
-            
+
             blocks.append((start, end))
-        
+
         return blocks
-    
+
     def chunk(
         self,
         text: str,
@@ -604,107 +605,115 @@ class CodeChunker(BaseChunker):
     ) -> List[TextChunk]:
         """Split code into chunks."""
         chunks = []
-        
+
         if self.preserve_functions:
             blocks = self._find_code_blocks(text)
-            
+
             if blocks:
                 current_chunk = []
                 current_length = 0
                 index = 0
-                
+
                 for start, end in blocks:
                     block_text = text[start:end].strip()
                     block_len = len(block_text)
-                    
+
                     if current_length + block_len > self.chunk_size and current_chunk:
-                        chunk_text = '\n\n'.join(current_chunk)
+                        chunk_text = "\n\n".join(current_chunk)
                         chunk_metadata = ChunkMetadata(
-                            custom={'language': self.language},
+                            custom={"language": self.language},
                         )
                         if metadata:
                             chunk_metadata.custom.update(metadata)
-                        
-                        chunks.append(TextChunk(
-                            text=chunk_text,
-                            index=index,
-                            metadata=chunk_metadata,
-                        ))
+
+                        chunks.append(
+                            TextChunk(
+                                text=chunk_text,
+                                index=index,
+                                metadata=chunk_metadata,
+                            )
+                        )
                         index += 1
                         current_chunk = []
                         current_length = 0
-                    
+
                     current_chunk.append(block_text)
                     current_length += block_len
-                
+
                 if current_chunk:
-                    chunk_text = '\n\n'.join(current_chunk)
+                    chunk_text = "\n\n".join(current_chunk)
                     chunk_metadata = ChunkMetadata(
-                        custom={'language': self.language},
+                        custom={"language": self.language},
                     )
                     if metadata:
                         chunk_metadata.custom.update(metadata)
-                    
-                    chunks.append(TextChunk(
-                        text=chunk_text,
-                        index=index,
-                        metadata=chunk_metadata,
-                    ))
-                
+
+                    chunks.append(
+                        TextChunk(
+                            text=chunk_text,
+                            index=index,
+                            metadata=chunk_metadata,
+                        )
+                    )
+
                 return chunks
-        
+
         # Fall back to line-based chunking
-        lines = text.split('\n')
+        lines = text.split("\n")
         current_chunk = []
         current_length = 0
         index = 0
-        
+
         for line in lines:
             line_len = len(line) + 1
-            
+
             if current_length + line_len > self.chunk_size and current_chunk:
-                chunk_text = '\n'.join(current_chunk)
+                chunk_text = "\n".join(current_chunk)
                 chunk_metadata = ChunkMetadata(
-                    custom={'language': self.language},
+                    custom={"language": self.language},
                 )
                 if metadata:
                     chunk_metadata.custom.update(metadata)
-                
-                chunks.append(TextChunk(
-                    text=chunk_text,
-                    index=index,
-                    metadata=chunk_metadata,
-                ))
+
+                chunks.append(
+                    TextChunk(
+                        text=chunk_text,
+                        index=index,
+                        metadata=chunk_metadata,
+                    )
+                )
                 index += 1
                 current_chunk = []
                 current_length = 0
-            
+
             current_chunk.append(line)
             current_length += line_len
-        
+
         if current_chunk:
-            chunk_text = '\n'.join(current_chunk)
+            chunk_text = "\n".join(current_chunk)
             chunk_metadata = ChunkMetadata(
-                custom={'language': self.language},
+                custom={"language": self.language},
             )
             if metadata:
                 chunk_metadata.custom.update(metadata)
-            
-            chunks.append(TextChunk(
-                text=chunk_text,
-                index=index,
-                metadata=chunk_metadata,
-            ))
-        
+
+            chunks.append(
+                TextChunk(
+                    text=chunk_text,
+                    index=index,
+                    metadata=chunk_metadata,
+                )
+            )
+
         return chunks
 
 
 class MarkdownChunker(BaseChunker):
     """Markdown-aware chunking."""
-    
-    HEADER_PATTERN = re.compile(r'^(#{1,6})\s+(.+)$', re.MULTILINE)
-    CODE_BLOCK_PATTERN = re.compile(r'```[\s\S]*?```', re.MULTILINE)
-    
+
+    HEADER_PATTERN = re.compile(r"^(#{1,6})\s+(.+)$", re.MULTILINE)
+    CODE_BLOCK_PATTERN = re.compile(r"```[\s\S]*?```", re.MULTILINE)
+
     def __init__(
         self,
         chunk_size: int = 1500,
@@ -713,7 +722,7 @@ class MarkdownChunker(BaseChunker):
     ):
         """
         Initialize markdown chunker.
-        
+
         Args:
             chunk_size: Target chunk size
             respect_headers: Split on headers
@@ -722,39 +731,39 @@ class MarkdownChunker(BaseChunker):
         self.chunk_size = chunk_size
         self.respect_headers = respect_headers
         self.preserve_code_blocks = preserve_code_blocks
-    
+
     @property
     def name(self) -> str:
         return "markdown"
-    
+
     def _extract_sections(self, text: str) -> List[Tuple[str, str, int]]:
         """Extract sections with headers."""
         sections = []
-        
+
         # Find all headers
         headers = list(self.HEADER_PATTERN.finditer(text))
-        
+
         if not headers:
-            return [('', text, 0)]
-        
+            return [("", text, 0)]
+
         for i, match in enumerate(headers):
             header_level = len(match.group(1))
             header_text = match.group(2)
-            
+
             start = match.start()
             end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
-            
+
             section_text = text[start:end].strip()
             sections.append((header_text, section_text, header_level))
-        
+
         # Add any text before first header
         if headers[0].start() > 0:
-            preamble = text[:headers[0].start()].strip()
+            preamble = text[: headers[0].start()].strip()
             if preamble:
-                sections.insert(0, ('', preamble, 0))
-        
+                sections.insert(0, ("", preamble, 0))
+
         return sections
-    
+
     def chunk(
         self,
         text: str,
@@ -762,35 +771,37 @@ class MarkdownChunker(BaseChunker):
     ) -> List[TextChunk]:
         """Split markdown into chunks."""
         chunks = []
-        
+
         if self.respect_headers:
             sections = self._extract_sections(text)
-            
+
             current_chunk = []
             current_length = 0
             index = 0
-            
+
             for header, content, level in sections:
                 content_len = len(content)
-                
+
                 # Large section - split it
                 if content_len > self.chunk_size:
                     # Save current chunk
                     if current_chunk:
-                        chunk_text = '\n\n'.join(current_chunk)
+                        chunk_text = "\n\n".join(current_chunk)
                         chunk_metadata = ChunkMetadata()
                         if metadata:
                             chunk_metadata.custom.update(metadata)
-                        
-                        chunks.append(TextChunk(
-                            text=chunk_text,
-                            index=index,
-                            metadata=chunk_metadata,
-                        ))
+
+                        chunks.append(
+                            TextChunk(
+                                text=chunk_text,
+                                index=index,
+                                metadata=chunk_metadata,
+                            )
+                        )
                         index += 1
                         current_chunk = []
                         current_length = 0
-                    
+
                     # Split large section
                     sub_chunker = ParagraphChunker(
                         max_chunk_size=self.chunk_size,
@@ -801,49 +812,53 @@ class MarkdownChunker(BaseChunker):
                         chunks.append(sub_chunk)
                         index += 1
                     continue
-                
+
                 # Check size
                 if current_length + content_len > self.chunk_size and current_chunk:
-                    chunk_text = '\n\n'.join(current_chunk)
+                    chunk_text = "\n\n".join(current_chunk)
                     chunk_metadata = ChunkMetadata()
                     if metadata:
                         chunk_metadata.custom.update(metadata)
-                    
-                    chunks.append(TextChunk(
-                        text=chunk_text,
-                        index=index,
-                        metadata=chunk_metadata,
-                    ))
+
+                    chunks.append(
+                        TextChunk(
+                            text=chunk_text,
+                            index=index,
+                            metadata=chunk_metadata,
+                        )
+                    )
                     index += 1
                     current_chunk = []
                     current_length = 0
-                
+
                 current_chunk.append(content)
                 current_length += content_len
-            
+
             # Add remaining
             if current_chunk:
-                chunk_text = '\n\n'.join(current_chunk)
+                chunk_text = "\n\n".join(current_chunk)
                 chunk_metadata = ChunkMetadata()
                 if metadata:
                     chunk_metadata.custom.update(metadata)
-                
-                chunks.append(TextChunk(
-                    text=chunk_text,
-                    index=index,
-                    metadata=chunk_metadata,
-                ))
+
+                chunks.append(
+                    TextChunk(
+                        text=chunk_text,
+                        index=index,
+                        metadata=chunk_metadata,
+                    )
+                )
         else:
             # Fall back to paragraph chunking
             para_chunker = ParagraphChunker(max_chunk_size=self.chunk_size)
             chunks = para_chunker.chunk(text, metadata)
-        
+
         return chunks
 
 
 class SlidingWindowChunker(BaseChunker):
     """Sliding window chunking."""
-    
+
     def __init__(
         self,
         window_size: int = 512,
@@ -851,18 +866,18 @@ class SlidingWindowChunker(BaseChunker):
     ):
         """
         Initialize sliding window chunker.
-        
+
         Args:
             window_size: Size of sliding window
             step_size: Step size between windows
         """
         self.window_size = window_size
         self.step_size = step_size
-    
+
     @property
     def name(self) -> str:
         return "sliding_window"
-    
+
     def chunk(
         self,
         text: str,
@@ -870,7 +885,7 @@ class SlidingWindowChunker(BaseChunker):
     ) -> List[TextChunk]:
         """Create sliding window chunks."""
         chunks = []
-        
+
         if len(text) <= self.window_size:
             chunk_metadata = ChunkMetadata(
                 start_char=0,
@@ -878,20 +893,22 @@ class SlidingWindowChunker(BaseChunker):
             )
             if metadata:
                 chunk_metadata.custom.update(metadata)
-            
-            return [TextChunk(
-                text=text,
-                index=0,
-                metadata=chunk_metadata,
-            )]
-        
+
+            return [
+                TextChunk(
+                    text=text,
+                    index=0,
+                    metadata=chunk_metadata,
+                )
+            ]
+
         position = 0
         index = 0
-        
+
         while position < len(text):
             end = min(position + self.window_size, len(text))
             chunk_text = text[position:end]
-            
+
             chunk_metadata = ChunkMetadata(
                 start_char=position,
                 end_char=end,
@@ -900,31 +917,33 @@ class SlidingWindowChunker(BaseChunker):
             )
             if metadata:
                 chunk_metadata.custom.update(metadata)
-            
-            chunks.append(TextChunk(
-                text=chunk_text,
-                index=index,
-                metadata=chunk_metadata,
-            ))
-            
+
+            chunks.append(
+                TextChunk(
+                    text=chunk_text,
+                    index=index,
+                    metadata=chunk_metadata,
+                )
+            )
+
             index += 1
             position += self.step_size
-            
+
             if end >= len(text):
                 break
-        
+
         return chunks
 
 
 class TextChunker:
     """
     Main text chunking interface.
-    
+
     Example:
         >>> # Basic usage
         >>> chunker = TextChunker(strategy="sentence", chunk_size=500)
         >>> chunks = chunker.chunk("Long document text...")
-        >>> 
+        >>>
         >>> # With custom strategy
         >>> chunker = TextChunker(
         ...     strategy="recursive",
@@ -933,17 +952,17 @@ class TextChunker:
         ... )
         >>> chunks = chunker.chunk(text, metadata={"source": "doc.pdf"})
     """
-    
+
     CHUNKERS = {
-        'fixed': FixedSizeChunker,
-        'sentence': SentenceChunker,
-        'paragraph': ParagraphChunker,
-        'recursive': RecursiveChunker,
-        'code': CodeChunker,
-        'markdown': MarkdownChunker,
-        'sliding_window': SlidingWindowChunker,
+        "fixed": FixedSizeChunker,
+        "sentence": SentenceChunker,
+        "paragraph": ParagraphChunker,
+        "recursive": RecursiveChunker,
+        "code": CodeChunker,
+        "markdown": MarkdownChunker,
+        "sliding_window": SlidingWindowChunker,
     }
-    
+
     def __init__(
         self,
         strategy: Union[str, ChunkingStrategy] = "recursive",
@@ -953,7 +972,7 @@ class TextChunker:
     ):
         """
         Initialize text chunker.
-        
+
         Args:
             strategy: Chunking strategy
             chunk_size: Target chunk size
@@ -964,9 +983,9 @@ class TextChunker:
         self.chunk_size = chunk_size
         self.overlap = overlap
         self.kwargs = kwargs
-        
+
         self._chunker = self._create_chunker()
-    
+
     def _create_chunker(self) -> BaseChunker:
         """Create chunker instance."""
         strategy_name = (
@@ -974,30 +993,28 @@ class TextChunker:
             if isinstance(self.strategy, ChunkingStrategy)
             else self.strategy.lower()
         )
-        
+
         if strategy_name not in self.CHUNKERS:
             raise ValueError(f"Unknown strategy: {strategy_name}")
-        
+
         chunker_class = self.CHUNKERS[strategy_name]
-        
+
         # Map common params
-        params = {'chunk_size': self.chunk_size}
-        
-        if strategy_name in ('fixed', 'recursive', 'sliding_window'):
-            params['overlap'] = self.overlap
-        
+        params = {"chunk_size": self.chunk_size}
+
+        if strategy_name in ("fixed", "recursive", "sliding_window"):
+            params["overlap"] = self.overlap
+
         params.update(self.kwargs)
-        
+
         # Filter valid params for chunker
         import inspect
+
         sig = inspect.signature(chunker_class.__init__)
-        valid_params = {
-            k: v for k, v in params.items()
-            if k in sig.parameters
-        }
-        
+        valid_params = {k: v for k, v in params.items() if k in sig.parameters}
+
         return chunker_class(**valid_params)
-    
+
     def chunk(
         self,
         text: str,
@@ -1005,16 +1022,16 @@ class TextChunker:
     ) -> List[TextChunk]:
         """
         Chunk text using configured strategy.
-        
+
         Args:
             text: Text to chunk
             metadata: Optional metadata
-            
+
         Returns:
             List of TextChunk objects
         """
         return self._chunker.chunk(text, metadata)
-    
+
     def chunk_documents(
         self,
         documents: List[Dict[str, Any]],
@@ -1022,37 +1039,38 @@ class TextChunker:
     ) -> List[TextChunk]:
         """
         Chunk multiple documents.
-        
+
         Args:
             documents: List of document dicts
             text_field: Field containing text
-            
+
         Returns:
             List of all chunks
         """
         all_chunks = []
         chunk_index = 0
-        
+
         for doc in documents:
             text = doc.get(text_field, "")
             if not text:
                 continue
-            
+
             # Create metadata from doc
             metadata = {k: v for k, v in doc.items() if k != text_field}
-            
+
             chunks = self.chunk(text, metadata)
-            
+
             # Update global indices
             for chunk in chunks:
                 chunk.index = chunk_index
                 chunk_index += 1
                 all_chunks.append(chunk)
-        
+
         return all_chunks
 
 
 # Convenience functions
+
 
 def chunk_text(
     text: str,
@@ -1061,12 +1079,12 @@ def chunk_text(
 ) -> List[TextChunk]:
     """
     Quick text chunking.
-    
+
     Args:
         text: Text to chunk
         strategy: Chunking strategy
         chunk_size: Target chunk size
-        
+
     Returns:
         List of chunks
     """
@@ -1081,12 +1099,12 @@ def chunk_code(
 ) -> List[TextChunk]:
     """
     Chunk source code.
-    
+
     Args:
         code: Source code
         language: Programming language
         chunk_size: Target chunk size
-        
+
     Returns:
         List of chunks
     """
@@ -1104,13 +1122,503 @@ def chunk_markdown(
 ) -> List[TextChunk]:
     """
     Chunk markdown text.
-    
+
     Args:
         text: Markdown text
         chunk_size: Target chunk size
-        
+
     Returns:
         List of chunks
     """
     chunker = TextChunker(strategy="markdown", chunk_size=chunk_size)
     return chunker.chunk(text)
+
+
+# =============================================================================
+# OPTIMIZATION 1: Proposition-Level Chunking (Dense X Retrieval)
+# Based on: "Dense X Retrieval: What Retrieval Granularity Should We Use?"
+# (Chen et al., 2024) - Microsoft Research
+#
+# Decomposes documents into atomic propositions (single facts) for
+# fine-grained retrieval with 15-25% recall improvement on multi-hop QA.
+# =============================================================================
+
+
+class LLMProtocol(Protocol):
+    """Protocol for LLM interactions."""
+
+    async def generate(self, prompt: str, **kwargs: Any) -> str:
+        """Generate response from prompt."""
+        ...
+
+
+@dataclass
+class Proposition:
+    """An atomic factual proposition extracted from text."""
+
+    text: str
+    source_sentence: str
+    confidence: float = 1.0
+    entities: List[str] = field(default_factory=list)
+    source_chunk_index: int = 0
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class PropositionChunkResult:
+    """Result of proposition-level chunking."""
+
+    propositions: List[Proposition]
+    original_chunks: List[TextChunk]
+    extraction_stats: Dict[str, Any] = field(default_factory=dict)
+
+
+class PropositionChunker(BaseChunker):
+    """
+    Proposition-level chunker using LLM decomposition.
+
+    Decomposes text into atomic factual propositions where each
+    proposition contains exactly one fact and is self-contained.
+
+    This enables fine-grained retrieval that can match specific
+    facts rather than entire paragraphs.
+
+    Example:
+        >>> chunker = PropositionChunker(llm=my_llm)
+        >>> result = await chunker.chunk_to_propositions(
+        ...     "Albert Einstein developed the theory of relativity. "
+        ...     "He was born in Germany in 1879."
+        ... )
+        >>> for prop in result.propositions:
+        ...     print(prop.text)
+        # "Albert Einstein developed the theory of relativity."
+        # "Albert Einstein was born in Germany."
+        # "Albert Einstein was born in 1879."
+
+    References:
+        - Dense X Retrieval (Chen et al., 2024)
+        - Propositionizer (Chen et al., 2023)
+    """
+
+    PROPOSITION_PROMPT = '''Decompose the following text into atomic propositions.
+
+Rules for each proposition:
+1. Contains exactly ONE factual statement
+2. Is self-contained (understandable without external context)
+3. Replaces pronouns with explicit entity names
+4. Splits compound statements into separate propositions
+5. Preserves the original meaning accurately
+
+Text:
+"""
+{text}
+"""
+
+Output each proposition on a new line, prefixed with "- ":
+'''
+
+    DECONTEXTUALIZE_PROMPT = """Make the following sentence self-contained by:
+1. Replacing pronouns (he, she, it, they, etc.) with the actual entity names
+2. Adding necessary context that was in previous sentences
+3. Keeping the factual content unchanged
+
+Previous context: {context}
+
+Sentence to decontextualize: {sentence}
+
+Self-contained sentence:"""
+
+    def __init__(
+        self,
+        llm: Optional[LLMProtocol] = None,
+        base_chunker: Optional[BaseChunker] = None,
+        max_propositions_per_chunk: int = 20,
+        min_proposition_length: int = 10,
+        batch_size: int = 5,
+        decontextualize: bool = True,
+    ):
+        """
+        Initialize proposition chunker.
+
+        Args:
+            llm: Language model for proposition extraction
+            base_chunker: Base chunker for initial text splitting
+            max_propositions_per_chunk: Max propositions to extract per chunk
+            min_proposition_length: Minimum proposition length in chars
+            batch_size: Batch size for LLM calls
+            decontextualize: Whether to decontextualize pronouns
+        """
+        self.llm = llm
+        self.base_chunker = base_chunker or SentenceChunker(
+            max_chunk_size=2000,
+            overlap_sentences=1,
+        )
+        self.max_propositions_per_chunk = max_propositions_per_chunk
+        self.min_proposition_length = min_proposition_length
+        self.batch_size = batch_size
+        self.decontextualize = decontextualize
+
+        # Cache for decontextualized sentences
+        self._decontext_cache: Dict[str, str] = {}
+
+    @property
+    def name(self) -> str:
+        return "proposition"
+
+    def chunk(
+        self,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[TextChunk]:
+        """
+        Synchronous chunking - falls back to base chunker.
+
+        For proposition extraction, use chunk_to_propositions() instead.
+        """
+        return self.base_chunker.chunk(text, metadata)
+
+    async def chunk_to_propositions(
+        self,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> PropositionChunkResult:
+        """
+        Extract atomic propositions from text.
+
+        Args:
+            text: Text to decompose
+            metadata: Optional metadata
+
+        Returns:
+            PropositionChunkResult with extracted propositions
+        """
+        import asyncio
+
+        # First, chunk text into manageable pieces
+        base_chunks = self.base_chunker.chunk(text, metadata)
+
+        all_propositions: List[Proposition] = []
+        extraction_stats = {
+            "total_chunks": len(base_chunks),
+            "total_propositions": 0,
+            "avg_propositions_per_chunk": 0.0,
+            "llm_calls": 0,
+        }
+
+        # Process chunks in batches
+        for i in range(0, len(base_chunks), self.batch_size):
+            batch = base_chunks[i : i + self.batch_size]
+
+            # Extract propositions from each chunk in parallel
+            tasks = [self._extract_propositions(chunk, chunk.index) for chunk in batch]
+            batch_results = await asyncio.gather(*tasks)
+
+            for props in batch_results:
+                all_propositions.extend(props)
+                extraction_stats["llm_calls"] += 1
+
+        extraction_stats["total_propositions"] = len(all_propositions)
+        extraction_stats["avg_propositions_per_chunk"] = len(all_propositions) / max(
+            1, len(base_chunks)
+        )
+
+        return PropositionChunkResult(
+            propositions=all_propositions,
+            original_chunks=base_chunks,
+            extraction_stats=extraction_stats,
+        )
+
+    async def _extract_propositions(
+        self,
+        chunk: TextChunk,
+        chunk_index: int,
+    ) -> List[Proposition]:
+        """Extract propositions from a single chunk."""
+        if not self.llm:
+            # Fallback: split by sentences
+            return self._fallback_extraction(chunk, chunk_index)
+
+        prompt = self.PROPOSITION_PROMPT.format(text=chunk.text)
+        response = await self.llm.generate(prompt, temperature=0.0)
+
+        propositions = []
+        for line in response.strip().split("\n"):
+            line = line.strip()
+            if line.startswith("- "):
+                prop_text = line[2:].strip()
+            elif line.startswith("-"):
+                prop_text = line[1:].strip()
+            else:
+                prop_text = line
+
+            if len(prop_text) >= self.min_proposition_length:
+                prop = Proposition(
+                    text=prop_text,
+                    source_sentence=chunk.text[:200],
+                    source_chunk_index=chunk_index,
+                    entities=self._extract_entities(prop_text),
+                )
+                propositions.append(prop)
+
+            if len(propositions) >= self.max_propositions_per_chunk:
+                break
+
+        return propositions
+
+    def _fallback_extraction(
+        self,
+        chunk: TextChunk,
+        chunk_index: int,
+    ) -> List[Proposition]:
+        """Fallback extraction using sentence splitting."""
+        sentences = re.split(r"(?<=[.!?])\s+", chunk.text)
+        propositions = []
+
+        for sentence in sentences:
+            sentence = sentence.strip()
+            if len(sentence) >= self.min_proposition_length:
+                prop = Proposition(
+                    text=sentence,
+                    source_sentence=sentence,
+                    source_chunk_index=chunk_index,
+                    confidence=0.7,  # Lower confidence for fallback
+                )
+                propositions.append(prop)
+
+        return propositions
+
+    def _extract_entities(self, text: str) -> List[str]:
+        """Extract potential named entities from text."""
+        # Simple heuristic: capitalized words that aren't sentence starters
+        words = text.split()
+        entities = []
+
+        for i, word in enumerate(words):
+            # Skip first word (might be capitalized due to sentence start)
+            if i == 0:
+                continue
+            # Check if word is capitalized and not a common word
+            clean_word = re.sub(r"[^\w]", "", word)
+            if clean_word and clean_word[0].isupper() and len(clean_word) > 2:
+                entities.append(clean_word)
+
+        return list(set(entities))
+
+    async def decontextualize_proposition(
+        self,
+        proposition: str,
+        context: str,
+    ) -> str:
+        """
+        Make a proposition self-contained by resolving pronouns.
+
+        Args:
+            proposition: The proposition to decontextualize
+            context: Previous context for reference resolution
+
+        Returns:
+            Self-contained proposition
+        """
+        cache_key = f"{proposition[:50]}:{context[:50]}"
+        if cache_key in self._decontext_cache:
+            return self._decontext_cache[cache_key]
+
+        if not self.llm:
+            return proposition
+
+        prompt = self.DECONTEXTUALIZE_PROMPT.format(
+            context=context[:500],
+            sentence=proposition,
+        )
+        result = await self.llm.generate(prompt, temperature=0.0)
+        result = result.strip()
+
+        self._decontext_cache[cache_key] = result
+        return result
+
+    def propositions_to_chunks(
+        self,
+        propositions: List[Proposition],
+    ) -> List[TextChunk]:
+        """
+        Convert propositions back to TextChunk format for retrieval.
+
+        Args:
+            propositions: List of propositions
+
+        Returns:
+            List of TextChunks (one per proposition)
+        """
+        chunks = []
+        for i, prop in enumerate(propositions):
+            chunk = TextChunk(
+                text=prop.text,
+                index=i,
+                metadata=ChunkMetadata(
+                    custom={
+                        "type": "proposition",
+                        "source_chunk": prop.source_chunk_index,
+                        "entities": prop.entities,
+                        "confidence": prop.confidence,
+                    }
+                ),
+            )
+            chunks.append(chunk)
+        return chunks
+
+
+class HierarchicalPropositionChunker(BaseChunker):
+    """
+    Hierarchical chunking with propositions at leaf level.
+
+    Creates a tree structure:
+    - Document → Sections → Paragraphs → Propositions
+
+    Enables both coarse and fine-grained retrieval.
+    """
+
+    def __init__(
+        self,
+        llm: Optional[LLMProtocol] = None,
+        section_chunker: Optional[BaseChunker] = None,
+        paragraph_chunker: Optional[BaseChunker] = None,
+        proposition_chunker: Optional[PropositionChunker] = None,
+    ):
+        """Initialize hierarchical chunker."""
+        self.llm = llm
+        self.section_chunker = section_chunker or MarkdownChunker(
+            chunk_size=5000, preserve_hierarchy=True
+        )
+        self.paragraph_chunker = paragraph_chunker or ParagraphChunker(max_chunk_size=1000)
+        self.proposition_chunker = proposition_chunker or PropositionChunker(llm=llm)
+
+    @property
+    def name(self) -> str:
+        return "hierarchical_proposition"
+
+    def chunk(
+        self,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[TextChunk]:
+        """Chunk text hierarchically (sync version)."""
+        # For sync, just use paragraph chunking
+        return self.paragraph_chunker.chunk(text, metadata)
+
+    async def chunk_hierarchical(
+        self,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, List[TextChunk]]:
+        """
+        Create hierarchical chunks at multiple granularities.
+
+        Returns:
+            Dict with keys 'sections', 'paragraphs', 'propositions'
+        """
+        result: Dict[str, List[TextChunk]] = {
+            "sections": [],
+            "paragraphs": [],
+            "propositions": [],
+        }
+
+        # Level 1: Sections
+        sections = self.section_chunker.chunk(text, metadata)
+        result["sections"] = sections
+
+        # Level 2: Paragraphs within sections
+        all_paragraphs = []
+        for section in sections:
+            paragraphs = self.paragraph_chunker.chunk(
+                section.text,
+                {"parent_section": section.index},
+            )
+            all_paragraphs.extend(paragraphs)
+        result["paragraphs"] = all_paragraphs
+
+        # Level 3: Propositions from paragraphs
+        prop_result = await self.proposition_chunker.chunk_to_propositions(text, metadata)
+        result["propositions"] = self.proposition_chunker.propositions_to_chunks(
+            prop_result.propositions
+        )
+
+        return result
+
+
+# Reference existing chunkers for HierarchicalPropositionChunker
+class MarkdownChunker(BaseChunker):
+    """Placeholder reference to existing MarkdownChunker."""
+
+    def __init__(self, chunk_size: int = 5000, preserve_hierarchy: bool = True):
+        self.chunk_size = chunk_size
+        self.preserve_hierarchy = preserve_hierarchy
+
+    @property
+    def name(self) -> str:
+        return "markdown"
+
+    def chunk(
+        self,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[TextChunk]:
+        # Use recursive chunker as fallback
+        chunker = RecursiveChunker(chunk_size=self.chunk_size)
+        return chunker.chunk(text, metadata)
+
+
+class ParagraphChunker(BaseChunker):
+    """Paragraph-based chunker."""
+
+    PARAGRAPH_SPLIT = re.compile(r"\n\s*\n")
+
+    def __init__(self, max_chunk_size: int = 1000):
+        self.max_chunk_size = max_chunk_size
+
+    @property
+    def name(self) -> str:
+        return "paragraph"
+
+    def chunk(
+        self,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[TextChunk]:
+        paragraphs = self.PARAGRAPH_SPLIT.split(text)
+        chunks = []
+
+        for i, para in enumerate(paragraphs):
+            para = para.strip()
+            if not para:
+                continue
+
+            chunk_metadata = ChunkMetadata(custom=metadata or {})
+            chunks.append(
+                TextChunk(
+                    text=para[: self.max_chunk_size],
+                    index=i,
+                    metadata=chunk_metadata,
+                )
+            )
+
+        return chunks
+
+
+class RecursiveChunker(BaseChunker):
+    """Placeholder for recursive chunker reference."""
+
+    def __init__(self, chunk_size: int = 1000):
+        self.chunk_size = chunk_size
+
+    @property
+    def name(self) -> str:
+        return "recursive"
+
+    def chunk(
+        self,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[TextChunk]:
+        # Simple fixed-size fallback
+        chunker = FixedSizeChunker(chunk_size=self.chunk_size, overlap=100)
+        return chunker.chunk(text, metadata)
