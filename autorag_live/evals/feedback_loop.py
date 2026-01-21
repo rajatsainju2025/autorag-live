@@ -22,14 +22,18 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import logging
+import math
+import random
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional, Protocol, Tuple
+from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple, TypeVar
 
 logger = logging.getLogger(__name__)
+
+T = TypeVar("T")
 
 
 # =============================================================================
@@ -873,3 +877,482 @@ async def collect_and_update(
     loop.record_rating(query, response, documents, rating)
     result = await loop.maybe_update()
     return result or {"status": "recorded"}
+
+
+# =============================================================================
+# OPTIMIZATION 8: Online Contextual Bandit for RAG Component Selection
+# Based on: "Contextual Bandits for Adaptive RAG" and
+# "LinUCB: A Contextual Bandit Approach" (Li et al., 2010)
+#
+# Implements online learning for:
+# 1. Retriever selection based on query context
+# 2. Reranker adaptation with feedback
+# 3. Exploration-exploitation balance using UCB
+# 4. Non-stationary adaptation for concept drift
+# =============================================================================
+
+
+@dataclass
+class Arm:
+    """An arm (option) in the bandit problem."""
+
+    name: str
+    component: Any  # The actual retriever/reranker/etc
+    feature_dim: int = 10
+
+    # LinUCB parameters
+    A: Optional[List[List[float]]] = None  # d x d matrix
+    b: Optional[List[float]] = None  # d x 1 vector
+    theta: Optional[List[float]] = None  # Learned weights
+
+    # Statistics
+    pulls: int = 0
+    total_reward: float = 0.0
+    avg_reward: float = 0.0
+
+    def __post_init__(self):
+        """Initialize LinUCB matrices."""
+        if self.A is None:
+            # Identity matrix
+            self.A = [
+                [1.0 if i == j else 0.0 for j in range(self.feature_dim)]
+                for i in range(self.feature_dim)
+            ]
+        if self.b is None:
+            self.b = [0.0] * self.feature_dim
+        if self.theta is None:
+            self.theta = [0.0] * self.feature_dim
+
+
+@dataclass
+class BanditContext:
+    """Context features for bandit decision."""
+
+    features: List[float]
+    query: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class BanditDecision:
+    """A decision made by the bandit."""
+
+    arm: str
+    predicted_reward: float
+    ucb_score: float
+    exploration_bonus: float
+    context_features: List[float] = field(default_factory=list)
+
+
+@dataclass
+class BanditReward:
+    """Reward feedback for a bandit decision."""
+
+    arm: str
+    reward: float
+    context: BanditContext
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
+class ContextualBandit(ABC):
+    """Abstract base class for contextual bandits."""
+
+    @abstractmethod
+    def select(self, context: BanditContext) -> BanditDecision:
+        """Select an arm given context."""
+        pass
+
+    @abstractmethod
+    def update(self, reward: BanditReward) -> None:
+        """Update from reward feedback."""
+        pass
+
+
+class LinUCB(ContextualBandit):
+    """
+    Linear Upper Confidence Bound bandit.
+
+    Implements LinUCB algorithm for contextual bandits with
+    linear reward models and UCB-style exploration.
+
+    Example:
+        >>> bandit = LinUCB(alpha=1.0, feature_dim=10)
+        >>> bandit.add_arm("dense_retriever", dense_retriever)
+        >>> bandit.add_arm("sparse_retriever", sparse_retriever)
+        >>> decision = bandit.select(context)
+        >>> # Use decision.arm
+        >>> bandit.update(BanditReward(arm=decision.arm, reward=0.8, context=context))
+    """
+
+    def __init__(
+        self,
+        alpha: float = 1.0,
+        feature_dim: int = 10,
+        decay_rate: float = 0.0,
+    ):
+        """
+        Initialize LinUCB bandit.
+
+        Args:
+            alpha: Exploration parameter (higher = more exploration)
+            feature_dim: Dimension of context features
+            decay_rate: Discount for non-stationarity (0 = none)
+        """
+        self.alpha = alpha
+        self.feature_dim = feature_dim
+        self.decay_rate = decay_rate
+
+        self.arms: Dict[str, Arm] = {}
+
+        # Statistics
+        self._stats = {
+            "total_selections": 0,
+            "selections_per_arm": defaultdict(int),
+            "rewards_per_arm": defaultdict(list),
+        }
+
+    def add_arm(self, name: str, component: Any) -> None:
+        """Add an arm to the bandit."""
+        self.arms[name] = Arm(
+            name=name,
+            component=component,
+            feature_dim=self.feature_dim,
+        )
+
+    def select(self, context: BanditContext) -> BanditDecision:
+        """
+        Select arm using LinUCB.
+
+        Args:
+            context: Context features
+
+        Returns:
+            BanditDecision with selected arm
+        """
+        if not self.arms:
+            raise ValueError("No arms registered")
+
+        best_arm = None
+        best_ucb = float("-inf")
+        best_pred = 0.0
+        best_bonus = 0.0
+
+        x = context.features
+        if len(x) != self.feature_dim:
+            # Pad or truncate
+            x = (x + [0.0] * self.feature_dim)[: self.feature_dim]
+
+        for arm_name, arm in self.arms.items():
+            # Compute A^-1
+            A_inv = self._matrix_inverse(arm.A)
+
+            # Compute theta = A^-1 * b
+            theta = self._matrix_vector_mult(A_inv, arm.b)
+
+            # Predicted reward: theta^T * x
+            pred_reward = sum(t * xi for t, xi in zip(theta, x))
+
+            # UCB bonus: alpha * sqrt(x^T * A^-1 * x)
+            Ax = self._matrix_vector_mult(A_inv, x)
+            variance = sum(xi * axi for xi, axi in zip(x, Ax))
+            bonus = self.alpha * math.sqrt(max(0, variance))
+
+            ucb = pred_reward + bonus
+
+            if ucb > best_ucb:
+                best_ucb = ucb
+                best_arm = arm_name
+                best_pred = pred_reward
+                best_bonus = bonus
+
+        self._stats["total_selections"] += 1
+        self._stats["selections_per_arm"][best_arm] += 1
+
+        return BanditDecision(
+            arm=best_arm,
+            predicted_reward=best_pred,
+            ucb_score=best_ucb,
+            exploration_bonus=best_bonus,
+            context_features=x,
+        )
+
+    def update(self, reward: BanditReward) -> None:
+        """
+        Update arm parameters from reward.
+
+        Args:
+            reward: Reward feedback
+        """
+        if reward.arm not in self.arms:
+            return
+
+        arm = self.arms[reward.arm]
+        x = reward.context.features
+        if len(x) != self.feature_dim:
+            x = (x + [0.0] * self.feature_dim)[: self.feature_dim]
+
+        r = reward.reward
+
+        # Apply decay for non-stationarity
+        if self.decay_rate > 0:
+            decay = 1 - self.decay_rate
+            arm.A = [[decay * a for a in row] for row in arm.A]
+            arm.b = [decay * b for b in arm.b]
+
+            # Re-add identity for stability
+            for i in range(self.feature_dim):
+                arm.A[i][i] += self.decay_rate
+
+        # Update A = A + x * x^T
+        for i in range(self.feature_dim):
+            for j in range(self.feature_dim):
+                arm.A[i][j] += x[i] * x[j]
+
+        # Update b = b + r * x
+        for i in range(self.feature_dim):
+            arm.b[i] += r * x[i]
+
+        # Update statistics
+        arm.pulls += 1
+        arm.total_reward += r
+        arm.avg_reward = arm.total_reward / arm.pulls
+
+        self._stats["rewards_per_arm"][reward.arm].append(r)
+
+    def _matrix_inverse(self, A: List[List[float]]) -> List[List[float]]:
+        """Compute matrix inverse using Gaussian elimination."""
+        n = len(A)
+        # Augment with identity
+        aug = [row[:] + [1.0 if i == j else 0.0 for j in range(n)] for i, row in enumerate(A)]
+
+        # Forward elimination
+        for i in range(n):
+            # Find pivot
+            max_row = i
+            for k in range(i + 1, n):
+                if abs(aug[k][i]) > abs(aug[max_row][i]):
+                    max_row = k
+            aug[i], aug[max_row] = aug[max_row], aug[i]
+
+            # Check for singularity
+            if abs(aug[i][i]) < 1e-10:
+                aug[i][i] = 1e-10
+
+            # Eliminate column
+            for k in range(i + 1, n):
+                factor = aug[k][i] / aug[i][i]
+                for j in range(2 * n):
+                    aug[k][j] -= factor * aug[i][j]
+
+        # Back substitution
+        for i in range(n - 1, -1, -1):
+            for k in range(i - 1, -1, -1):
+                factor = aug[k][i] / aug[i][i]
+                for j in range(2 * n):
+                    aug[k][j] -= factor * aug[i][j]
+
+        # Normalize and extract inverse
+        result = []
+        for i in range(n):
+            row = []
+            for j in range(n, 2 * n):
+                row.append(aug[i][j] / aug[i][i])
+            result.append(row)
+
+        return result
+
+    def _matrix_vector_mult(self, A: List[List[float]], x: List[float]) -> List[float]:
+        """Multiply matrix by vector."""
+        return [sum(a * xi for a, xi in zip(row, x)) for row in A]
+
+    def get_component(self, arm: str) -> Any:
+        """Get component for an arm."""
+        return self.arms[arm].component if arm in self.arms else None
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get bandit statistics."""
+        return {
+            **self._stats,
+            "arm_stats": {
+                name: {"pulls": arm.pulls, "avg_reward": arm.avg_reward}
+                for name, arm in self.arms.items()
+            },
+        }
+
+
+class RAGComponentBandit:
+    """
+    Bandit-based component selection for RAG pipelines.
+
+    Uses LinUCB to select between multiple retrievers, rerankers,
+    or other components based on query context.
+    """
+
+    def __init__(
+        self,
+        feature_extractor: Optional[Callable[[str], List[float]]] = None,
+        alpha: float = 1.0,
+        feature_dim: int = 10,
+    ):
+        """
+        Initialize RAG component bandit.
+
+        Args:
+            feature_extractor: Function to extract features from query
+            alpha: Exploration parameter
+            feature_dim: Feature dimension
+        """
+        self.feature_extractor = feature_extractor or self._default_features
+        self.feature_dim = feature_dim
+
+        # Separate bandits for different component types
+        self.retriever_bandit = LinUCB(alpha=alpha, feature_dim=feature_dim)
+        self.reranker_bandit = LinUCB(alpha=alpha, feature_dim=feature_dim)
+
+    def add_retriever(self, name: str, retriever: Any) -> None:
+        """Add a retriever option."""
+        self.retriever_bandit.add_arm(name, retriever)
+
+    def add_reranker(self, name: str, reranker: Any) -> None:
+        """Add a reranker option."""
+        self.reranker_bandit.add_arm(name, reranker)
+
+    def select_retriever(self, query: str) -> Tuple[str, Any]:
+        """
+        Select retriever for query.
+
+        Args:
+            query: User query
+
+        Returns:
+            Tuple of (retriever_name, retriever_component)
+        """
+        features = self.feature_extractor(query)
+        context = BanditContext(features=features, query=query)
+
+        decision = self.retriever_bandit.select(context)
+        component = self.retriever_bandit.get_component(decision.arm)
+
+        return decision.arm, component
+
+    def select_reranker(self, query: str) -> Tuple[str, Any]:
+        """
+        Select reranker for query.
+
+        Args:
+            query: User query
+
+        Returns:
+            Tuple of (reranker_name, reranker_component)
+        """
+        features = self.feature_extractor(query)
+        context = BanditContext(features=features, query=query)
+
+        decision = self.reranker_bandit.select(context)
+        component = self.reranker_bandit.get_component(decision.arm)
+
+        return decision.arm, component
+
+    def update_retriever(self, query: str, retriever_name: str, reward: float) -> None:
+        """Update retriever selection from feedback."""
+        features = self.feature_extractor(query)
+        context = BanditContext(features=features, query=query)
+
+        self.retriever_bandit.update(
+            BanditReward(arm=retriever_name, reward=reward, context=context)
+        )
+
+    def update_reranker(self, query: str, reranker_name: str, reward: float) -> None:
+        """Update reranker selection from feedback."""
+        features = self.feature_extractor(query)
+        context = BanditContext(features=features, query=query)
+
+        self.reranker_bandit.update(BanditReward(arm=reranker_name, reward=reward, context=context))
+
+    def _default_features(self, query: str) -> List[float]:
+        """Extract default features from query."""
+        # Simple feature extraction
+        words = query.lower().split()
+
+        features = [
+            len(query) / 100,  # Normalized length
+            len(words) / 20,  # Normalized word count
+            query.count("?") / 3,  # Question marks
+            query.count(",") / 5,  # Complexity indicator
+            1.0 if any(w in query.lower() for w in ["how", "why", "explain"]) else 0.0,
+            1.0 if any(w in query.lower() for w in ["what", "who", "when", "where"]) else 0.0,
+            1.0 if any(w in query.lower() for w in ["compare", "difference", "vs"]) else 0.0,
+            sum(1 for c in query if c.isupper()) / max(1, len(query)),  # Caps ratio
+            len(set(words)) / max(1, len(words)),  # Vocabulary diversity
+            1.0 if len(words) > 10 else 0.0,  # Long query indicator
+        ]
+
+        return features[: self.feature_dim]
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Get bandit statistics."""
+        return {
+            "retriever_bandit": self.retriever_bandit.get_stats(),
+            "reranker_bandit": self.reranker_bandit.get_stats(),
+        }
+
+
+class EpsilonGreedy(ContextualBandit):
+    """
+    Simple epsilon-greedy bandit for comparison.
+
+    Explores with probability epsilon, otherwise exploits best arm.
+    """
+
+    def __init__(self, epsilon: float = 0.1):
+        """Initialize epsilon-greedy bandit."""
+        self.epsilon = epsilon
+        self.arms: Dict[str, Arm] = {}
+
+    def add_arm(self, name: str, component: Any) -> None:
+        """Add an arm."""
+        self.arms[name] = Arm(name=name, component=component)
+
+    def select(self, context: BanditContext) -> BanditDecision:
+        """Select arm using epsilon-greedy."""
+        if random.random() < self.epsilon:
+            # Explore
+            arm_name = random.choice(list(self.arms.keys()))
+        else:
+            # Exploit
+            arm_name = max(self.arms.keys(), key=lambda a: self.arms[a].avg_reward)
+
+        arm = self.arms[arm_name]
+        return BanditDecision(
+            arm=arm_name,
+            predicted_reward=arm.avg_reward,
+            ucb_score=arm.avg_reward,
+            exploration_bonus=0.0,
+        )
+
+    def update(self, reward: BanditReward) -> None:
+        """Update arm statistics."""
+        if reward.arm not in self.arms:
+            return
+
+        arm = self.arms[reward.arm]
+        arm.pulls += 1
+        arm.total_reward += reward.reward
+        arm.avg_reward = arm.total_reward / arm.pulls
+
+
+def create_rag_bandit(
+    alpha: float = 1.0,
+    feature_dim: int = 10,
+) -> RAGComponentBandit:
+    """
+    Create a RAG component bandit.
+
+    Args:
+        alpha: Exploration parameter
+        feature_dim: Feature dimension
+
+    Returns:
+        Configured RAGComponentBandit
+    """
+    return RAGComponentBandit(alpha=alpha, feature_dim=feature_dim)
