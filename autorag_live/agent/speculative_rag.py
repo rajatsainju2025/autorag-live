@@ -735,6 +735,7 @@ class SpeculativeRetrievalManager:
         retriever: RetrieverProtocol,
         predictor: Optional[QueryPredictor] = None,
         cache_size: int = 100,
+        enable_prefetch_warming: bool = True,
     ):
         """
         Initialize manager.
@@ -743,12 +744,15 @@ class SpeculativeRetrievalManager:
             retriever: Document retriever
             predictor: Query predictor
             cache_size: Maximum cached results
+            enable_prefetch_warming: Enable intelligent cache warming
         """
         self.retriever = retriever
         self.predictor = predictor or QueryPredictor()
         self.cache_size = cache_size
+        self.enable_prefetch_warming = enable_prefetch_warming
         self._cache: Dict[str, List[Dict[str, Any]]] = {}
         self._pending: Dict[str, asyncio.Task] = {}
+        self._query_patterns: Dict[str, int] = {}  # Track query frequency
 
     async def retrieve_with_speculation(
         self,
@@ -773,8 +777,17 @@ class SpeculativeRetrievalManager:
             docs = await self.retriever.retrieve(query, top_k=top_k)
             self._cache_result(cache_key, docs)
 
+        # Track query for pattern learning
+        self._query_patterns[cache_key] = self._query_patterns.get(cache_key, 0) + 1
+
         # Predict and pre-fetch in background
         predicted = await self.predictor.predict(query, num_predictions=3)
+
+        # Add pattern-based predictions if enabled
+        if self.enable_prefetch_warming:
+            pattern_queries = self._get_pattern_predictions(cache_key, top_n=2)
+            predicted.extend(pattern_queries)
+
         self._start_prefetch(predicted, top_k)
 
         speculation = RetrievalSpeculation(
@@ -783,6 +796,33 @@ class SpeculativeRetrievalManager:
         )
 
         return docs, speculation
+
+    def _get_pattern_predictions(self, query_key: str, top_n: int = 2) -> List[str]:
+        """Get pattern-based query predictions from historical data."""
+        # Get most frequent queries that aren't already cached
+        sorted_patterns = sorted(self._query_patterns.items(), key=lambda x: x[1], reverse=True)
+
+        predictions = []
+        for pattern_key, _ in sorted_patterns:
+            if pattern_key != query_key and pattern_key not in self._cache:
+                predictions.append(pattern_key)
+                if len(predictions) >= top_n:
+                    break
+
+        return predictions
+
+    def warm_cache(self, common_queries: List[str], top_k: int = 5) -> None:
+        """
+        Warm cache with common queries.
+
+        Args:
+            common_queries: List of frequent queries to pre-cache
+            top_k: Documents per query
+        """
+        for query in common_queries:
+            key = self._cache_key(query)
+            if key not in self._cache:
+                self._start_prefetch([query], top_k)
 
     def _cache_key(self, query: str) -> str:
         """Generate cache key."""
