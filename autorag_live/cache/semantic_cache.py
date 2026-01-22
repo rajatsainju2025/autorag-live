@@ -6,6 +6,7 @@ queries and reuses embeddings from cached results, reducing redundant computatio
 Features:
     - Levenshtein distance-based fuzzy matching
     - Embedding-based cosine similarity lookup
+    - Bloom filter for O(1) negative cache lookups
     - Configurable similarity threshold
     - Thread-safe and async-safe cache operations
     - Automatic cache eviction when full (LRU)
@@ -18,8 +19,8 @@ Example:
     >>> cache = SemanticQueryCache(threshold=0.9)
     >>> similar_query = cache.find_similar("original query", all_queries)
 
-    >>> # Embedding-based similarity
-    >>> embed_cache = EmbeddingSemanticCache(embedder, threshold=0.95)
+    >>> # Embedding-based similarity with Bloom filter
+    >>> embed_cache = EmbeddingSemanticCache(embedder, threshold=0.95, use_bloom=True)
     >>> result = await embed_cache.get_or_compute("What is ML?", compute_fn)
 """
 
@@ -40,6 +41,53 @@ logger = logging.getLogger(__name__)
 
 # Type variable for generic cache values
 T = TypeVar("T")
+
+
+class BloomFilter:
+    """
+    Space-efficient probabilistic data structure for set membership testing.
+
+    Enables O(1) negative cache lookups with very low memory overhead.
+    """
+
+    def __init__(self, size: int = 10000, num_hashes: int = 3):
+        """
+        Initialize Bloom filter.
+
+        Args:
+            size: Bit array size
+            num_hashes: Number of hash functions
+        """
+        self.size = size
+        self.num_hashes = num_hashes
+        self.bit_array = [False] * size
+
+    def _hashes(self, item: str) -> List[int]:
+        """Generate multiple hash values for an item."""
+        hashes = []
+        for i in range(self.num_hashes):
+            # Use MD5 with different salts
+            h = hashlib.md5(f"{item}:{i}".encode()).hexdigest()
+            hashes.append(int(h, 16) % self.size)
+        return hashes
+
+    def add(self, item: str) -> None:
+        """Add item to filter."""
+        for h in self._hashes(item):
+            self.bit_array[h] = True
+
+    def contains(self, item: str) -> bool:
+        """
+        Check if item might be in set.
+
+        Returns:
+            True if possibly present, False if definitely not present
+        """
+        return all(self.bit_array[h] for h in self._hashes(item))
+
+    def clear(self) -> None:
+        """Clear the filter."""
+        self.bit_array = [False] * self.size
 
 
 def levenshtein_distance(s1: str, s2: str) -> int:
@@ -104,13 +152,14 @@ def similarity_ratio(s1: str, s2: str) -> float:
 
 
 class SemanticQueryCache:
-    """Thread-safe semantic query cache with fuzzy matching."""
+    """Thread-safe semantic query cache with fuzzy matching and Bloom filter."""
 
     def __init__(
         self,
         max_size: int = 256,
         threshold: float = 0.85,
         ttl_seconds: Optional[float] = None,
+        use_bloom: bool = True,
     ):
         """Initialize semantic query cache.
 
@@ -118,10 +167,12 @@ class SemanticQueryCache:
             max_size: Maximum number of cached queries
             threshold: Similarity threshold for fuzzy matching (0-1)
             ttl_seconds: Time-to-live for cache entries (None = no expiration)
+            use_bloom: Enable Bloom filter for fast negative lookups
         """
         self.max_size = max_size
         self.threshold = threshold
         self.ttl_seconds = ttl_seconds
+        self.use_bloom = use_bloom
 
         # Cache: query -> embedding
         self.cache: "OrderedDict[str, np.ndarray]" = OrderedDict()
@@ -129,9 +180,16 @@ class SemanticQueryCache:
         self.metadata: dict = {}
         self.lock = threading.RLock()
 
+        # Bloom filter for O(1) negative lookups
+        if use_bloom:
+            self.bloom = BloomFilter(size=max_size * 10, num_hashes=3)
+        else:
+            self.bloom = None
+
         self.hits = 0
         self.misses = 0
         self.fuzzy_hits = 0
+        self.bloom_rejections = 0
 
     @staticmethod
     def _make_key(query: str) -> str:
@@ -147,6 +205,12 @@ class SemanticQueryCache:
         Returns:
             Cached embedding or None
         """
+        # Fast negative lookup with Bloom filter
+        if self.bloom and not self.bloom.contains(query):
+            self.bloom_rejections += 1
+            self.misses += 1
+            return None
+
         with self.lock:
             key = self._make_key(query)
             if key in self.cache:
@@ -218,6 +282,10 @@ class SemanticQueryCache:
 
         with self.lock:
             key = self._make_key(query)
+
+            # Add to Bloom filter
+            if self.bloom:
+                self.bloom.add(query)
 
             # Remove old entry if exists
             if key in self.cache:
