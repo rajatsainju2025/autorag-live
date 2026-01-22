@@ -293,6 +293,74 @@ class AgenticRAGPipeline:
 
         return response
 
+    def process_query_stream(self, query: str):
+        """
+        Process query with streaming response generation.
+
+        Yields tokens as they're generated for lower perceived latency.
+
+        Args:
+            query: User query
+
+        Yields:
+            Token strings as they're generated
+        """
+        from autorag_live.agent.streaming import StreamEvent, StreamEventType
+
+        # Yield start event
+        yield StreamEvent(event_type=StreamEventType.START, content="", metadata={"query": query})
+
+        # Add to memory
+        self.memory.add_message("user", query)
+
+        # Step 1: Reasoning (yield thinking updates)
+        yield StreamEvent(
+            event_type=StreamEventType.THINKING, content="Analyzing query complexity..."
+        )
+        _ = self.reasoner.reason_about_query(query)
+
+        # Step 2: Planning
+        yield StreamEvent(
+            event_type=StreamEventType.THINKING, content="Planning retrieval strategy..."
+        )
+        _ = self.reasoner.generate_action_plan(query)
+
+        # Step 3: Retrieval (yield progress)
+        yield StreamEvent(
+            event_type=StreamEventType.ACTION, content="Retrieving relevant documents..."
+        )
+        retrieved_docs = self._execute_retrieval(query)
+
+        yield StreamEvent(
+            event_type=StreamEventType.OBSERVATION,
+            content=f"Retrieved {len(retrieved_docs)} documents",
+        )
+
+        # Step 4: Stream answer generation
+        answer_parts = []
+        answer = self.synthesizer.synthesize(query, retrieved_docs)
+
+        # Simulate streaming by yielding chunks
+        # In production, this would use an actual streaming LLM
+        chunk_size = max(1, len(answer) // 20)
+        for i in range(0, len(answer), chunk_size):
+            chunk = answer[i : i + chunk_size]
+            answer_parts.append(chunk)
+            yield StreamEvent(event_type=StreamEventType.TOKEN, content=chunk)
+
+        # Yield completion
+        full_answer = "".join(answer_parts)
+        self.memory.add_message("assistant", full_answer)
+
+        yield StreamEvent(
+            event_type=StreamEventType.COMPLETE,
+            content="",
+            metadata={
+                "sources": len(retrieved_docs),
+                "confidence": self._calculate_confidence(retrieved_docs),
+            },
+        )
+
     def _execute_retrieval(self, query: str) -> List[RetrievalResult]:
         """Execute retrieval phase."""
         try:
