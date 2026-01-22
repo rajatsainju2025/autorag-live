@@ -947,16 +947,18 @@ class AdvancedRetrieverPipeline:
         self.embedder = embedder
         self.default_strategy = default_strategy
 
-        # Initialize advanced retrievers
+        # Initialize advanced retrievers lazily
         self._speculative: Optional[SpeculativeRetriever] = None
         self._iterative: Optional[IterativeRetriever] = None
         self._agentic: Optional[AgenticRetriever] = None
         self._colbert: Optional[ColBERTRetriever] = None
-
-        self._setup_retrievers()
+        self._initialized = False
 
     def _setup_retrievers(self) -> None:
-        """Setup advanced retriever instances."""
+        """Setup advanced retriever instances (lazy initialization)."""
+        if self._initialized:
+            return
+
         base_retriever = self.dense_retriever or self.sparse_retriever
 
         if base_retriever and self.llm:
@@ -974,6 +976,32 @@ class AdvancedRetrieverPipeline:
 
         if self.embedder:
             self._colbert = ColBERTRetriever(self.embedder)
+
+        self._initialized = True
+
+    def _get_speculative(self) -> Optional[SpeculativeRetriever]:
+        """Lazy-load speculative retriever."""
+        if not self._initialized:
+            self._setup_retrievers()
+        return self._speculative
+
+    def _get_iterative(self) -> Optional[IterativeRetriever]:
+        """Lazy-load iterative retriever."""
+        if not self._initialized:
+            self._setup_retrievers()
+        return self._iterative
+
+    def _get_agentic(self) -> Optional[AgenticRetriever]:
+        """Lazy-load agentic retriever."""
+        if not self._initialized:
+            self._setup_retrievers()
+        return self._agentic
+
+    def _get_colbert(self) -> Optional[ColBERTRetriever]:
+        """Lazy-load ColBERT retriever."""
+        if not self._initialized:
+            self._setup_retrievers()
+        return self._colbert
 
     async def retrieve(
         self,
@@ -1006,26 +1034,30 @@ class AdvancedRetrieverPipeline:
             documents = await self._retrieve_hybrid(query, top_k)
 
         elif selected_strategy == RetrievalStrategy.SPECULATIVE:
-            if self._speculative:
-                documents = await self._speculative.retrieve(query, top_k)
+            speculative = self._get_speculative()
+            if speculative:
+                documents = await speculative.retrieve(query, top_k)
             else:
                 documents = await self._retrieve_hybrid(query, top_k)
 
         elif selected_strategy == RetrievalStrategy.ITERATIVE:
-            if self._iterative:
-                documents = await self._iterative.retrieve(query, top_k)
+            iterative = self._get_iterative()
+            if iterative:
+                documents = await iterative.retrieve(query, top_k)
             else:
                 documents = await self._retrieve_hybrid(query, top_k)
 
         elif selected_strategy == RetrievalStrategy.AGENTIC:
-            if self._agentic:
-                documents = await self._agentic.retrieve(query, top_k)
+            agentic = self._get_agentic()
+            if agentic:
+                documents = await agentic.retrieve(query, top_k)
             else:
                 documents = await self._retrieve_hybrid(query, top_k)
 
         elif selected_strategy == RetrievalStrategy.COLBERT:
-            if self._colbert:
-                documents = await self._colbert.retrieve(query, top_k)
+            colbert = self._get_colbert()
+            if colbert:
+                documents = await colbert.retrieve(query, top_k)
             else:
                 documents = await self._retrieve_single(query, top_k)
 
