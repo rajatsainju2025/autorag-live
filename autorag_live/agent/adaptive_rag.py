@@ -617,6 +617,71 @@ class AdaptiveRAGController:
             },
         )
 
+    async def run_batch(
+        self,
+        queries: List[str],
+        *,
+        force_pipeline: Optional[PipelineType] = None,
+        k: Optional[int] = None,
+    ) -> List[AdaptiveResult]:
+        """
+        Run adaptive RAG pipeline on multiple queries in parallel.
+
+        Optimizes throughput by parallelizing query analysis and execution.
+
+        Args:
+            queries: List of user queries
+            force_pipeline: Override automatic pipeline selection
+            k: Number of documents to retrieve
+
+        Returns:
+            List of AdaptiveResult
+        """
+        # Parallelize query analysis
+        tasks = [self.analyze_query(q) for q in queries]
+        analyses = await asyncio.gather(*tasks)
+
+        # Prepare execution tasks
+        exec_tasks = []
+        for query, analysis in zip(queries, analyses):
+            pipeline_type = force_pipeline or analysis.recommended_pipeline
+            if pipeline_type not in self.pipelines:
+                pipeline_type = PipelineType.SINGLE_RETRIEVAL
+
+            exec_tasks.append(
+                self._execute_with_timing(query, pipeline_type, analysis, k or self.default_k)
+            )
+
+        # Execute in parallel
+        results = await asyncio.gather(*exec_tasks)
+        return results
+
+    async def _execute_with_timing(
+        self,
+        query: str,
+        pipeline_type: PipelineType,
+        analysis: ComplexityAnalysis,
+        k: int,
+    ) -> AdaptiveResult:
+        """Execute pipeline with timing."""
+        start_time = time.time()
+
+        executor = self.pipelines[pipeline_type]
+        answer, sources, rounds = await executor.execute(query, k=k)
+
+        latency_ms = (time.time() - start_time) * 1000
+        self._update_metrics(pipeline_type, latency_ms)
+
+        return AdaptiveResult(
+            answer=answer,
+            pipeline_used=pipeline_type,
+            complexity_analysis=analysis,
+            retrieval_rounds=rounds,
+            latency_ms=latency_ms,
+            sources=sources,
+            metadata={"query": query, "k": k},
+        )
+
     def _update_metrics(
         self,
         pipeline: PipelineType,
