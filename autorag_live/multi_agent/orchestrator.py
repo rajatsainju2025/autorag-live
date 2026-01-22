@@ -1390,6 +1390,60 @@ class AgentOrchestrator:
         if agent:
             await agent.handle_message(message)
 
+    async def execute_workflow_batch(
+        self,
+        workflow_id: str,
+        batch_inputs: List[Dict[str, Any]],
+        max_parallel: int = 5,
+    ) -> List[WorkflowResult]:
+        """
+        Execute workflow on multiple inputs in parallel batches.
+
+        Optimizes throughput by processing multiple queries simultaneously
+        while respecting concurrency limits.
+
+        Args:
+            workflow_id: Workflow ID
+            batch_inputs: List of input data dictionaries
+            max_parallel: Maximum parallel workflow executions
+
+        Returns:
+            List of WorkflowResult objects
+        """
+        if not batch_inputs:
+            return []
+
+        # Create semaphore for batch-level parallelism
+        batch_semaphore = asyncio.Semaphore(max_parallel)
+
+        async def execute_one(input_data: Dict[str, Any]) -> WorkflowResult:
+            """Execute single workflow with semaphore."""
+            async with batch_semaphore:
+                return await self.execute_workflow(workflow_id, input_data)
+
+        # Execute all workflows in parallel with controlled concurrency
+        tasks = [execute_one(input_data) for input_data in batch_inputs]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+        # Convert exceptions to failed results
+        final_results = []
+        for _i, result in enumerate(results):
+            if isinstance(result, Exception):
+                final_results.append(
+                    WorkflowResult(
+                        workflow_id=workflow_id,
+                        success=False,
+                        start_time=time.time(),
+                        error=str(result),
+                        output={},
+                        step_results={},
+                    )
+                )
+            else:
+                final_results.append(result)
+
+        return final_results
+
     def get_stats(self) -> Dict[str, Any]:
         """Get orchestrator statistics."""
         return {
