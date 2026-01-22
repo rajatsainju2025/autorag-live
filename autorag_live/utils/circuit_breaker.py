@@ -200,6 +200,45 @@ class CircuitBreaker:
 
         return wrapper  # type: ignore
 
+    def async_protected(self, func: F) -> F:
+        """Decorator to protect async function with circuit breaker.
+
+        Args:
+            func: Async function to protect
+
+        Returns:
+            Wrapped async function
+
+        Example:
+            >>> @breaker.async_protected
+            ... async def async_retrieval(query: str):
+            ...     return await retriever.retrieve(query)
+        """
+
+        @wraps(func)
+        async def wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Check if circuit is open
+            with self._lock:
+                self._check_recovery_timeout()
+                if self._state == CircuitState.OPEN:
+                    raise CircuitBreakerError(
+                        f"Circuit breaker OPEN - last failure: {self._last_failure_time}"
+                    )
+
+                self._total_calls += 1
+
+            # Execute function
+            try:
+                result = await func(*args, **kwargs)
+                self._record_success()
+                return result
+
+            except Exception:
+                self._record_failure()
+                raise
+
+        return wrapper  # type: ignore
+
     def reset(self) -> None:
         """Manually reset circuit breaker to closed state."""
         with self._lock:
