@@ -14,6 +14,8 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
 
+from autorag_live.utils.tokenizer import TokenCounter, get_tokenizer
+
 
 class AgentState(Enum):
     """Agent execution states."""
@@ -90,19 +92,26 @@ class Observation:
 class AgentMemory:
     """Multi-level memory system for agent."""
 
-    def __init__(self, max_messages: int = 100, max_observations: int = 50):
+    def __init__(
+        self,
+        max_messages: int = 100,
+        max_observations: int = 50,
+        model: str = "default",
+    ):
         """
         Initialize agent memory.
 
         Args:
             max_messages: Max conversation messages to keep
             max_observations: Max observations to keep
+            model: Model name for accurate token counting
         """
         self.messages: List[Message] = []
         self.observations: List[Observation] = []
         self.max_messages = max_messages
         self.max_observations = max_observations
         self.metadata: Dict[str, Any] = {}
+        self._tokenizer: TokenCounter = get_tokenizer(model)
 
     def add_message(
         self, role: str, content: str, metadata: Optional[Dict[str, Any]] = None
@@ -138,9 +147,9 @@ class AgentMemory:
             lines.append(f"{msg.role.upper()}: {msg.content}")
 
         context = "\n".join(lines)
-        # Simple token estimation (1 token ≈ 4 chars)
-        if max_tokens and len(context) > max_tokens * 4:
-            context = context[-(max_tokens * 4) :]
+        # Accurate token-based truncation using tiktoken (or calibrated heuristic)
+        if max_tokens:
+            context = self._tokenizer.truncate_to_tokens(context, max_tokens)
 
         return context
 
