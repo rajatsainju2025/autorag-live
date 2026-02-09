@@ -1622,3 +1622,231 @@ class RecursiveChunker(BaseChunker):
         # Simple fixed-size fallback
         chunker = FixedSizeChunker(chunk_size=self.chunk_size, overlap=100)
         return chunker.chunk(text, metadata)
+
+
+class ContextualChunker(BaseChunker):
+    """
+    Contextual retrieval chunking (Anthropic, 2024).
+
+    Prepends document-level context to each chunk before embedding,
+    dramatically improving retrieval recall by providing each chunk
+    with the surrounding context it needs for disambiguation.
+
+    Standard chunking loses document-level context, causing chunks like
+    "The company's revenue grew 20%" to be unattributable. Contextual
+    chunking prepends "This chunk is from Apple's Q3 2024 earnings report.
+    It discusses revenue growth in the services segment."
+
+    Based on: "Introducing Contextual Retrieval" (Anthropic, Sept 2024)
+    - Reduces retrieval failure rate by 49% (from 5.7% to 2.9%)
+    - Combined with BM25 hybrid search: 67% reduction in failures
+
+    Example:
+        >>> chunker = ContextualChunker(
+        ...     base_chunker=SentenceChunker(max_chunk_size=512),
+        ...     context_generator=my_llm_context_fn,
+        ... )
+        >>> chunks = chunker.chunk(document_text, metadata={"title": "Q3 Report"})
+        >>> # Each chunk now has contextual prefix for better retrieval
+    """
+
+    # Default template for generating contextual descriptions
+    CONTEXT_PROMPT_TEMPLATE = (
+        "Here is the full document:\n<document>\n{document}\n</document>\n\n"
+        "Here is the chunk we want to situate within the document:\n"
+        "<chunk>\n{chunk}\n</chunk>\n\n"
+        "Please give a short succinct context (2-3 sentences) to situate this "
+        "chunk within the overall document for the purposes of improving search "
+        "retrieval. Answer only with the context, nothing else."
+    )
+
+    def __init__(
+        self,
+        base_chunker: Optional[BaseChunker] = None,
+        context_generator: Optional[Any] = None,
+        context_template: Optional[str] = None,
+        max_context_length: int = 200,
+        chunk_size: int = 512,
+        chunk_overlap: int = 50,
+    ):
+        """
+        Initialize contextual chunker.
+
+        Args:
+            base_chunker: Underlying chunker for initial splitting (default: SentenceChunker)
+            context_generator: Callable(prompt: str) -> str for LLM-based context generation.
+                               If None, uses extractive heuristic context.
+            context_template: Custom prompt template with {document} and {chunk} placeholders
+            max_context_length: Max characters for contextual prefix
+            chunk_size: Chunk size if using default base chunker
+            chunk_overlap: Overlap for default base chunker
+        """
+        self.base_chunker = base_chunker or SentenceChunker(max_chunk_size=chunk_size)
+        self.context_generator = context_generator
+        self.context_template = context_template or self.CONTEXT_PROMPT_TEMPLATE
+        self.max_context_length = max_context_length
+        self.chunk_size = chunk_size
+
+    @property
+    def name(self) -> str:
+        return "contextual"
+
+    def _extract_heuristic_context(
+        self,
+        full_document: str,
+        chunk_text: str,
+        chunk_index: int,
+        total_chunks: int,
+        doc_metadata: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Generate contextual prefix using extractive heuristics (no LLM needed).
+
+        Extracts document title, section headers, and positional context.
+        This is a fast fallback when no LLM context_generator is provided.
+
+        Args:
+            full_document: Complete document text
+            chunk_text: The specific chunk text
+            chunk_index: Position of chunk in document
+            total_chunks: Total number of chunks
+            doc_metadata: Document-level metadata
+
+        Returns:
+            Contextual prefix string
+        """
+        parts = []
+
+        # Add document title if available
+        if doc_metadata:
+            title = doc_metadata.get("title") or doc_metadata.get("source_id", "")
+            if title:
+                parts.append(f"From: {title}.")
+
+        # Add positional context
+        if total_chunks > 1:
+            position = (
+                "beginning"
+                if chunk_index == 0
+                else ("end" if chunk_index == total_chunks - 1 else "middle")
+            )
+            parts.append(
+                f"This is from the {position} of the document"
+                f" (section {chunk_index + 1}/{total_chunks})."
+            )
+
+        # Extract nearest section header (look backwards in document)
+        chunk_start = full_document.find(chunk_text[:50]) if len(chunk_text) >= 50 else -1
+        if chunk_start > 0:
+            preceding = full_document[:chunk_start]
+            # Find last header-like line (lines starting with # or all caps)
+            lines = preceding.split("\n")
+            for line in reversed(lines):
+                stripped = line.strip()
+                if stripped and (
+                    stripped.startswith("#")
+                    or (stripped.isupper() and len(stripped) < 100)
+                    or stripped.endswith(":")
+                ):
+                    parts.append(f"Section: {stripped.lstrip('#').strip()}.")
+                    break
+
+        context = " ".join(parts)
+        return context[: self.max_context_length] if context else ""
+
+    def _generate_llm_context(self, full_document: str, chunk_text: str) -> str:
+        """
+        Generate contextual prefix using LLM.
+
+        Args:
+            full_document: Complete document text (may be truncated for token limits)
+            chunk_text: The specific chunk text
+
+        Returns:
+            LLM-generated contextual prefix
+        """
+        # Truncate document if too long (keep first/last parts)
+        max_doc_chars = 6000
+        if len(full_document) > max_doc_chars:
+            half = max_doc_chars // 2
+            full_document = (
+                full_document[:half]
+                + "\n\n[... middle of document omitted ...]\n\n"
+                + full_document[-half:]
+            )
+
+        prompt = self.context_template.format(
+            document=full_document,
+            chunk=chunk_text,
+        )
+
+        try:
+            context = self.context_generator(prompt)
+            return context[: self.max_context_length]
+        except Exception as e:
+            logger.warning(f"LLM context generation failed: {e}")
+            return ""
+
+    def chunk(
+        self,
+        text: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> List[TextChunk]:
+        """
+        Split text into contextually-enriched chunks.
+
+        Each chunk gets a contextual prefix prepended that describes
+        where it fits within the overall document.
+
+        Args:
+            text: Full document text
+            metadata: Document-level metadata (title, source, etc.)
+
+        Returns:
+            List of TextChunks with contextual prefixes
+        """
+        if not text:
+            return []
+
+        # Step 1: Split with base chunker
+        base_chunks = self.base_chunker.chunk(text, metadata)
+        total_chunks = len(base_chunks)
+
+        if total_chunks == 0:
+            return []
+
+        # Step 2: Add contextual prefix to each chunk
+        contextual_chunks = []
+        for chunk in base_chunks:
+            # Generate context
+            if self.context_generator is not None:
+                context_prefix = self._generate_llm_context(text, chunk.text)
+            else:
+                context_prefix = self._extract_heuristic_context(
+                    full_document=text,
+                    chunk_text=chunk.text,
+                    chunk_index=chunk.index,
+                    total_chunks=total_chunks,
+                    doc_metadata=metadata,
+                )
+
+            # Prepend context to chunk text
+            if context_prefix:
+                enriched_text = f"{context_prefix}\n\n{chunk.text}"
+            else:
+                enriched_text = chunk.text
+
+            # Preserve original metadata and add context info
+            chunk.metadata.custom["contextual_prefix"] = context_prefix
+            chunk.metadata.custom["original_text"] = chunk.text
+
+            contextual_chunks.append(
+                TextChunk(
+                    text=enriched_text,
+                    index=chunk.index,
+                    metadata=chunk.metadata,
+                    token_count=chunk.token_count,
+                )
+            )
+
+        return contextual_chunks
