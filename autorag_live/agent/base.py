@@ -7,8 +7,11 @@ for multi-turn agentic RAG conversations.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 import uuid
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -421,3 +424,161 @@ class Agent:
             "goal": self._goal,
             "memory": self.memory.to_dict(),
         }
+
+    def act_concurrent(
+        self,
+        actions: List[Action],
+        max_workers: int = 4,
+        timeout: float = 30.0,
+    ) -> List[Observation]:
+        """
+        Execute multiple independent tool actions concurrently.
+
+        Critical optimization for agentic RAG: when the agent identifies
+        multiple independent tools to call (e.g., parallel retrieval from
+        different sources, simultaneous web searches), executing them
+        concurrently reduces total latency from sum(latencies) to max(latencies).
+
+        Args:
+            actions: List of independent actions to execute in parallel
+            max_workers: Max concurrent threads
+            timeout: Timeout per action in seconds
+
+        Returns:
+            List of Observations in same order as input actions
+        """
+        if not actions:
+            return []
+
+        # Single action → no threading overhead
+        if len(actions) == 1:
+            obs = self.act(actions[0])
+            return [obs] if obs else []
+
+        self._transition_state(AgentState.ACTING)
+        observations: Dict[str, Observation] = {}
+        total_start = time.time()
+
+        with ThreadPoolExecutor(max_workers=min(max_workers, len(actions))) as executor:
+            future_to_action = {
+                executor.submit(self._execute_tool, action): action for action in actions
+            }
+
+            for future in as_completed(future_to_action, timeout=timeout):
+                action = future_to_action[future]
+                try:
+                    obs = future.result(timeout=timeout)
+                    observations[action.action_id] = obs
+                except TimeoutError:
+                    observations[action.action_id] = Observation(
+                        action_id=action.action_id,
+                        tool_name=action.tool_name,
+                        result=None,
+                        success=False,
+                        error=f"Tool execution timed out after {timeout}s",
+                    )
+                except Exception as e:
+                    observations[action.action_id] = Observation(
+                        action_id=action.action_id,
+                        tool_name=action.tool_name,
+                        result=None,
+                        success=False,
+                        error=str(e),
+                    )
+
+        total_latency = (time.time() - total_start) * 1000
+        self._log(
+            f"Concurrent execution of {len(actions)} tools completed in {total_latency:.1f}ms"
+        )
+
+        # Return in original order
+        result = [observations.get(a.action_id) for a in actions]
+        self._transition_state(AgentState.OBSERVING)
+
+        # Record all observations
+        for obs in result:
+            if obs:
+                self.memory.add_observation(obs)
+
+        return [obs for obs in result if obs is not None]
+
+    def _execute_tool(self, action: Action) -> Observation:
+        """Execute a single tool action (thread-safe)."""
+        if action.tool_name not in self.tools:
+            return Observation(
+                action_id=action.action_id,
+                tool_name=action.tool_name,
+                result=None,
+                success=False,
+                error=f"Tool not found: {action.tool_name}",
+            )
+
+        try:
+            start_time = time.time()
+            tool = self.tools[action.tool_name]
+            result = tool(**action.tool_input)
+            latency = (time.time() - start_time) * 1000
+
+            return Observation(
+                action_id=action.action_id,
+                tool_name=action.tool_name,
+                result=result,
+                success=True,
+                latency_ms=latency,
+            )
+        except Exception as e:
+            return Observation(
+                action_id=action.action_id,
+                tool_name=action.tool_name,
+                result=None,
+                success=False,
+                error=str(e),
+            )
+
+    async def act_async(
+        self,
+        actions: List[Action],
+        timeout: float = 30.0,
+    ) -> List[Observation]:
+        """
+        Execute multiple tool actions concurrently using asyncio.
+
+        Preferred over act_concurrent when running in an async context
+        (e.g., inside an async pipeline or web server).
+
+        Args:
+            actions: List of independent actions
+            timeout: Timeout per action
+
+        Returns:
+            List of Observations
+        """
+        if not actions:
+            return []
+
+        self._transition_state(AgentState.ACTING)
+        loop = asyncio.get_event_loop()
+
+        async def _run_action(action: Action) -> Observation:
+            try:
+                return await asyncio.wait_for(
+                    loop.run_in_executor(None, self._execute_tool, action),
+                    timeout=timeout,
+                )
+            except asyncio.TimeoutError:
+                return Observation(
+                    action_id=action.action_id,
+                    tool_name=action.tool_name,
+                    result=None,
+                    success=False,
+                    error=f"Async tool execution timed out after {timeout}s",
+                )
+
+        observations = await asyncio.gather(*[_run_action(a) for a in actions])
+
+        self._transition_state(AgentState.OBSERVING)
+        for obs in observations:
+            if obs:
+                self.memory.add_observation(obs)
+
+        return list(observations)
