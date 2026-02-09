@@ -93,11 +93,23 @@ class DenseRetriever(BaseRetriever):
             self._embedding_norms = None
 
             if FAISS_AVAILABLE and self.embeddings is not None:
-                # Use FAISS for efficient search
+                # Use FAISS HNSW for O(log n) approximate nearest neighbor search
                 dimension = self.embeddings.shape[1]
-                self.index = faiss.IndexFlatIP(dimension)  # type: ignore[attr-defined]  # Inner product (cosine)
                 # Normalize embeddings for cosine similarity
                 faiss.normalize_L2(self.embeddings)  # type: ignore[attr-defined]
+
+                num_docs = self.embeddings.shape[0]
+                if num_docs >= 1000:
+                    # HNSW: O(log n) search, excellent recall at high speed
+                    # M=32 connections per layer, efConstruction=200 for build quality
+                    self.index = faiss.IndexHNSWFlat(dimension, 32)  # type: ignore[attr-defined]
+                    self.index.hnsw.efConstruction = 200  # type: ignore[attr-defined]
+                    self.index.hnsw.efSearch = 128  # type: ignore[attr-defined]  # Search quality
+                    self.index.metric_type = faiss.METRIC_INNER_PRODUCT  # type: ignore[attr-defined]
+                else:
+                    # For small corpora, brute-force is faster than HNSW overhead
+                    self.index = faiss.IndexFlatIP(dimension)  # type: ignore[attr-defined]
+
                 self.index.add(self.embeddings)
             else:
                 # Fallback to numpy-based search

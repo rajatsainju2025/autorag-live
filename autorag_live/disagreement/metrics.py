@@ -3,6 +3,7 @@ from enum import Enum
 from functools import lru_cache
 from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, cast
 
+import numpy as np
 from scipy.stats import kendalltau
 
 
@@ -55,7 +56,102 @@ def kendall_tau_at_k(list1: List[str], list2: List[str]) -> float:
     return cast(float, tau)
 
 
-# Optimization: perf(vectorize): add numpy-based metric optimizations
+# =============================================================================
+# Vectorized metric optimizations using NumPy
+# =============================================================================
+
+
+def batch_jaccard_at_k(lists: List[List[str]]) -> np.ndarray:
+    """
+    Compute pairwise Jaccard similarity for all list pairs using vectorized ops.
+
+    Returns an (n x n) symmetric similarity matrix.
+    Significantly faster than O(n^2) individual jaccard_at_k calls
+    for large numbers of retriever result sets.
+
+    Args:
+        lists: List of result lists from different retrievers
+
+    Returns:
+        np.ndarray of shape (n, n) with pairwise Jaccard similarities
+    """
+    n = len(lists)
+    if n == 0:
+        return np.array([], dtype=np.float64)
+
+    # Build universe of all items and encode as binary membership vectors
+    universe: Dict[str, int] = {}
+    for lst in lists:
+        for item in lst:
+            if item not in universe:
+                universe[item] = len(universe)
+
+    if not universe:
+        return np.ones((n, n), dtype=np.float64)
+
+    # Binary membership matrix: (n_lists, n_items)
+    membership = np.zeros((n, len(universe)), dtype=np.float32)
+    for i, lst in enumerate(lists):
+        for item in lst:
+            membership[i, universe[item]] = 1.0
+
+    # Vectorized intersection & union via dot products
+    # intersection[i,j] = sum(min(a_i, a_j)) = dot product for binary vectors
+    intersection = membership @ membership.T
+    # union[i,j] = |A_i| + |A_j| - |A_i ∩ A_j|
+    sizes = membership.sum(axis=1, keepdims=True)  # (n, 1)
+    union = sizes + sizes.T - intersection
+
+    # Avoid division by zero
+    result = np.where(union > 0, intersection / union, 1.0)
+    return result.astype(np.float64)
+
+
+def batch_kendall_tau_at_k(lists: List[List[str]]) -> np.ndarray:
+    """
+    Compute pairwise Kendall-tau for all list pairs using vectorized rank arrays.
+
+    Returns an (n x n) symmetric correlation matrix.
+
+    Args:
+        lists: List of ranked result lists from different retrievers
+
+    Returns:
+        np.ndarray of shape (n, n) with pairwise Kendall-tau correlations
+    """
+    n = len(lists)
+    if n == 0:
+        return np.array([], dtype=np.float64)
+
+    # Build universe
+    universe: Dict[str, int] = {}
+    for lst in lists:
+        for item in lst:
+            if item not in universe:
+                universe[item] = len(universe)
+
+    if not universe:
+        return np.ones((n, n), dtype=np.float64)
+
+    num_items = len(universe)
+    default_rank = num_items  # Items not in list get max rank
+
+    # Build rank matrix: (n_lists, n_items)
+    rank_matrix = np.full((n, num_items), default_rank, dtype=np.float64)
+    for i, lst in enumerate(lists):
+        for rank, item in enumerate(lst):
+            rank_matrix[i, universe[item]] = rank
+
+    # Compute pairwise Kendall-tau using scipy (vectorized per pair)
+    result = np.eye(n, dtype=np.float64)
+    for i in range(n):
+        for j in range(i + 1, n):
+            tau, _ = kendalltau(rank_matrix[i], rank_matrix[j])
+            tau_val = float(tau) if not np.isnan(tau) else 0.0
+            result[i, j] = tau_val
+            result[j, i] = tau_val
+
+    return result
 
 
 # =============================================================================
