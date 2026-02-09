@@ -1,4 +1,6 @@
-from typing import Dict, List
+from typing import Dict, List, Optional, Tuple
+
+import numpy as np
 
 from ..types.types import RetrieverError
 from . import bm25, dense
@@ -148,3 +150,219 @@ class HybridRetriever:
     def save(self, path: str) -> None:
         """Save retriever state to disk."""
         raise NotImplementedError("Hybrid retriever persistence not implemented")
+
+
+class AdaptiveFusionRetriever(HybridRetriever):
+    """
+    Hybrid retriever with online adaptive weight learning.
+
+    Dynamically adjusts BM25/dense fusion weights based on per-query
+    feedback using an exponential moving average (EMA) of relevance signals.
+
+    State-of-the-art RAG systems don't use fixed fusion weights — they adapt
+    based on query characteristics and retrieval quality feedback.
+
+    Methods:
+    1. **EMA weight update**: Smooth weight adaptation from relevance feedback
+    2. **Query-type conditioned weights**: Different optimal weights per query type
+    3. **Reciprocal Rank Fusion (RRF)**: Alternative to linear combination
+
+    Based on:
+    - "Reciprocal Rank Fusion outperforms Condorcet and individual Rank Learning Methods"
+      (Cormack et al., 2009)
+    - Hybrid search tuning patterns from Vespa, Weaviate, Pinecone best practices
+
+    Example:
+        >>> retriever = AdaptiveFusionRetriever(initial_bm25_weight=0.5)
+        >>> retriever.add_documents(corpus)
+        >>> results = retriever.retrieve("what is quantum computing?", k=10)
+        >>> # After evaluating results, provide feedback
+        >>> retriever.update_weights(relevance_score=0.85, query_type="factoid")
+    """
+
+    def __init__(
+        self,
+        initial_bm25_weight: float = 0.5,
+        learning_rate: float = 0.05,
+        rrf_k: int = 60,
+        use_rrf: bool = True,
+        dense_model_name: str = "all-MiniLM-L6-v2",
+        cache_embeddings: bool = True,
+    ):
+        """
+        Initialize adaptive fusion retriever.
+
+        Args:
+            initial_bm25_weight: Starting BM25 weight (adapted over time)
+            learning_rate: EMA learning rate for weight updates (0-1)
+            rrf_k: RRF constant (default 60, per Cormack et al.)
+            use_rrf: Use Reciprocal Rank Fusion instead of linear combination
+            dense_model_name: Sentence-transformer model name
+            cache_embeddings: Whether to cache embeddings
+        """
+        super().__init__(
+            bm25_weight=initial_bm25_weight,
+            dense_model_name=dense_model_name,
+            cache_embeddings=cache_embeddings,
+        )
+        self.learning_rate = learning_rate
+        self.rrf_k = rrf_k
+        self.use_rrf = use_rrf
+
+        # Per-query-type adaptive weights (EMA)
+        self._type_weights: Dict[str, float] = {
+            "factoid": 0.6,  # BM25 better for exact keyword matches
+            "definition": 0.5,
+            "explanation": 0.3,  # Dense better for semantic queries
+            "comparison": 0.4,
+            "multi_hop": 0.3,
+            "default": initial_bm25_weight,
+        }
+
+        # Tracking for analysis
+        self._update_count = 0
+        self._weight_history: List[Tuple[float, float]] = []  # (bm25_w, relevance)
+
+    def retrieve(
+        self,
+        query: str,
+        k: int = 5,
+        query_type: Optional[str] = None,
+    ) -> List[tuple]:
+        """
+        Retrieve with adaptive fusion weights.
+
+        Args:
+            query: Search query
+            k: Number of results
+            query_type: Optional query type for conditioned weights
+
+        Returns:
+            List of (document, score) tuples
+        """
+        from ..utils import monitor_performance
+
+        if not self.is_initialized:
+            raise ValueError("Retriever not initialized. Call add_documents() first.")
+
+        with monitor_performance(
+            "AdaptiveFusionRetriever.retrieve",
+            {"query_length": len(query), "k": k, "use_rrf": self.use_rrf},
+        ):
+            # Select adaptive weight for query type
+            if query_type and query_type in self._type_weights:
+                active_bm25_weight = self._type_weights[query_type]
+            else:
+                active_bm25_weight = self.bm25_weight
+
+            # Get results from both retrievers
+            bm25_results = self.bm25_retriever.retrieve(query, k * 2)
+            dense_results = self.dense_retriever.retrieve(query, k * 2)
+
+            if self.use_rrf:
+                return self._rrf_fusion(bm25_results, dense_results, k)
+            else:
+                return self._weighted_fusion(bm25_results, dense_results, active_bm25_weight, k)
+
+    def _rrf_fusion(
+        self,
+        bm25_results: List[tuple],
+        dense_results: List[tuple],
+        k: int,
+    ) -> List[tuple]:
+        """
+        Reciprocal Rank Fusion (Cormack et al., 2009).
+
+        RRF(d) = sum_r ( 1 / (rrf_k + rank_r(d)) )
+
+        Provably outperforms linear combination for most retrieval tasks.
+        """
+        rrf_scores: Dict[str, float] = {}
+
+        for rank, (doc, _score) in enumerate(bm25_results):
+            rrf_scores[doc] = rrf_scores.get(doc, 0.0) + 1.0 / (self.rrf_k + rank + 1)
+
+        for rank, (doc, _score) in enumerate(dense_results):
+            rrf_scores[doc] = rrf_scores.get(doc, 0.0) + 1.0 / (self.rrf_k + rank + 1)
+
+        sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
+        return sorted_docs[:k]
+
+    def _weighted_fusion(
+        self,
+        bm25_results: List[tuple],
+        dense_results: List[tuple],
+        bm25_weight: float,
+        k: int,
+    ) -> List[tuple]:
+        """Linear weighted combination with min-max normalization."""
+        dense_weight = 1.0 - bm25_weight
+
+        bm25_scores = {doc: score for doc, score in bm25_results}
+        dense_scores = {doc: score for doc, score in dense_results}
+
+        # Min-max normalize both score sets to [0, 1]
+        for scores in [bm25_scores, dense_scores]:
+            if scores:
+                vals = list(scores.values())
+                min_v, max_v = min(vals), max(vals)
+                rng = max_v - min_v
+                if rng > 0:
+                    for doc in scores:
+                        scores[doc] = (scores[doc] - min_v) / rng
+
+        # Combine
+        all_docs = set(bm25_scores.keys()) | set(dense_scores.keys())
+        combined = {}
+        for doc in all_docs:
+            combined[doc] = bm25_weight * bm25_scores.get(
+                doc, 0.0
+            ) + dense_weight * dense_scores.get(doc, 0.0)
+
+        sorted_docs = sorted(combined.items(), key=lambda x: x[1], reverse=True)
+        return sorted_docs[:k]
+
+    def update_weights(
+        self,
+        relevance_score: float,
+        query_type: Optional[str] = None,
+    ) -> None:
+        """
+        Update fusion weights based on relevance feedback (EMA).
+
+        Call this after evaluating retrieval quality. Higher relevance
+        reinforces current weights; lower relevance shifts toward
+        the opposite direction.
+
+        Args:
+            relevance_score: Quality of last retrieval (0-1)
+            query_type: Query type for conditioned weight update
+        """
+        self._update_count += 1
+        self._weight_history.append((self.bm25_weight, relevance_score))
+
+        # EMA update: if relevance is high, reinforce; if low, shift
+        # We nudge bm25_weight toward 0.5 + (relevance - 0.5) * direction
+        lr = self.learning_rate
+
+        if query_type and query_type in self._type_weights:
+            old_w = self._type_weights[query_type]
+            # Gradient-free adaptation: shift weight based on feedback
+            delta = lr * (relevance_score - 0.5) * (1.0 - old_w if old_w < 0.5 else old_w)
+            new_w = np.clip(old_w + delta, 0.05, 0.95)
+            self._type_weights[query_type] = float(new_w)
+        else:
+            old_w = self.bm25_weight
+            delta = lr * (relevance_score - 0.5) * (1.0 - old_w if old_w < 0.5 else old_w)
+            self.bm25_weight = float(np.clip(old_w + delta, 0.05, 0.95))
+            self.dense_weight = 1.0 - self.bm25_weight
+
+    def get_weight_stats(self) -> Dict[str, object]:
+        """Get adaptive weight statistics."""
+        return {
+            "current_bm25_weight": self.bm25_weight,
+            "type_weights": dict(self._type_weights),
+            "update_count": self._update_count,
+            "use_rrf": self.use_rrf,
+            "rrf_k": self.rrf_k,
+        }
