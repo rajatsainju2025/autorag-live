@@ -26,8 +26,12 @@ from enum import Enum
 from typing import Any, Dict, List, Optional
 
 from autorag_live.core.protocols import BaseLLM, Document, Message
+from autorag_live.utils.tokenizer import TokenCounter
 
 logger = logging.getLogger(__name__)
+
+# Module-level shared token counter (uses tiktoken when available)
+_token_counter = TokenCounter()
 
 
 # =============================================================================
@@ -150,9 +154,8 @@ class ExtractiveCompressor:
         return [s.strip() for s in sentences if s.strip()]
 
     def estimate_tokens(self, text: str) -> int:
-        """Estimate token count."""
-        # Rough estimate: ~4 chars per token
-        return len(text) // 4
+        """Count tokens using tiktoken (exact) or calibrated heuristic."""
+        return _token_counter.count_tokens(text)
 
     def score_sentence_position(
         self,
@@ -447,8 +450,8 @@ Compressed context:"""
         self.config = config or CompressionConfig()
 
     def estimate_tokens(self, text: str) -> int:
-        """Estimate token count."""
-        return len(text) // 4
+        """Count tokens using tiktoken (exact) or calibrated heuristic."""
+        return _token_counter.count_tokens(text)
 
     async def compress(
         self,
@@ -558,8 +561,8 @@ Combined summary (max {max_words} words):"""
         self.chunk_size = chunk_size
 
     def estimate_tokens(self, text: str) -> int:
-        """Estimate token count."""
-        return len(text) // 4
+        """Count tokens using tiktoken (exact) or calibrated heuristic."""
+        return _token_counter.count_tokens(text)
 
     def chunk_text(self, text: str) -> List[str]:
         """Split text into chunks."""
