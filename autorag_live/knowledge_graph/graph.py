@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import re
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
@@ -63,13 +64,13 @@ class KnowledgeGraphNode:
     relations_in: List[Relation] = field(default_factory=list)
 
     def get_neighbors(self, max_hops: int = 1) -> Set[Entity]:
-        """Get neighboring entities within max hops."""
-        neighbors = set()
-        to_visit = [(self.entity, 0)]
-        visited = set()
+        """Get neighboring entities within max hops (deque BFS)."""
+        neighbors: Set[Entity] = set()
+        to_visit: deque[tuple[Entity, int]] = deque([(self.entity, 0)])
+        visited: Set[Entity] = set()
 
         while to_visit:
-            current, hops = to_visit.pop(0)
+            current, hops = to_visit.popleft()  # O(1) vs list.pop(0) O(n)
 
             if current in visited:
                 continue
@@ -78,7 +79,6 @@ class KnowledgeGraphNode:
             neighbors.add(current)
 
             if hops < max_hops:
-                # Add related entities
                 node = self._find_node(current)
                 if node:
                     for rel in node.relations_out:
@@ -109,6 +109,9 @@ class KnowledgeGraph:
         self.nodes: Dict[Tuple[str, str], KnowledgeGraphNode] = {}
         self.entities: Dict[Tuple[str, str], Entity] = {}
         self.relations: List[Relation] = []
+
+        # O(1) name → key lookup (avoids linear scan on every find_path / context call)
+        self._name_index: Dict[str, Tuple[str, str]] = {}
 
         # Entity type patterns
         self.entity_patterns = {
@@ -142,6 +145,7 @@ class KnowledgeGraph:
                 properties=properties or {},
             )
             self.entities[key] = entity
+            self._name_index[name] = key  # O(1) name lookup
 
             # Create graph node
             node = KnowledgeGraphNode(entity)
@@ -273,9 +277,9 @@ class KnowledgeGraph:
         return expanded
 
     def find_path(self, source_name: str, target_name: str) -> Optional[List[Entity]]:
-        """Find path between two entities (BFS)."""
-        source_key = next((k for k in self.entities if k[0] == source_name), None)
-        target_key = next((k for k in self.entities if k[0] == target_name), None)
+        """Find path between two entities (BFS with O(1) name lookup)."""
+        source_key = self._name_index.get(source_name)
+        target_key = self._name_index.get(target_name)
 
         if not source_key or not target_key:
             return None
@@ -284,9 +288,7 @@ class KnowledgeGraph:
         target = self.entities[target_key]
 
         # BFS
-        from collections import deque
-
-        queue = deque([(source, [source])])
+        queue: deque[tuple[Entity, list[Entity]]] = deque([(source, [source])])
         visited = {source}
 
         while queue:
@@ -308,8 +310,8 @@ class KnowledgeGraph:
         return None
 
     def get_entity_context(self, entity_name: str, hops: int = 1) -> Dict[str, Any]:
-        """Get context around an entity."""
-        entity_key = next((k for k in self.entities if k[0] == entity_name), None)
+        """Get context around an entity (O(1) name lookup)."""
+        entity_key = self._name_index.get(entity_name)
 
         if not entity_key:
             return {}
@@ -358,13 +360,18 @@ class KnowledgeGraph:
         }
 
     def _get_neighbors(self, node: KnowledgeGraphNode, max_hops: int) -> Set[Entity]:
-        """Get neighboring entities within max hops."""
-        neighbors = set()
-        to_visit = [(node.entity, 0)]
-        visited = set()
+        """Get neighboring entities within max hops.
+
+        Uses collections.deque for O(1) popleft instead of list.pop(0) O(n).
+        Edges are traversed in descending confidence order so that
+        high-quality relations are explored first.
+        """
+        neighbors: Set[Entity] = set()
+        to_visit: deque[tuple[Entity, int]] = deque([(node.entity, 0)])
+        visited: Set[Entity] = set()
 
         while to_visit:
-            current, hops = to_visit.pop(0)
+            current, hops = to_visit.popleft()  # O(1)
 
             if current in visited:
                 continue
@@ -379,11 +386,20 @@ class KnowledgeGraph:
                 if current_key in self.nodes:
                     current_node = self.nodes[current_key]
 
-                    for rel in current_node.relations_out:
+                    # Traverse highest-confidence edges first
+                    for rel in sorted(
+                        current_node.relations_out,
+                        key=lambda r: r.confidence,
+                        reverse=True,
+                    ):
                         if rel.target not in visited:
                             to_visit.append((rel.target, hops + 1))
 
-                    for rel in current_node.relations_in:
+                    for rel in sorted(
+                        current_node.relations_in,
+                        key=lambda r: r.confidence,
+                        reverse=True,
+                    ):
                         if rel.source not in visited:
                             to_visit.append((rel.source, hops + 1))
 
