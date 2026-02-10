@@ -19,6 +19,7 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 from dataclasses import dataclass, field
@@ -32,6 +33,39 @@ logger = logging.getLogger(__name__)
 
 # Module-level shared token counter (uses tiktoken when available)
 _token_counter = TokenCounter()
+
+# ---------------------------------------------------------------------------
+# MinHash approximate deduplication (O(n·k) instead of O(n²) pairwise Jaccard)
+# ---------------------------------------------------------------------------
+_NUM_HASHES = 64  # number of hash functions — higher = more accurate
+
+
+def _minhash_signature(text: str, num_hashes: int = _NUM_HASHES) -> tuple:
+    """Compute a MinHash signature for *text* using word-level shingles.
+
+    Returns a tuple of *num_hashes* minimum hash values.  Two texts with
+    Jaccard similarity *J* will have identical signature entries with
+    probability *J*, so comparing tuples gives a cheap approximate overlap.
+    """
+    words = text.lower().split()
+    # Build 3-word shingles for better discrimination
+    shingles = {" ".join(words[i : i + 3]) for i in range(max(1, len(words) - 2))}
+    if not shingles:
+        shingles = {text.lower().strip()}
+
+    sig = []
+    for i in range(num_hashes):
+        min_val = min(
+            int(hashlib.md5(f"{i}:{s}".encode(), usedforsecurity=False).hexdigest(), 16)
+            for s in shingles
+        )
+        sig.append(min_val)
+    return tuple(sig)
+
+
+def _minhash_similarity(sig_a: tuple, sig_b: tuple) -> float:
+    """Estimate Jaccard similarity from two MinHash signatures."""
+    return sum(a == b for a, b in zip(sig_a, sig_b)) / len(sig_a)
 
 
 # =============================================================================
@@ -272,29 +306,50 @@ class ExtractiveCompressor:
         self,
         sentences: List[SentenceInfo],
         max_tokens: int,
+        *,
+        dedup_threshold: float = 0.6,
     ) -> List[SentenceInfo]:
         """
-        Select top sentences within token budget.
+        Select top sentences within token budget, de-duplicating near-duplicates.
+
+        Uses MinHash approximate Jaccard similarity (O(n·k)) instead of
+        O(n²) pairwise comparison to skip sentences that overlap with
+        already-selected ones by more than *dedup_threshold*.
 
         Args:
             sentences: Scored sentences
             max_tokens: Token budget
+            dedup_threshold: MinHash similarity above which a sentence is skipped
 
         Returns:
-            Selected sentences
+            Selected sentences (de-duplicated, within budget)
         """
         # Sort by combined score
         sorted_sents = sorted(sentences, key=lambda s: s.combined_score, reverse=True)
 
-        selected = []
+        selected: List[SentenceInfo] = []
+        selected_sigs: List[tuple] = []
         token_count = 0
 
         for sent in sorted_sents:
+            if sent.combined_score < self.config.min_sentence_score:
+                continue
+
             sent_tokens = self.estimate_tokens(sent.text)
-            if token_count + sent_tokens <= max_tokens:
-                if sent.combined_score >= self.config.min_sentence_score:
-                    selected.append(sent)
-                    token_count += sent_tokens
+            if token_count + sent_tokens > max_tokens:
+                continue
+
+            # MinHash near-duplicate check against already-selected sentences
+            sig = _minhash_signature(sent.text)
+            is_dup = any(
+                _minhash_similarity(sig, sel_sig) >= dedup_threshold for sel_sig in selected_sigs
+            )
+            if is_dup:
+                continue
+
+            selected.append(sent)
+            selected_sigs.append(sig)
+            token_count += sent_tokens
 
         # Re-order by original position for coherence
         selected.sort(key=lambda s: (s.doc_id, s.position))
