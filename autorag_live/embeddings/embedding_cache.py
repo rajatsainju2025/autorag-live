@@ -23,12 +23,26 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+
+# Prefer xxhash (10x faster) for non-crypto cache keys; fall back to hashlib.
+try:
+    import xxhash
+
+    def _fast_hash(text: str) -> str:
+        return xxhash.xxh3_64_hexdigest(text.encode())
+
+except ImportError:
+
+    def _fast_hash(text: str) -> str:  # type: ignore[misc]
+        return hashlib.sha256(text.encode()).hexdigest()
+
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +100,9 @@ class EmbeddingCache:
         # Cache storage (LRU-ordered)
         self.cache: OrderedDict[str, CacheEntry] = OrderedDict()
 
+        # Thread-safety lock
+        self._lock = threading.Lock()
+
         # Statistics
         self.stats = CacheStats()
 
@@ -94,12 +111,13 @@ class EmbeddingCache:
 
         self.logger = logging.getLogger("EmbeddingCache")
 
-    def get(self, text: str) -> Optional[np.ndarray]:
+    def get(self, text: str, copy: bool = False) -> Optional[np.ndarray]:
         """
         Get cached embedding.
 
         Args:
             text: Text to get embedding for
+            copy: If True return a copy; otherwise a read-only view (zero-copy).
 
         Returns:
             Cached embedding or None if miss
@@ -107,28 +125,34 @@ class EmbeddingCache:
         self.stats.total_requests += 1
 
         # Generate cache key
-        cache_key = self._hash_text(text)
+        cache_key = _fast_hash(text)
 
-        # Check cache
-        if cache_key in self.cache:
-            entry = self.cache[cache_key]
+        with self._lock:
+            # Check cache
+            if cache_key in self.cache:
+                entry = self.cache[cache_key]
 
-            # Check TTL
-            age = time.time() - entry.timestamp
-            if age < entry.ttl_seconds:
-                # Cache hit
-                entry.access_count += 1
-                entry.last_access = time.time()
+                # Check TTL
+                age = time.time() - entry.timestamp
+                if age < entry.ttl_seconds:
+                    # Cache hit
+                    entry.access_count += 1
+                    entry.last_access = time.time()
 
-                # Move to end (LRU)
-                self.cache.move_to_end(cache_key)
+                    # Move to end (LRU)
+                    self.cache.move_to_end(cache_key)
 
-                self.stats.hits += 1
-                return entry.embedding.copy()
-            else:
-                # Expired - remove
-                del self.cache[cache_key]
-                self.stats.evictions += 1
+                    self.stats.hits += 1
+                    if copy:
+                        return entry.embedding.copy()
+                    # Zero-copy: return a non-writable view
+                    view = entry.embedding.view()
+                    view.flags.writeable = False
+                    return view
+                else:
+                    # Expired - remove
+                    del self.cache[cache_key]
+                    self.stats.evictions += 1
 
         # Cache miss
         self.stats.misses += 1
@@ -151,7 +175,11 @@ class EmbeddingCache:
             metadata: Optional metadata
         """
         # Generate cache key
-        cache_key = self._hash_text(text)
+        cache_key = _fast_hash(text)
+
+        # Ensure float32 for storage efficiency
+        if embedding.dtype != np.float32:
+            embedding = embedding.astype(np.float32)
 
         # Create entry
         entry = CacheEntry(
@@ -162,8 +190,9 @@ class EmbeddingCache:
             metadata=metadata or {},
         )
 
-        # Add to cache
-        self.cache[cache_key] = entry
+        with self._lock:
+            # Add to cache
+            self.cache[cache_key] = entry
 
         # Token deduplication
         if self.enable_deduplication:
@@ -308,9 +337,8 @@ class EmbeddingCache:
         self.logger.debug(f"Evicted LRU entry: {lru_key[:8]}...")
 
     def _hash_text(self, text: str) -> str:
-        """Generate cache key from text."""
-        # Use SHA256 for collision resistance
-        return hashlib.sha256(text.encode()).hexdigest()
+        """Generate cache key from text (delegates to module-level xxhash)."""
+        return _fast_hash(text)
 
     def _add_to_token_index(self, text: str, embedding: np.ndarray) -> None:
         """Add to token-level deduplication index."""
