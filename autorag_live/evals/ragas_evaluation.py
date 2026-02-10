@@ -109,42 +109,43 @@ class RAGASEvaluator:
         """
         Evaluate faithfulness of response to sources.
 
-        Checks if claims in response are supported by sources.
-
-        Args:
-            response: Generated response
-            sources: Retrieved sources
-
-        Returns:
-            MetricScore for faithfulness
+        Uses a pre-built source word set to avoid re-joining/lowering per claim.
         """
         if not sources:
-            score = 0.0
-            explanation = "No sources available"
-        else:
-            # Count supported claims
-            claims = response.split(".")
-            supported = 0
+            return MetricScore(
+                metric_type=MetricType.FAITHFULNESS,
+                score=0.0,
+                confidence=0.7,
+                explanation="No sources available",
+                benchmark_value=0.85,
+            )
 
-            source_text = " ".join(sources).lower()
+        # Build source word set ONCE
+        source_text = " ".join(sources).lower()
+        source_words = frozenset(source_text.split())
 
-            for claim in claims:
-                claim = claim.strip()
-                if len(claim) < 10:
-                    continue
+        claims = [c.strip() for c in response.split(".") if len(c.strip()) > 10]
+        if not claims:
+            return MetricScore(
+                metric_type=MetricType.FAITHFULNESS,
+                score=0.0,
+                confidence=0.7,
+                explanation="No substantive claims found",
+                benchmark_value=0.85,
+            )
 
-                # Check if key terms appear in sources
-                words = claim.lower().split()
-                key_words = [w for w in words if len(w) > 4]
+        supported = 0
+        for claim in claims:
+            key_words = [w for w in claim.lower().split() if len(w) > 4]
+            if not key_words:
+                continue
+            # Word-set intersection instead of linear scan per keyword
+            matches = sum(1 for w in key_words if w in source_words)
+            if matches >= len(key_words) * 0.6:
+                supported += 1
 
-                matches = sum(1 for w in key_words if w in source_text)
-
-                if matches >= len(key_words) * 0.6:
-                    supported += 1
-
-            score = supported / len([c for c in claims if len(c.strip()) > 10]) if claims else 0.0
-
-            explanation = f"{int(score * 100)}% of claims are grounded"
+        score = supported / len(claims)
+        explanation = f"{int(score * 100)}% of claims are grounded"
 
         return MetricScore(
             metric_type=MetricType.FAITHFULNESS,
@@ -165,23 +166,25 @@ class RAGASEvaluator:
         Returns:
             MetricScore for relevance
         """
-        # Simple: check word overlap
-        query_words = set(w.lower() for w in query.split() if len(w) > 3)
-        response_words = set(w.lower() for w in response.split() if len(w) > 3)
+        query_words = frozenset(w.lower() for w in query.split() if len(w) > 3)
+        response_words = frozenset(w.lower() for w in response.split() if len(w) > 3)
+        return self.evaluate_relevance_fast(query_words, response_words)
 
+    def evaluate_relevance_fast(
+        self, query_words: frozenset, response_words: frozenset
+    ) -> MetricScore:
+        """Evaluate relevance using pre-built frozen word sets (zero-copy)."""
         if not query_words:
             score = 0.5
         else:
             overlap = len(query_words & response_words)
             score = min(1.0, overlap / len(query_words))
 
-        explanation = f"Key term coverage: {int(score * 100)}%"
-
         return MetricScore(
             metric_type=MetricType.RELEVANCE,
             score=score,
             confidence=0.7,
-            explanation=explanation,
+            explanation=f"Key term coverage: {int(score * 100)}%",
             benchmark_value=0.88,
         )
 
@@ -196,25 +199,25 @@ class RAGASEvaluator:
         Returns:
             MetricScore for completeness
         """
-        # Check if response addresses all parts of query
-        question_count = query.count("?")
+        return self.evaluate_completeness_fast(query, len(response.split()))
 
-        if question_count == 0:
-            question_count = 1
-
-        # Heuristic: longer response suggests more complete
-        response_length = len(response.split())
+    def evaluate_completeness_fast(self, query: str, response_word_count: int) -> MetricScore:
+        """Evaluate completeness using a pre-computed word count."""
+        question_count = max(1, query.count("?"))
         expected_length = question_count * 30
 
-        score = min(1.0, response_length / expected_length if expected_length > 0 else 0)
-
-        explanation = f"Response length: {response_length} words " f"(expected ~{expected_length})"
+        score = min(
+            1.0,
+            response_word_count / expected_length if expected_length > 0 else 0,
+        )
 
         return MetricScore(
             metric_type=MetricType.COMPLETENESS,
             score=score,
             confidence=0.6,
-            explanation=explanation,
+            explanation=(
+                f"Response length: {response_word_count} words " f"(expected ~{expected_length})"
+            ),
             benchmark_value=0.85,
         )
 
@@ -246,14 +249,8 @@ class BenchmarkSuite:
         """
         Evaluate a single query-response pair.
 
-        Args:
-            query: User query
-            response: Generated response
-            sources: Retrieved sources
-            reference: Reference answer (optional)
-
-        Returns:
-            EvaluationResult with metrics
+        Pre-computes shared word sets once and passes them to metrics,
+        avoiding redundant tokenisation across faithfulness/relevance/completeness.
         """
         from datetime import datetime
 
@@ -264,7 +261,12 @@ class BenchmarkSuite:
             timestamp=datetime.utcnow().isoformat(),
         )
 
-        # Evaluate faithfulness
+        # --- Pre-compute shared features ONCE ---
+        query_words = frozenset(w.lower() for w in query.split() if len(w) > 3)
+        response_words = frozenset(w.lower() for w in response.split() if len(w) > 3)
+        response_word_count = len(response.split())
+
+        # Evaluate faithfulness (already uses frozenset internally)
         faithfulness = self.evaluator.evaluate_faithfulness(response, sources)
         faithfulness.benchmark_value = self.benchmarks[MetricType.FAITHFULNESS]
         result.add_metric(
@@ -275,8 +277,8 @@ class BenchmarkSuite:
             faithfulness.benchmark_value,
         )
 
-        # Evaluate relevance
-        relevance = self.evaluator.evaluate_relevance(response, query)
+        # Evaluate relevance — pass pre-built word sets
+        relevance = self.evaluator.evaluate_relevance_fast(query_words, response_words)
         relevance.benchmark_value = self.benchmarks[MetricType.RELEVANCE]
         result.add_metric(
             MetricType.RELEVANCE,
@@ -286,8 +288,8 @@ class BenchmarkSuite:
             relevance.benchmark_value,
         )
 
-        # Evaluate completeness
-        completeness = self.evaluator.evaluate_completeness(response, query)
+        # Evaluate completeness — pass pre-computed word count
+        completeness = self.evaluator.evaluate_completeness_fast(query, response_word_count)
         completeness.benchmark_value = self.benchmarks[MetricType.COMPLETENESS]
         result.add_metric(
             MetricType.COMPLETENESS,
