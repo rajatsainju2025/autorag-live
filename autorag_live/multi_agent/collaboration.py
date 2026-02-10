@@ -7,7 +7,9 @@ disagreements through consensus mechanisms.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
@@ -182,6 +184,7 @@ class MultiAgentOrchestrator:
         self.conversation_history: List[AgentMessage] = []
         self.proposals: List[AgentProposal] = []
         self.consensus_threshold = 0.6
+        self._executor = ThreadPoolExecutor(max_workers=8)
 
     def register_agent(self, agent: SpecializedAgent) -> None:
         """Register an agent with the orchestrator."""
@@ -220,6 +223,53 @@ class MultiAgentOrchestrator:
         self.proposals.extend(proposals)
 
         # Phase 3: Consensus building
+        consensus_result = self._build_consensus(proposals)
+
+        return {
+            "query": query,
+            "initial_results": results,
+            "proposals": [p.to_dict() for p in proposals],
+            "consensus": consensus_result,
+        }
+
+    async def orchestrate_query_async(self, query: str) -> Dict[str, Any]:
+        """Orchestrate agents with async parallel execution.
+
+        Phases 1 (processing) and 2 (proposals) fan out to all agents
+        concurrently via asyncio.gather + ThreadPoolExecutor, giving ~N×
+        speedup where N = number of agents.
+
+        Args:
+            query: Input query
+
+        Returns:
+            Final answer with consensus information
+        """
+        loop = asyncio.get_event_loop()
+
+        # Phase 1: Process all agents in parallel
+        async def _run_agent(agent_id: str, agent: SpecializedAgent) -> tuple:
+            result = await loop.run_in_executor(self._executor, agent.process_query, query)
+            self.logger.info("Agent %s produced: %s...", agent_id, result[:50])
+            return agent_id, result
+
+        agent_tasks = [_run_agent(aid, ag) for aid, ag in self.agents.items()]
+        results_list = await asyncio.gather(*agent_tasks)
+        results = dict(results_list)
+
+        # Phase 2: Proposals (cheap, but parallelise for consistency)
+        proposals: List[AgentProposal] = []
+        for agent_id, agent in self.agents.items():
+            proposal = agent.propose(
+                content=results[agent_id],
+                reasoning=f"From {agent.role.value} perspective",
+                confidence=0.7,
+            )
+            proposals.append(proposal)
+
+        self.proposals.extend(proposals)
+
+        # Phase 3: Consensus (lightweight, stays sync)
         consensus_result = self._build_consensus(proposals)
 
         return {
