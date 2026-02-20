@@ -50,9 +50,9 @@ import logging
 import threading
 import time
 import uuid
-from contextlib import contextmanager
+from contextlib import asynccontextmanager, contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, AsyncGenerator, Dict, Iterator, List, Optional
 
 from .telemetry import (
     Event,
@@ -612,4 +612,146 @@ __all__ = [
     "PipelineProfileContext",
     "RAG_STAGES",
     "setup_otel_pipeline_profiling",
+    # Async GenAI semantic conventions
+    "ATTR_GEN_AI_REQUEST_MODEL",
+    "ATTR_GEN_AI_REQUEST_TEMPERATURE",
+    "ATTR_GEN_AI_USAGE_INPUT_TOKENS",
+    "ATTR_GEN_AI_USAGE_OUTPUT_TOKENS",
+    "ATTR_RAG_QUERY",
+    "ATTR_RAG_CACHE_HIT",
+    "ATTR_RAG_CONSISTENCY_SCORE",
+    "ATTR_RAG_HYDE_N_HYPOTHESES",
+    "ATTR_RAG_RAPTOR_DEPTH",
+    "async_rag_span",
+    "async_pipeline_span",
 ]
+
+
+# =============================================================================
+# Async-native span context managers with GenAI semantic conventions
+# (OpenTelemetry GenAI SemConv: https://opentelemetry.io/docs/specs/semconv/gen-ai/)
+# =============================================================================
+
+# ── GenAI Semantic Convention attribute names ─────────────────────────────
+ATTR_GEN_AI_REQUEST_MODEL = "gen_ai.request.model"
+ATTR_GEN_AI_REQUEST_TEMPERATURE = "gen_ai.request.temperature"
+ATTR_GEN_AI_REQUEST_MAX_TOKENS = "gen_ai.request.max_tokens"
+ATTR_GEN_AI_USAGE_INPUT_TOKENS = "gen_ai.usage.input_tokens"
+ATTR_GEN_AI_USAGE_OUTPUT_TOKENS = "gen_ai.usage.output_tokens"
+
+# ── Custom RAG attributes ─────────────────────────────────────────────────
+ATTR_RAG_QUERY = "rag.query"
+ATTR_RAG_QUERY_INTENT = "rag.query.intent"
+ATTR_RAG_QUERY_COMPLEXITY = "rag.query.complexity"
+ATTR_RAG_DOCS_RETRIEVED = "rag.retrieval.docs_retrieved"
+ATTR_RAG_CACHE_HIT = "rag.cache.hit"
+ATTR_RAG_CACHE_SIMILARITY = "rag.cache.similarity"
+ATTR_RAG_CONFIDENCE = "rag.answer.confidence"
+ATTR_RAG_CONSISTENCY_SCORE = "rag.answer.consistency_score"
+ATTR_RAG_HYDE_N_HYPOTHESES = "rag.hyde.n_hypotheses"
+ATTR_RAG_HYDE_ALPHA = "rag.hyde.alpha"
+ATTR_RAG_RAPTOR_DEPTH = "rag.raptor.tree_depth"
+ATTR_RAG_RAPTOR_NODES = "rag.raptor.nodes_searched"
+ATTR_RAG_BUDGET_UTILISATION = "rag.token_budget.utilisation"
+ATTR_RAG_BUDGET_REMAINING = "rag.token_budget.remaining_tokens"
+
+
+class _AsyncNoOpSpan:
+    """No-op async span — used when OTel SDK is not installed."""
+
+    def set_attribute(self, key: str, value: Any) -> "_AsyncNoOpSpan":
+        return self
+
+    def add_event(self, name: str, attributes: Optional[Dict[str, Any]] = None) -> "_AsyncNoOpSpan":
+        return self
+
+    def record_exception(self, exc: Exception) -> "_AsyncNoOpSpan":
+        return self
+
+    def set_status(self, *args: Any, **kwargs: Any) -> "_AsyncNoOpSpan":
+        return self
+
+
+@asynccontextmanager
+async def async_rag_span(
+    span_name: str,
+    profiler: Optional["PipelineProfiler"] = None,
+    query: Optional[str] = None,
+    attributes: Optional[Dict[str, Any]] = None,
+) -> AsyncGenerator[Any, None]:
+    """
+    Async context manager that creates an OTel-compatible RAG span.
+
+    Works whether or not ``opentelemetry-sdk`` is installed:
+    - If a ``PipelineProfiler`` is provided, stages are recorded in its
+      latency histograms *and* forwarded to the OTLP bridge.
+    - If no profiler is available, a no-op span is yielded.
+
+    Args:
+        span_name: OTel span name (e.g. ``"rag.retrieval"``).
+        profiler: Optional PipelineProfiler for metric recording.
+        query: Sets ``rag.query`` attribute automatically.
+        attributes: Additional span attributes to set on entry.
+
+    Yields:
+        Span-like object (real OTel span or _AsyncNoOpSpan).
+
+    Example:
+        >>> async with async_rag_span("rag.retrieval", profiler=p, query=q) as span:
+        ...     span.set_attribute(ATTR_RAG_DOCS_RETRIEVED, 10)
+        ...     docs = await retriever.retrieve(q)
+    """
+    start_ns = time.perf_counter_ns()
+
+    if profiler is None:
+        span: Any = _AsyncNoOpSpan()
+        if query:
+            span.set_attribute(ATTR_RAG_QUERY, query[:500])
+        if attributes:
+            for k, v in attributes.items():
+                span.set_attribute(k, v)
+        try:
+            yield span
+        finally:
+            pass
+        return
+
+    # Extract stage name from span_name (e.g. "rag.retrieval" → "retrieval")
+    stage = span_name.split(".")[-1]
+
+    with profiler.trace_stage(stage) as ctx_span:
+        if query:
+            ctx_span.set_attribute(ATTR_RAG_QUERY, query[:500])
+        if attributes:
+            for k, v in attributes.items():
+                ctx_span.set_attribute(k, v)
+        try:
+            yield ctx_span
+        except Exception as exc:
+            ctx_span.record_exception(exc)
+            raise
+        finally:
+            elapsed_ms = (time.perf_counter_ns() - start_ns) / 1_000_000
+            ctx_span.set_attribute("duration_ms", round(elapsed_ms, 2))
+
+
+@asynccontextmanager
+async def async_pipeline_span(
+    query: str,
+    profiler: Optional["PipelineProfiler"] = None,
+) -> AsyncGenerator[Any, None]:
+    """
+    Root span for an entire RAG pipeline call.
+
+    Creates a ``rag.pipeline`` parent span and yields a span object.
+    Nested stage spans should be opened inside this context.
+
+    Args:
+        query: The user query (recorded as ``rag.query``).
+        profiler: Optional PipelineProfiler.
+
+    Yields:
+        Span-like object for the pipeline root span.
+    """
+    async with async_rag_span("rag.pipeline", profiler=profiler, query=query) as span:
+        yield span
