@@ -10,11 +10,24 @@ from __future__ import annotations
 import asyncio
 import time
 from dataclasses import dataclass, field
+from enum import IntEnum
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from autorag_live.utils import get_logger
 
 logger = get_logger(__name__)
+
+
+class RetrievalPriority(IntEnum):
+    """Task priority levels for the priority-queue scheduler.
+
+    Lower integer value = higher priority (min-heap ordering).
+    """
+
+    CRITICAL = 0  # Multi-hop reasoning / tool calls in the hot path
+    HIGH = 1  # User-facing, interactive queries
+    NORMAL = 2  # Standard retrieval
+    LOW = 3  # Background pre-fetch / speculative retrieval
 
 
 @dataclass
@@ -25,7 +38,13 @@ class RetrievalTask:
     query: str
     retriever_name: str
     top_k: int = 5
+    priority: RetrievalPriority = RetrievalPriority.NORMAL
     metadata: Dict[str, Any] = field(default_factory=dict)
+
+    # Support ordering in a min-heap by (priority, task_id) so that tasks with
+    # the same priority are served FIFO.
+    def __lt__(self, other: "RetrievalTask") -> bool:
+        return (self.priority, self.task_id) < (other.priority, other.task_id)
 
 
 @dataclass
@@ -470,6 +489,138 @@ class BatchQueryProcessor:
         )
 
         return all_results, metrics
+
+
+class PriorityParallelRetriever:
+    """
+    Priority-queue-based parallel retriever.
+
+    Ensures that CRITICAL / HIGH priority tasks (e.g. multi-hop tool calls
+    inside a ReAct loop) are dispatched before LOW priority background
+    pre-fetches, reducing p99 latency for interactive queries.
+
+    Design
+    ------
+    * Uses ``asyncio.PriorityQueue`` — a heap-based, coroutine-safe queue.
+    * A configurable pool of *worker* coroutines drains the queue
+      concurrently.  Workers are bounded by ``max_workers`` (analogous to
+      ``ThreadPoolExecutor``).
+    * Tasks are added via ``submit()`` and results are collected via
+      ``collect()`` keyed on ``task_id``.
+
+    Usage::
+
+        retriever = PriorityParallelRetriever(max_workers=8)
+        await retriever.submit(task_critical, retriever_fn)
+        await retriever.submit(task_low, retriever_fn)
+        results = await retriever.collect()
+    """
+
+    _SENTINEL = None  # Signals workers to stop
+
+    def __init__(
+        self,
+        max_workers: int = 8,
+        timeout_seconds: float = 30.0,
+    ) -> None:
+        self.max_workers = max_workers
+        self.timeout_seconds = timeout_seconds
+        self._queue: asyncio.PriorityQueue = asyncio.PriorityQueue()
+        self._results: Dict[str, RetrievalResult] = {}
+        self._pending: int = 0
+
+    async def submit(
+        self,
+        task: RetrievalTask,
+        retriever_fn: Callable,
+    ) -> None:
+        """Enqueue a retrieval task.
+
+        Args:
+            task: Task to enqueue (priority embedded in task).
+            retriever_fn: Async or sync retrieval callable.
+        """
+        self._pending += 1
+        await self._queue.put((task.priority, task, retriever_fn))
+
+    async def collect(self) -> Dict[str, RetrievalResult]:
+        """
+        Drain the queue and return all results keyed by ``task_id``.
+
+        Spawns ``max_workers`` worker coroutines that race to consume tasks
+        in priority order.
+        """
+        if self._pending == 0:
+            return {}
+
+        # Add sentinels to stop workers
+        for _ in range(self.max_workers):
+            await self._queue.put((RetrievalPriority.LOW + 1, None, None))  # type: ignore[arg-type]
+
+        workers = [asyncio.create_task(self._worker()) for _ in range(self.max_workers)]
+        await asyncio.gather(*workers, return_exceptions=True)
+
+        results = dict(self._results)
+        self._results.clear()
+        self._pending = 0
+        return results
+
+    async def _worker(self) -> None:
+        """Worker coroutine that processes tasks from the priority queue."""
+        while True:
+            _, task, retriever_fn = await self._queue.get()
+            if task is None:  # Sentinel — stop worker
+                self._queue.task_done()
+                return
+            try:
+                result = await self._run_task(task, retriever_fn)
+                self._results[task.task_id] = result
+            except Exception as exc:
+                logger.error(f"Worker error on task {task.task_id}: {exc}")
+                self._results[task.task_id] = RetrievalResult(
+                    task_id=task.task_id,
+                    query=task.query,
+                    documents=[],
+                    retriever_name=task.retriever_name,
+                    latency_ms=0.0,
+                    success=False,
+                    error=str(exc),
+                )
+            finally:
+                self._queue.task_done()
+
+    async def _run_task(self, task: RetrievalTask, retriever_fn: Callable) -> RetrievalResult:
+        start = time.perf_counter()
+        try:
+            if asyncio.iscoroutinefunction(retriever_fn):
+                docs = await asyncio.wait_for(
+                    retriever_fn(task.query, task.top_k),
+                    timeout=self.timeout_seconds,
+                )
+            else:
+                loop = asyncio.get_event_loop()
+                docs = await asyncio.wait_for(
+                    loop.run_in_executor(None, retriever_fn, task.query, task.top_k),
+                    timeout=self.timeout_seconds,
+                )
+            return RetrievalResult(
+                task_id=task.task_id,
+                query=task.query,
+                documents=docs,
+                retriever_name=task.retriever_name,
+                latency_ms=(time.perf_counter() - start) * 1000,
+                success=True,
+            )
+        except asyncio.TimeoutError:
+            return RetrievalResult(
+                task_id=task.task_id,
+                query=task.query,
+                documents=[],
+                retriever_name=task.retriever_name,
+                latency_ms=(time.perf_counter() - start) * 1000,
+                success=False,
+                error="Timeout",
+            )
 
 
 # Mock retriever for testing
