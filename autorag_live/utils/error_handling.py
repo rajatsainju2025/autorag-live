@@ -4,6 +4,7 @@ Standardized error handling and logging for AutoRAG-Live.
 This module provides consistent error patterns, logging utilities, and recovery
 strategies across the entire codebase.
 """
+import enum
 import functools
 import logging
 import sys
@@ -408,3 +409,201 @@ def data_error(message: str, **kwargs) -> DataError:
 def validation_error(message: str, **kwargs) -> ValidationError:
     """Create a ValidationError with standard formatting."""
     return ValidationError(message, **kwargs)
+
+
+# =============================================================================
+# Circuit Breaker
+# =============================================================================
+
+
+class CircuitState(enum.Enum):
+    """States for the circuit breaker FSM."""
+
+    CLOSED = "closed"  # Normal operation — requests pass through.
+    OPEN = "open"  # Failing — requests are rejected immediately.
+    HALF_OPEN = "half_open"  # Probing — one request allowed to test recovery.
+
+
+class CircuitBreakerError(AutoRAGError):
+    """Raised when the circuit breaker is OPEN and blocks a call."""
+
+
+class CircuitBreaker:
+    """
+    Thread-safe circuit breaker for protecting external service calls.
+
+    Prevents cascade failures by short-circuiting calls to a persistently
+    failing dependency (LLM API, vector store, etc.).
+
+    State machine::
+
+        CLOSED ──(failure_threshold reached)──► OPEN
+           ▲                                      │
+           └──(probe succeeds)── HALF_OPEN ◄──────┘
+                                    │
+                              (probe fails)
+                                    │
+                                    ▼
+                                  OPEN
+
+    Usage::
+
+        cb = CircuitBreaker(failure_threshold=5, recovery_timeout=30.0)
+
+        @cb
+        def call_llm(prompt: str) -> str:
+            return openai.chat(prompt)
+
+        # Or as a context manager:
+        with cb:
+            result = risky_operation()
+
+    Args:
+        failure_threshold: Consecutive failures before opening the circuit.
+        recovery_timeout: Seconds to wait in OPEN before probing (HALF_OPEN).
+        success_threshold: Consecutive successes in HALF_OPEN to re-close.
+        name: Human-readable name for logging.
+    """
+
+    def __init__(
+        self,
+        failure_threshold: int = 5,
+        recovery_timeout: float = 30.0,
+        success_threshold: int = 2,
+        name: str = "circuit_breaker",
+    ) -> None:
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.success_threshold = success_threshold
+        self.name = name
+
+        self._state = CircuitState.CLOSED
+        self._failure_count: int = 0
+        self._success_count: int = 0
+        self._last_failure_time: float = 0.0
+        self._lock = threading.Lock()
+        self._logger = get_logger(__name__)
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    @property
+    def state(self) -> CircuitState:
+        """Current circuit state (thread-safe read)."""
+        with self._lock:
+            self._maybe_transition_to_half_open()
+            return self._state
+
+    def call(self, func: Callable, *args: Any, **kwargs: Any) -> Any:
+        """
+        Execute *func* through the circuit breaker.
+
+        Raises:
+            CircuitBreakerError: If the circuit is OPEN.
+        """
+        with self._lock:
+            self._maybe_transition_to_half_open()
+
+            if self._state == CircuitState.OPEN:
+                raise CircuitBreakerError(
+                    message=f"Circuit '{self.name}' is OPEN — call blocked",
+                    context={"failures": self._failure_count, "state": self._state.value},
+                )
+
+        # Execute outside the lock so other threads are not blocked.
+        try:
+            result = func(*args, **kwargs)
+            self._on_success()
+            return result
+        except Exception:
+            self._on_failure()
+            raise
+
+    def __call__(self, func: Callable) -> Callable:
+        """Decorator form."""
+
+        @functools.wraps(func)
+        def wrapper(*args: Any, **kwargs: Any) -> Any:
+            return self.call(func, *args, **kwargs)
+
+        return wrapper
+
+    def __enter__(self) -> "CircuitBreaker":
+        with self._lock:
+            self._maybe_transition_to_half_open()
+            if self._state == CircuitState.OPEN:
+                raise CircuitBreakerError(
+                    message=f"Circuit '{self.name}' is OPEN — call blocked",
+                    context={"failures": self._failure_count},
+                )
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> bool:
+        if exc_type is None:
+            self._on_success()
+        else:
+            self._on_failure()
+        return False  # Never suppress exceptions.
+
+    def reset(self) -> None:
+        """Manually reset the circuit to CLOSED state."""
+        with self._lock:
+            self._state = CircuitState.CLOSED
+            self._failure_count = 0
+            self._success_count = 0
+        self._logger.info(f"Circuit '{self.name}' manually reset to CLOSED")
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Return current circuit statistics."""
+        with self._lock:
+            return {
+                "name": self.name,
+                "state": self._state.value,
+                "failure_count": self._failure_count,
+                "success_count": self._success_count,
+                "last_failure_time": self._last_failure_time,
+            }
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _maybe_transition_to_half_open(self) -> None:
+        """Transition OPEN → HALF_OPEN once recovery_timeout has elapsed."""
+        if (
+            self._state == CircuitState.OPEN
+            and time.monotonic() - self._last_failure_time >= self.recovery_timeout
+        ):
+            self._state = CircuitState.HALF_OPEN
+            self._success_count = 0
+            self._logger.info(f"Circuit '{self.name}' → HALF_OPEN (probing)")
+
+    def _on_success(self) -> None:
+        with self._lock:
+            if self._state == CircuitState.HALF_OPEN:
+                self._success_count += 1
+                if self._success_count >= self.success_threshold:
+                    self._state = CircuitState.CLOSED
+                    self._failure_count = 0
+                    self._logger.info(f"Circuit '{self.name}' → CLOSED (recovered)")
+            elif self._state == CircuitState.CLOSED:
+                # Reset failure counter on any success in CLOSED state.
+                self._failure_count = 0
+
+    def _on_failure(self) -> None:
+        with self._lock:
+            self._failure_count += 1
+            self._last_failure_time = time.monotonic()
+
+            if self._state == CircuitState.HALF_OPEN:
+                # Probe failed — stay / return to OPEN.
+                self._state = CircuitState.OPEN
+                self._logger.warning(f"Circuit '{self.name}' probe failed → OPEN")
+            elif (
+                self._state == CircuitState.CLOSED and self._failure_count >= self.failure_threshold
+            ):
+                self._state = CircuitState.OPEN
+                self._logger.warning(
+                    f"Circuit '{self.name}' → OPEN after {self._failure_count} failures"
+                )
