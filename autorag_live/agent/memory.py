@@ -6,16 +6,80 @@ Handles context window optimization, token counting, and relevance-based summari
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
 
+logger = logging.getLogger(__name__)
 
-def estimate_tokens(text: str) -> int:
-    """
-    Estimate token count for text.
+# ---------------------------------------------------------------------------
+# Token counting — tiktoken with graceful fallback
+# ---------------------------------------------------------------------------
+# We lazy-import tiktoken so the module still loads even when the package is
+# absent (e.g. in lightweight test environments).  The public API is a single
+# ``estimate_tokens(text, model)`` function used throughout this file.
 
-    Simple heuristic: ~1 token per 4 characters for English.
+_TIKTOKEN_ENCODERS: Dict[str, Any] = {}
+_TIKTOKEN_AVAILABLE: Optional[bool] = None  # None = not yet probed
+
+
+def _get_tiktoken_encoder(model: str = "gpt-4o"):
+    """Return a cached tiktoken encoder, or None if unavailable."""
+    global _TIKTOKEN_AVAILABLE
+
+    if _TIKTOKEN_AVAILABLE is False:
+        return None
+
+    if model in _TIKTOKEN_ENCODERS:
+        return _TIKTOKEN_ENCODERS[model]
+
+    try:
+        import tiktoken  # noqa: PLC0415
+
+        try:
+            enc = tiktoken.encoding_for_model(model)
+        except KeyError:
+            # Unknown model — fall back to cl100k_base (GPT-4 / GPT-3.5 family)
+            enc = tiktoken.get_encoding("cl100k_base")
+
+        _TIKTOKEN_ENCODERS[model] = enc
+        _TIKTOKEN_AVAILABLE = True
+        return enc
+    except ImportError:
+        _TIKTOKEN_AVAILABLE = False
+        logger.debug(
+            "tiktoken not installed — falling back to len(text)//4 token estimate. "
+            "Install tiktoken for accurate token counts: pip install tiktoken"
+        )
+        return None
+
+
+def estimate_tokens(text: str, model: str = "gpt-4o") -> int:
     """
+    Estimate token count for *text*, preferring tiktoken for accuracy.
+
+    When tiktoken is available the count is **exact** for the given *model*
+    family.  Otherwise we fall back to the ``len(text) // 4`` heuristic which
+    is ~15-30 % inaccurate for English prose and significantly worse for code,
+    JSON, and non-English languages.
+
+    Args:
+        text:  The string to tokenise.
+        model: OpenAI model name used to select the right BPE vocabulary.
+               Defaults to ``"gpt-4o"`` (cl100k_base vocabulary).
+
+    Returns:
+        Token count (always ≥ 1).
+    """
+    if not text:
+        return 1
+
+    enc = _get_tiktoken_encoder(model)
+    if enc is not None:
+        # encode() is fast (C extension) — ~3 µs per 100 tokens
+        return max(1, len(enc.encode(text)))
+
+    # Fallback heuristic
     return max(1, len(text) // 4)
 
 
