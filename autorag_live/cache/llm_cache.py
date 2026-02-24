@@ -10,6 +10,7 @@ Features:
 - Token-level deduplication
 - Cost tracking and analytics
 - Streaming support with partial matching
+- **Disk persistence**: save/load cache across restarts
 
 Performance Impact:
 - 70-90% cache hit rate for production workloads
@@ -21,7 +22,10 @@ Performance Impact:
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
+import os
+import tempfile
 import time
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple
@@ -314,9 +318,7 @@ class LLMSemanticCache:
             # Try to use OpenAI embeddings
             import openai
 
-            response = await openai.Embedding.acreate(
-                model=self.embedding_model, input=text
-            )
+            response = await openai.Embedding.acreate(model=self.embedding_model, input=text)
             return np.array(response["data"][0]["embedding"])
 
         except Exception as e:
@@ -396,3 +398,156 @@ class LLMSemanticCache:
             await self._rebuild_index()
 
         return len(expired_keys)
+
+    # ------------------------------------------------------------------
+    # Disk persistence
+    # ------------------------------------------------------------------
+
+    def save(self, path: str) -> None:
+        """
+        Persist the cache to *path* so it survives process restarts.
+
+        Two files are written atomically:
+
+        * ``<path>.meta.json``  — metadata for every cached entry
+          (query, response, model, temperature, token_count, timestamps, TTL).
+        * ``<path>.embeddings.npy`` — a float32 NumPy array of all embeddings,
+          one row per entry in the same order as the metadata list.
+
+        Writes are done to a temporary file first and then ``os.replace``-d
+        into place so a crash mid-write never corrupts the existing cache.
+
+        Args:
+            path: Filesystem prefix (without extension).
+        """
+        entries = list(self.cache.values())
+        if not entries:
+            self.logger.debug("Cache is empty — nothing to save")
+            return
+
+        meta = []
+        embeddings = []
+
+        for entry in entries:
+            meta.append(
+                {
+                    "query": entry.query,
+                    "response": entry.response,
+                    "token_count": entry.token_count,
+                    "model": entry.model,
+                    "temperature": entry.temperature,
+                    "timestamp": entry.timestamp,
+                    "access_count": entry.access_count,
+                    "last_access": entry.last_access,
+                    "ttl_seconds": entry.ttl_seconds,
+                }
+            )
+            embeddings.append(entry.embedding)
+
+        emb_array = np.array(embeddings, dtype=np.float32)
+
+        # Write embeddings atomically
+        emb_path = f"{path}.embeddings.npy"
+        fd, tmp_emb = tempfile.mkstemp(dir=os.path.dirname(emb_path) or ".", suffix=".npy")
+        try:
+            os.close(fd)
+            np.save(tmp_emb, emb_array)
+            os.replace(tmp_emb, emb_path)
+        except Exception:
+            os.unlink(tmp_emb)
+            raise
+
+        # Write metadata atomically
+        meta_path = f"{path}.meta.json"
+        fd, tmp_meta = tempfile.mkstemp(dir=os.path.dirname(meta_path) or ".", suffix=".json")
+        try:
+            os.close(fd)
+            with open(tmp_meta, "w", encoding="utf-8") as fh:
+                json.dump(meta, fh, ensure_ascii=False)
+            os.replace(tmp_meta, meta_path)
+        except Exception:
+            os.unlink(tmp_meta)
+            raise
+
+        self.logger.info(f"LLMSemanticCache: saved {len(entries)} entries to {path}.*")
+
+    def load(self, path: str, skip_expired: bool = True) -> int:
+        """
+        Load a previously :meth:`save`-d cache from *path*.
+
+        Args:
+            path:          Filesystem prefix (without extension).
+            skip_expired:  Discard entries whose TTL has elapsed (default True).
+
+        Returns:
+            Number of entries successfully loaded.
+        """
+        meta_path = f"{path}.meta.json"
+        emb_path = f"{path}.embeddings.npy"
+
+        if not os.path.exists(meta_path) or not os.path.exists(emb_path):
+            self.logger.debug(f"No persisted cache found at {path}.*")
+            return 0
+
+        try:
+            with open(meta_path, encoding="utf-8") as fh:
+                meta = json.load(fh)
+            emb_array = np.load(emb_path).astype(np.float32)
+        except Exception as exc:
+            self.logger.warning(f"LLMSemanticCache: failed to load cache from {path}: {exc}")
+            return 0
+
+        if len(meta) != len(emb_array):
+            self.logger.warning(
+                "LLMSemanticCache: metadata/embedding count mismatch — skipping load"
+            )
+            return 0
+
+        now = time.time()
+        loaded = 0
+        for entry_meta, embedding in zip(meta, emb_array):
+            # Honour TTL if requested
+            if skip_expired:
+                age = now - entry_meta["timestamp"]
+                if age > entry_meta["ttl_seconds"]:
+                    continue
+
+            key = self._generate_key(
+                entry_meta["query"], entry_meta["model"], entry_meta["temperature"]
+            )
+            self.cache[key] = CachedResponse(
+                query=entry_meta["query"],
+                response=entry_meta["response"],
+                embedding=embedding,
+                token_count=entry_meta["token_count"],
+                model=entry_meta["model"],
+                temperature=entry_meta["temperature"],
+                timestamp=entry_meta["timestamp"],
+                access_count=entry_meta["access_count"],
+                last_access=entry_meta["last_access"],
+                ttl_seconds=entry_meta["ttl_seconds"],
+            )
+            self.id_to_key.append(key)
+            loaded += 1
+
+        # Rebuild FAISS index from loaded embeddings
+        if loaded:
+            self._rebuild_index_sync()
+
+        self.logger.info(f"LLMSemanticCache: loaded {loaded}/{len(meta)} entries from {path}.*")
+        return loaded
+
+    def _rebuild_index_sync(self) -> None:
+        """Rebuild the FAISS index synchronously (used after :meth:`load`)."""
+        try:
+            import faiss  # noqa: PLC0415
+
+            vectors = np.array([self.cache[k].embedding for k in self.id_to_key], dtype=np.float32)
+            dimension = vectors.shape[1]
+            self.index = faiss.IndexFlatIP(dimension)
+            faiss.normalize_L2(vectors)
+            self.index.add(vectors)
+        except ImportError:
+            self.logger.debug("faiss not available — skipping index rebuild")
+        except Exception as exc:
+            self.logger.warning(f"Index rebuild failed: {exc}")
