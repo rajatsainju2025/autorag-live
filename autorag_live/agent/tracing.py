@@ -23,6 +23,7 @@ from __future__ import annotations
 import asyncio
 import functools
 import logging
+import time
 import uuid
 from abc import ABC, abstractmethod
 from contextlib import asynccontextmanager, contextmanager
@@ -489,6 +490,132 @@ class MetricsCollector:
 
 
 # =============================================================================
+# Adaptive Head-Based Sampler
+# =============================================================================
+
+
+class AdaptiveSampler:
+    """
+    Head-based probabilistic sampler with adaptive rate control.
+
+    At high QPS, recording every span burns 5-15 % of CPU on telemetry.
+    This sampler maintains a *target* sample rate and adjusts it dynamically
+    so that the exporter is never overwhelmed.
+
+    Algorithm
+    ---------
+    * Every incoming trace is assigned a ``[0, 1)`` random number.
+    * A trace is sampled iff its random number is below ``current_rate``.
+    * Every ``window_seconds`` the sampler checks the observed throughput
+      and raises/lowers ``current_rate`` using a simple AIMD controller:
+
+      - If throughput > ``max_spans_per_sec``: halve the rate (× 0.5).
+      - Otherwise: increase rate additively by ``rate_step``.
+
+    The result is a well-understood, low-overhead controller that converges
+    to the highest sustainable sample rate without dropping the exporter.
+
+    Usage::
+
+        sampler = AdaptiveSampler(initial_rate=1.0, max_spans_per_sec=200)
+        tracer  = AgentTracer("svc", sampler=sampler)
+
+    Args:
+        initial_rate:      Starting sample probability (0–1].
+        max_spans_per_sec: Exporter throughput ceiling.
+        min_rate:          Never drop below this rate (always sample errors).
+        window_seconds:    How often (seconds) to re-evaluate the rate.
+        rate_step:         Additive increase per window when under capacity.
+    """
+
+    def __init__(
+        self,
+        initial_rate: float = 1.0,
+        max_spans_per_sec: float = 500.0,
+        min_rate: float = 0.01,
+        window_seconds: float = 10.0,
+        rate_step: float = 0.05,
+    ) -> None:
+        import random
+        import threading
+
+        self._rng = random.Random()  # Instance-local RNG for thread safety
+        self.current_rate = max(min_rate, min(1.0, initial_rate))
+        self.max_spans_per_sec = max_spans_per_sec
+        self.min_rate = min_rate
+        self.window_seconds = window_seconds
+        self.rate_step = rate_step
+
+        self._lock = threading.Lock()
+        self._span_count: int = 0
+        self._window_start: float = time.monotonic()
+
+        # Stats
+        self.total_considered: int = 0
+        self.total_sampled: int = 0
+
+    def should_sample(self, force_sample: bool = False) -> bool:
+        """
+        Decide whether to sample the current trace.
+
+        Args:
+            force_sample: Always sample (e.g. error spans).
+
+        Returns:
+            ``True`` if this trace should be recorded.
+        """
+        with self._lock:
+            self.total_considered += 1
+            self._maybe_update_rate()
+
+            if force_sample or self._rng.random() < self.current_rate:
+                self._span_count += 1
+                self.total_sampled += 1
+                return True
+            return False
+
+    def get_stats(self) -> Dict[str, Any]:
+        """Return current sampler statistics."""
+        with self._lock:
+            return {
+                "current_rate": round(self.current_rate, 4),
+                "total_considered": self.total_considered,
+                "total_sampled": self.total_sampled,
+                "effective_rate": (
+                    round(self.total_sampled / self.total_considered, 4)
+                    if self.total_considered
+                    else 0.0
+                ),
+            }
+
+    # ------------------------------------------------------------------
+
+    def _maybe_update_rate(self) -> None:
+        """AIMD rate controller — called under lock."""
+        now = time.monotonic()
+        elapsed = now - self._window_start
+
+        if elapsed < self.window_seconds:
+            return
+
+        observed_qps = self._span_count / max(elapsed, 1e-9)
+
+        if observed_qps > self.max_spans_per_sec:
+            # Multiplicative decrease
+            self.current_rate = max(self.min_rate, self.current_rate * 0.5)
+            logger.debug(
+                f"AdaptiveSampler: throughput={observed_qps:.0f}/s > limit="
+                f"{self.max_spans_per_sec:.0f}/s — rate ↓ {self.current_rate:.3f}"
+            )
+        else:
+            # Additive increase
+            self.current_rate = min(1.0, self.current_rate + self.rate_step)
+
+        self._span_count = 0
+        self._window_start = now
+
+
+# =============================================================================
 # Tracer
 # =============================================================================
 
@@ -515,6 +642,7 @@ class AgentTracer:
         service_name: str,
         exporter: Optional[SpanExporter] = None,
         auto_export: bool = True,
+        sampler: Optional["AdaptiveSampler"] = None,
     ):
         """
         Initialize tracer.
@@ -523,10 +651,14 @@ class AgentTracer:
             service_name: Name of the service
             exporter: Span exporter
             auto_export: Whether to auto-export on span end
+            sampler: Optional :class:`AdaptiveSampler`.  When *None* every
+                     span is recorded (rate = 1.0).  Pass an
+                     ``AdaptiveSampler`` to shed load at high QPS.
         """
         self.service_name = service_name
         self.exporter = exporter or InMemoryExporter()
         self.auto_export = auto_export
+        self.sampler = sampler  # None ⇒ always sample
         self.metrics = MetricsCollector()
 
         self._traces: Dict[str, Trace] = {}
@@ -698,7 +830,12 @@ class AgentTracer:
         return span
 
     def _record_span(self, span: Span) -> None:
-        """Record completed span."""
+        """Record completed span (subject to sampler decision)."""
+        # Error spans are always recorded regardless of sampling rate.
+        force = span.status == SpanStatus.ERROR
+        if self.sampler is not None and not self.sampler.should_sample(force_sample=force):
+            return  # Dropped — do not export or store
+
         trace_id = span.context.trace_id
 
         if trace_id not in self._traces:
