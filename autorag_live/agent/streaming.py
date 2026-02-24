@@ -55,51 +55,121 @@ class StreamEvent:
 
 
 class StreamBuffer:
-    """Thread-safe buffer for streaming events."""
+    """
+    Async-safe event buffer for streaming pipeline events.
+
+    Uses :class:`asyncio.Lock` + :class:`asyncio.Event` so that callers in an
+    async context never block the event loop.  A legacy *synchronous* path is
+    preserved via ``put_sync`` / ``get_sync`` for non-async call sites (e.g.
+    background threads feeding events into the pipeline).
+
+    Design notes
+    ------------
+    * ``asyncio.Lock`` is re-entrant-safe and does not block threads — ideal
+      for async producers/consumers running in the same event loop.
+    * ``threading.Lock`` + ``threading.Event`` are kept only for the
+      ``_sync_*`` methods used by non-async callers so the two paths are
+      clearly separated and cannot cause cross-contamination.
+    * The internal deque uses ``collections.deque(maxlen=max_size)`` which
+      provides O(1) append/popleft and automatic bounded eviction.
+    """
 
     def __init__(self, max_size: int = 1000):
+        self.max_size = max_size
+
+        # --- async path ---------------------------------------------------
+        import collections
+
+        self._queue: collections.deque = collections.deque(maxlen=max_size)
+        self._async_lock = asyncio.Lock()
+        self._async_event = asyncio.Event()
+
+        # --- sync path (legacy / background-thread producers) -------------
+        self._sync_events: list = []
+        self._sync_lock = threading.Lock()
+        self._sync_event = threading.Event()
+
+    # ------------------------------------------------------------------
+    # Async API (preferred for all async callers)
+    # ------------------------------------------------------------------
+
+    async def put(self, event: StreamEvent) -> None:  # type: ignore[override]
+        """Add an event — async-safe, non-blocking."""
+        async with self._async_lock:
+            self._queue.append(event)
+            self._async_event.set()
+
+    async def get(self, timeout: Optional[float] = None) -> Optional[StreamEvent]:  # type: ignore[override]
         """
-        Initialize stream buffer.
+        Await the next event.
 
         Args:
-            max_size: Maximum buffer size
+            timeout: Maximum seconds to wait.  ``None`` waits indefinitely.
+
+        Returns:
+            The next :class:`StreamEvent`, or ``None`` on timeout.
         """
-        self.max_size = max_size
-        self.events: list = []
-        self.lock = threading.Lock()
-        self.event = threading.Event()
+        try:
+            await asyncio.wait_for(self._async_event.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            return None
 
-    def put(self, event: StreamEvent) -> None:
-        """Add event to buffer."""
-        with self.lock:
-            self.events.append(event)
-            if len(self.events) > self.max_size:
-                self.events = self.events[-self.max_size :]
-            self.event.set()
+        async with self._async_lock:
+            if self._queue:
+                event = self._queue.popleft()
+                if not self._queue:
+                    self._async_event.clear()
+                return event
+        return None
 
-    def get(self, timeout: Optional[float] = None) -> Optional[StreamEvent]:
-        """Get next event from buffer."""
-        if self.event.wait(timeout=timeout):
-            with self.lock:
-                if self.events:
-                    event = self.events.pop(0)
-                    if not self.events:
-                        self.event.clear()
+    async def get_all(self) -> list:  # type: ignore[override]
+        """Drain all buffered events atomically."""
+        async with self._async_lock:
+            events = list(self._queue)
+            self._queue.clear()
+            self._async_event.clear()
+            return events
+
+    async def is_empty(self) -> bool:  # type: ignore[override]
+        """Return True if the buffer contains no events."""
+        async with self._async_lock:
+            return len(self._queue) == 0
+
+    # ------------------------------------------------------------------
+    # Sync API (background threads / non-async call sites)
+    # ------------------------------------------------------------------
+
+    def put_sync(self, event: StreamEvent) -> None:
+        """Add an event from a synchronous / threaded context."""
+        with self._sync_lock:
+            self._sync_events.append(event)
+            if len(self._sync_events) > self.max_size:
+                self._sync_events = self._sync_events[-self.max_size :]
+            self._sync_event.set()
+
+    def get_sync(self, timeout: Optional[float] = None) -> Optional[StreamEvent]:
+        """Get the next event from a synchronous / threaded context."""
+        if self._sync_event.wait(timeout=timeout):
+            with self._sync_lock:
+                if self._sync_events:
+                    event = self._sync_events.pop(0)
+                    if not self._sync_events:
+                        self._sync_event.clear()
                     return event
         return None
 
-    def get_all(self) -> list:
-        """Get all events and clear buffer."""
-        with self.lock:
-            events = self.events[:]
-            self.events.clear()
-            self.event.clear()
+    def get_all_sync(self) -> list:
+        """Drain all events from a synchronous context."""
+        with self._sync_lock:
+            events = self._sync_events[:]
+            self._sync_events.clear()
+            self._sync_event.clear()
             return events
 
-    def is_empty(self) -> bool:
-        """Check if buffer is empty."""
-        with self.lock:
-            return len(self.events) == 0
+    def is_empty_sync(self) -> bool:
+        """Return True if the sync buffer is empty."""
+        with self._sync_lock:
+            return len(self._sync_events) == 0
 
 
 class ProgressTracker:
@@ -181,14 +251,14 @@ class StreamingResponseHandler:
 
     def stream_events(self) -> Generator[StreamEvent, None, None]:
         """
-        Stream events as they arrive.
+        Stream events as they arrive (synchronous generator).
 
         Yields:
             Stream events
         """
         timeout = 1.0
         while not self._cancelled:
-            event = self.buffer.get(timeout=timeout)
+            event = self.buffer.get_sync(timeout=timeout)
             if event:
                 if self.callback:
                     try:
@@ -199,7 +269,7 @@ class StreamingResponseHandler:
                 yield event
 
             # Check if we should exit
-            if self._cancelled and self.buffer.is_empty():
+            if self._cancelled and self.buffer.is_empty_sync():
                 break
 
     async def stream_events_async(self) -> AsyncGenerator[StreamEvent, None]:
@@ -223,7 +293,7 @@ class StreamingResponseHandler:
                 await asyncio.sleep(0.01)
 
             # Check if we should exit
-            if self._cancelled and self.buffer.is_empty():
+            if self._cancelled and await self.buffer.is_empty():
                 break
 
     def add_event(
@@ -238,7 +308,7 @@ class StreamingResponseHandler:
             metadata: Optional metadata
         """
         event = StreamEvent(event_type=event_type, content=content, metadata=metadata or {})
-        self.buffer.put(event)
+        self.buffer.put_sync(event)
 
     def start_streaming(self) -> None:
         """Mark streaming as started."""
@@ -283,7 +353,7 @@ class StreamingResponseHandler:
 
     def get_all_events(self) -> list:
         """Get all buffered events."""
-        return self.buffer.get_all()
+        return self.buffer.get_all_sync()
 
 
 class StreamingAgent:
