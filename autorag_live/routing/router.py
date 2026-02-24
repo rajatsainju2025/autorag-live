@@ -14,6 +14,11 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
+try:
+    import numpy as np
+except ImportError:  # numpy is optional for pure-keyword routing
+    np = None  # type: ignore[assignment]
+
 
 class QueryType(Enum):
     """Query classification types."""
@@ -286,6 +291,271 @@ class QueryClassifier:
                 phrases.append(part)
 
         return phrases[:5]  # Limit to 5 phrases
+
+
+# =============================================================================
+# Embedding-based semantic routing (fallback to keyword classifier)
+# =============================================================================
+
+
+class SemanticQueryRouter:
+    """
+    Embedding-cosine-similarity router for query type and domain classification.
+
+    The pure keyword-based ``QueryClassifier`` fails on paraphrased / domain-
+    shifted queries that are common in agentic multi-hop reasoning.  This class
+    pre-computes centroid embeddings for each ``QueryType`` and ``QueryDomain``
+    from a small set of representative seed phrases, then classifies unseen
+    queries by finding the nearest centroid.
+
+    Falls back gracefully to the keyword classifier when an embedding model
+    is unavailable (no API key, no ``sentence-transformers``, etc.).
+
+    Design
+    ------
+    * Centroid vectors are computed once at construction time and cached in
+      memory — inference is a single matrix-vector dot product (O(C·D) where
+      C = number of classes, D = embedding dimension ≈ 384).
+    * Optional *confidence blending*: the final classification can blend the
+      keyword score and the cosine score, weighted by ``blend_alpha``.
+
+    Args:
+        embed_fn:    Callable ``(texts: List[str]) → np.ndarray`` of shape
+                     ``(n, d)``.  If ``None`` the keyword fallback is used.
+        blend_alpha: Weight of embedding score in the final decision (0–1).
+                     ``1.0`` = pure embedding; ``0.0`` = pure keyword.
+    """
+
+    # Seed phrases per QueryType — diverse enough to span the vocabulary
+    _TYPE_SEEDS: Dict[str, List[str]] = {
+        "factual": [
+            "What is X?",
+            "When did Y happen?",
+            "Who invented Z?",
+            "Define the term",
+            "List the top results",
+        ],
+        "procedural": [
+            "How do I build this?",
+            "Step-by-step guide",
+            "Explain the process",
+            "Instructions to create",
+            "How to configure",
+        ],
+        "comparative": [
+            "Compare A and B",
+            "Difference between X and Y",
+            "Which is better",
+            "Contrast the approaches",
+            "Pros and cons",
+        ],
+        "analytical": [
+            "Why does this happen?",
+            "Analyze the root cause",
+            "What is the impact of",
+            "Explain the reason for",
+            "Consequences of",
+        ],
+        "creative": [
+            "Generate an idea for",
+            "Brainstorm solutions",
+            "Suggest a novel approach",
+            "Create a plan for",
+            "Invent a new way",
+        ],
+        "retrieval": [
+            "Find the document about",
+            "Search for information on",
+            "Retrieve the record",
+            "Look up the entry",
+        ],
+    }
+
+    _DOMAIN_SEEDS: Dict[str, List[str]] = {
+        "technical": [
+            "API endpoint returns 500",
+            "SQL query optimization",
+            "Kubernetes deployment",
+            "Python type hints",
+        ],
+        "medical": [
+            "Symptoms of diabetes",
+            "Drug interactions",
+            "Clinical trial phase",
+            "Patient diagnosis",
+        ],
+        "legal": [
+            "Contract breach liability",
+            "Statute of limitations",
+            "Intellectual property rights",
+            "Regulatory compliance",
+        ],
+        "financial": [
+            "Portfolio diversification",
+            "Earnings per share",
+            "Interest rate risk",
+            "Balance sheet analysis",
+        ],
+        "scientific": [
+            "Hypothesis testing methodology",
+            "Peer-reviewed study results",
+            "Experimental control group",
+            "Quantum entanglement",
+        ],
+        "general": [
+            "General knowledge question",
+            "Common everyday topic",
+            "Miscellaneous information",
+        ],
+    }
+
+    def __init__(
+        self,
+        embed_fn: Optional[Any] = None,
+        blend_alpha: float = 0.7,
+    ) -> None:
+        self._embed_fn = embed_fn
+        self.blend_alpha = blend_alpha
+        self._keyword_clf = QueryClassifier()
+        self.logger = logging.getLogger("SemanticQueryRouter")
+
+        self._type_centroids: Optional[np.ndarray] = None
+        self._type_labels: List[str] = []
+        self._domain_centroids: Optional[np.ndarray] = None
+        self._domain_labels: List[str] = []
+
+        if embed_fn is not None:
+            self._build_centroids()
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+
+    def classify(self, query: str) -> QueryAnalysis:
+        """
+        Classify *query* using embedding similarity (with keyword fallback).
+
+        Returns a :class:`QueryAnalysis` with ``confidence`` reflecting the
+        blend of keyword and embedding scores.
+        """
+        # Always get the keyword baseline
+        kw_analysis = self._keyword_clf.classify(query)
+
+        if self._embed_fn is None or self._type_centroids is None:
+            return kw_analysis  # No embedding model available
+
+        try:
+            query_vec = self._embed_fn([query])  # (1, D)
+            query_vec = self._l2_normalize(query_vec)
+
+            # Type classification
+            type_scores = query_vec @ self._type_centroids.T  # (1, C)
+            best_type_idx = int(np.argmax(type_scores))
+            type_cos = float(type_scores[0, best_type_idx])
+            sem_type_name = self._type_labels[best_type_idx]
+
+            # Domain classification
+            domain_scores = query_vec @ self._domain_centroids.T
+            best_domain_idx = int(np.argmax(domain_scores))
+            domain_cos = float(domain_scores[0, best_domain_idx])
+            sem_domain_name = self._domain_labels[best_domain_idx]
+
+            # Blend: if cosine confidence is high, prefer semantic result
+            if type_cos > (1.0 - self.blend_alpha):
+                try:
+                    query_type = QueryType(sem_type_name)
+                except ValueError:
+                    query_type = kw_analysis.query_type
+            else:
+                query_type = kw_analysis.query_type
+
+            if domain_cos > (1.0 - self.blend_alpha):
+                try:
+                    domain = QueryDomain(sem_domain_name)
+                except ValueError:
+                    domain = kw_analysis.domain
+            else:
+                domain = kw_analysis.domain
+
+            blended_confidence = (
+                self.blend_alpha * (type_cos + domain_cos) / 2.0
+                + (1.0 - self.blend_alpha) * kw_analysis.confidence
+            )
+
+            return QueryAnalysis(
+                original_query=kw_analysis.original_query,
+                query_type=query_type,
+                domain=domain,
+                complexity=kw_analysis.complexity,
+                requires_multi_step=kw_analysis.requires_multi_step,
+                requires_reasoning=kw_analysis.requires_reasoning,
+                requires_external_knowledge=kw_analysis.requires_external_knowledge,
+                entity_count=kw_analysis.entity_count,
+                key_phrases=kw_analysis.key_phrases,
+                confidence=min(1.0, blended_confidence),
+            )
+
+        except Exception as exc:
+            self.logger.warning(f"Embedding routing failed, falling back to keywords: {exc}")
+            return kw_analysis
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _build_centroids(self) -> None:
+        """Pre-compute centroid embeddings for all classes."""
+        try:
+            # Type centroids
+            type_texts, type_labels = [], []
+            for label, seeds in self._TYPE_SEEDS.items():
+                type_texts.extend(seeds)
+                type_labels.extend([label] * len(seeds))
+
+            type_vecs = self._l2_normalize(self._embed_fn(type_texts))
+            self._type_labels = list(self._TYPE_SEEDS.keys())
+            self._type_centroids = np.stack(
+                [
+                    type_vecs[
+                        [i for i, lbl_name in enumerate(type_labels) if lbl_name == lbl]
+                    ].mean(axis=0)
+                    for lbl in self._type_labels
+                ]
+            )
+            self._type_centroids = self._l2_normalize(self._type_centroids)
+
+            # Domain centroids
+            domain_texts, domain_labels = [], []
+            for label, seeds in self._DOMAIN_SEEDS.items():
+                domain_texts.extend(seeds)
+                domain_labels.extend([label] * len(seeds))
+
+            domain_vecs = self._l2_normalize(self._embed_fn(domain_texts))
+            self._domain_labels = list(self._DOMAIN_SEEDS.keys())
+            self._domain_centroids = np.stack(
+                [
+                    domain_vecs[
+                        [i for i, lbl_name in enumerate(domain_labels) if lbl_name == lbl]
+                    ].mean(axis=0)
+                    for lbl in self._domain_labels
+                ]
+            )
+            self._domain_centroids = self._l2_normalize(self._domain_centroids)
+
+            self.logger.info(
+                f"SemanticQueryRouter: built centroids for "
+                f"{len(self._type_labels)} types, {len(self._domain_labels)} domains"
+            )
+        except Exception as exc:
+            self.logger.warning(f"SemanticQueryRouter centroid build failed: {exc}")
+            self._type_centroids = None
+            self._domain_centroids = None
+
+    @staticmethod
+    def _l2_normalize(arr: "np.ndarray") -> "np.ndarray":
+        """Row-wise L2 normalisation."""
+        norms = np.linalg.norm(arr, axis=-1, keepdims=True)
+        return arr / np.where(norms == 0, 1.0, norms)
 
 
 class TaskDecomposer:
