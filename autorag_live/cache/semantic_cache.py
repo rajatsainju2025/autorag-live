@@ -54,24 +54,43 @@ class BloomFilter:
     Memory: ~size/8 bytes (vs size bytes for list[bool]).
     Speed: Vectorized numpy bitwise ops for add/contains.
 
+    Auto-resize
+    -----------
+    When ``false_positive_rate`` exceeds ``max_fpr`` (default 5 %), calling
+    :meth:`maybe_resize` doubles the bit-array capacity and re-inserts every
+    tracked item.  This keeps FPR bounded without requiring the caller to
+    pre-size the filter.  The re-insert is O(n·k) where n = item count and k =
+    num_hashes — the same cost as a single full scan of the cache keys.
+
     Based on: "Less Hashing, Same Performance: Building a Better Bloom Filter"
     (Kirsch & Mitzenmacher, 2006)
+
+    Args:
+        size:        Initial bit-array size in bits (rounded up to ×8).
+        num_hashes:  Number of hash functions k (optimal: ≈ (m/n)·ln2).
+        max_fpr:     FPR threshold that triggers :meth:`maybe_resize`.
+        max_size:    Hard upper limit on bit-array size (prevents unbounded
+                     memory growth).  ``None`` = no limit.
     """
 
-    def __init__(self, size: int = 10000, num_hashes: int = 5):
-        """
-        Initialize Bloom filter.
-
-        Args:
-            size: Bit array size (rounded up to multiple of 8)
-            num_hashes: Number of hash functions (optimal: m/n * ln2)
-        """
+    def __init__(
+        self,
+        size: int = 10000,
+        num_hashes: int = 5,
+        max_fpr: float = 0.05,
+        max_size: Optional[int] = None,
+    ):
         # Round up to multiple of 8 for byte alignment
         self.size = ((size + 7) // 8) * 8
         self.num_hashes = num_hashes
+        self.max_fpr = max_fpr
+        self.max_size = max_size
+
         # NumPy uint8 bitarray: 8× less memory than list[bool]
         self._bits = np.zeros(self.size // 8, dtype=np.uint8)
         self._item_count = 0
+        # Track inserted items for re-insertion on resize
+        self._items: list = []
 
     def _hashes(self, item: str) -> np.ndarray:
         """Generate hash values using Kirsch-Mitzenmacher double hashing.
@@ -105,6 +124,7 @@ class BloomFilter:
         for h in self._hashes(item):
             self._set_bit(int(h))
         self._item_count += 1
+        self._items.append(item)
 
     def contains(self, item: str) -> bool:
         """
@@ -119,6 +139,7 @@ class BloomFilter:
         """Clear the filter."""
         self._bits[:] = 0
         self._item_count = 0
+        self._items.clear()
 
     @property
     def false_positive_rate(self) -> float:
@@ -127,6 +148,50 @@ class BloomFilter:
             return 0.0
         k, n, m = self.num_hashes, self._item_count, self.size
         return (1.0 - np.exp(-k * n / m)) ** k
+
+    def maybe_resize(self) -> bool:
+        """
+        Double the bit-array if ``false_positive_rate > max_fpr``.
+
+        All previously added items are re-inserted into the enlarged filter so
+        the contains-guarantee is preserved.
+
+        Returns:
+            ``True`` if a resize was performed, ``False`` otherwise.
+
+        Note:
+            The optimal number of hash functions for a new capacity ``m'`` and
+            ``n`` items is ``k* = (m'/n)·ln2``.  We keep ``num_hashes``
+            unchanged for simplicity; the FPR will still drop significantly
+            because the bit-saturation falls roughly in half.
+        """
+        if self.false_positive_rate <= self.max_fpr:
+            return False
+
+        new_size = self.size * 2
+        if self.max_size is not None and new_size > self.max_size:
+            logger.warning(
+                f"BloomFilter: FPR={self.false_positive_rate:.3f} exceeds threshold "
+                f"{self.max_fpr} but max_size={self.max_size} reached — resize skipped"
+            )
+            return False
+
+        old_size = self.size
+        self.size = new_size
+        self._bits = np.zeros(self.size // 8, dtype=np.uint8)
+        self._item_count = 0
+
+        # Re-insert all tracked items into the new larger filter
+        items_snapshot = list(self._items)
+        self._items.clear()
+        for item in items_snapshot:
+            self.add(item)
+
+        logger.debug(
+            f"BloomFilter resized {old_size} → {new_size} bits; "
+            f"new FPR ≈ {self.false_positive_rate:.4f}"
+        )
+        return True
 
 
 def levenshtein_distance(s1: str, s2: str) -> int:
