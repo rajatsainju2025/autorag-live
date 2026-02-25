@@ -85,16 +85,52 @@ class ContextBudget:
 
 
 class TokenCounter:
-    """Token counting utilities."""
+    """Token counting utilities with tiktoken-first accuracy.
 
-    # Approximate characters per token for different models
+    Prefers tiktoken (exact BPE counts) when available, falling back to
+    a per-model chars-per-token heuristic.  The encoder is lazily loaded
+    and cached so repeated calls incur no import overhead.
+    """
+
+    # Approximate characters per token for different model families
     CHARS_PER_TOKEN = {
         "gpt-4": 4.0,
+        "gpt-4o": 4.0,
+        "gpt-4o-mini": 4.0,
+        "gpt-4-turbo": 4.0,
         "gpt-3.5-turbo": 4.0,
         "claude": 3.5,
+        "claude-3": 3.5,
+        "claude-3.5": 3.5,
         "llama": 4.0,
+        "llama-3": 4.0,
+        "mistral": 4.0,
+        "gemini": 4.0,
         "default": 4.0,
     }
+
+    # Cache tiktoken encoders so we only instantiate once per model
+    _tiktoken_cache: dict[str, Any] = {}
+    _tiktoken_available: bool | None = None
+
+    @classmethod
+    def _get_tiktoken_encoder(cls, model: str) -> Any | None:
+        """Return a cached tiktoken encoder, or None if unavailable."""
+        if cls._tiktoken_available is False:
+            return None
+        try:
+            import tiktoken  # noqa: F811
+
+            cls._tiktoken_available = True
+            if model not in cls._tiktoken_cache:
+                try:
+                    cls._tiktoken_cache[model] = tiktoken.encoding_for_model(model)
+                except KeyError:
+                    cls._tiktoken_cache[model] = tiktoken.get_encoding("cl100k_base")
+            return cls._tiktoken_cache[model]
+        except ImportError:
+            cls._tiktoken_available = False
+            return None
 
     @classmethod
     def estimate_tokens(
@@ -103,6 +139,9 @@ class TokenCounter:
         model: str = "default",
     ) -> int:
         """Estimate token count for text.
+
+        Prefers tiktoken for exact counts when available, otherwise
+        falls back to a chars-per-token heuristic.
 
         Args:
             text: Text to count
@@ -114,6 +153,12 @@ class TokenCounter:
         if not text:
             return 0
 
+        # Try tiktoken first for accurate counts
+        enc = cls._get_tiktoken_encoder(model)
+        if enc is not None:
+            return len(enc.encode(text))
+
+        # Fallback: character-based heuristic
         chars_per_token = cls.CHARS_PER_TOKEN.get(model, cls.CHARS_PER_TOKEN["default"])
         return int(len(text) / chars_per_token)
 
