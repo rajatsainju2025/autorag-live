@@ -25,7 +25,11 @@ class SemanticChunk:
 
 
 class SemanticChunker:
-    """Chunks text by finding semantic boundaries between sentences."""
+    """Chunks text by finding semantic boundaries between sentences.
+
+    Supports configurable **sentence overlap** so that adjacent chunks share
+    context, preventing retrieval misses when an answer spans a boundary.
+    """
 
     def __init__(
         self,
@@ -33,11 +37,13 @@ class SemanticChunker:
         similarity_threshold: float = 0.5,
         min_chunk_sentences: int = 1,
         max_chunk_sentences: int = 20,
+        overlap_sentences: int = 0,
     ) -> None:
         self._embed_fn = embed_fn
         self.similarity_threshold = similarity_threshold
         self.min_chunk_sentences = min_chunk_sentences
         self.max_chunk_sentences = max_chunk_sentences
+        self.overlap_sentences = max(0, overlap_sentences)
 
     def _split_into_sentences(self, text: str) -> List[str]:
         """Basic sentence splitter using regex."""
@@ -52,14 +58,14 @@ class SemanticChunker:
         return float(np.dot(a, b) / denom)
 
     async def chunk(self, text: str) -> List[SemanticChunk]:
-        """Split text into semantic chunks."""
+        """Split text into semantic chunks with optional sentence overlap."""
         sentences = self._split_into_sentences(text)
         if not sentences:
             return []
         if len(sentences) == 1:
             return [SemanticChunk(text=sentences[0], start_idx=0, end_idx=1)]
 
-        # Embed all sentences
+        # Embed all sentences in a single batch call
         embeddings_list = await self._embed_fn(sentences)
         embeddings = np.array(embeddings_list, dtype=np.float32)
 
@@ -69,41 +75,48 @@ class SemanticChunker:
             sim = self._cosine_similarity(embeddings[i], embeddings[i + 1])
             similarities.append(sim)
 
-        chunks: list[SemanticChunk] = []
-        current_chunk_sentences: list[str] = [sentences[0]]
-        start_idx = 0
+        # --- Build raw split points ---
+        split_points: list[int] = []  # indices *after which* we split
+        current_len = 1  # number of sentences in the current chunk
 
         for i, sim in enumerate(similarities):
-            # Decide whether to split
             split = False
-            if len(current_chunk_sentences) >= self.max_chunk_sentences:
+            if current_len >= self.max_chunk_sentences:
                 split = True
-            elif len(current_chunk_sentences) >= self.min_chunk_sentences:
-                if sim < self.similarity_threshold:
-                    split = True
+            elif current_len >= self.min_chunk_sentences and sim < self.similarity_threshold:
+                split = True
 
             if split:
-                chunk_text = " ".join(current_chunk_sentences)
-                chunks.append(
-                    SemanticChunk(
-                        text=chunk_text,
-                        start_idx=start_idx,
-                        end_idx=i + 1,
-                    )
-                )
-                current_chunk_sentences = [sentences[i + 1]]
-                start_idx = i + 1
+                split_points.append(i + 1)  # chunk boundary after sentence i
+                current_len = 1
             else:
-                current_chunk_sentences.append(sentences[i + 1])
+                current_len += 1
 
-        # Add the last chunk
-        if current_chunk_sentences:
-            chunk_text = " ".join(current_chunk_sentences)
+        # --- Materialise chunks with overlap ---
+        boundaries: list[tuple[int, int]] = []
+        prev = 0
+        for sp in split_points:
+            boundaries.append((prev, sp))
+            prev = sp
+        boundaries.append((prev, len(sentences)))
+
+        chunks: list[SemanticChunk] = []
+        for idx, (start, end) in enumerate(boundaries):
+            # Overlap: prepend the last `overlap_sentences` from the previous chunk
+            overlap_start = (
+                max(boundaries[idx - 1][1] - self.overlap_sentences, boundaries[idx - 1][0])
+                if idx > 0 and self.overlap_sentences
+                else start
+            )
+
+            effective_start = overlap_start if idx > 0 and self.overlap_sentences else start
+            chunk_sents = sentences[effective_start:end]
+            chunk_text = " ".join(chunk_sents)
             chunks.append(
                 SemanticChunk(
                     text=chunk_text,
-                    start_idx=start_idx,
-                    end_idx=len(sentences),
+                    start_idx=effective_start,
+                    end_idx=end,
                 )
             )
 
