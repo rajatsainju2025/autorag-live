@@ -67,7 +67,14 @@ class CascadeRetrieval:
         top_k: Optional[int] = None,
     ) -> List[Dict[str, Any]]:
         """
-        Execute cascade retrieval.
+        Execute cascade retrieval with graceful timeout degradation.
+
+        If Stage 1 times out, returns an empty list instead of crashing.
+        If Stage 2 (reranking) times out, falls back to the un-reranked
+        Stage 1 results truncated to *top_k*.
+
+        The reranker now receives **all** Stage 1 candidates (not a
+        pre-sliced subset) so it can make a globally optimal selection.
 
         Args:
             query: Query text
@@ -80,22 +87,37 @@ class CascadeRetrieval:
 
         # Stage 1: Fast coarse retrieval
         logger.debug(f"Stage 1: Retrieving {self.config.stage1_top_k} candidates")
-        candidates = await asyncio.wait_for(
-            self.coarse_retriever.retrieve(query, top_k=self.config.stage1_top_k),
-            timeout=self.config.stage1_timeout_ms / 1000,
-        )
-
-        # Stage 2: Reranking
-        if self.reranker:
-            logger.debug(f"Stage 2: Reranking to top {self.config.stage2_top_k}")
-            candidates = candidates[: self.config.stage2_top_k]
-
-            reranked = await asyncio.wait_for(
-                self.reranker.rerank(query, candidates, top_k=final_k),
-                timeout=self.config.stage2_timeout_ms / 1000,
+        try:
+            candidates = await asyncio.wait_for(
+                self.coarse_retriever.retrieve(query, top_k=self.config.stage1_top_k),
+                timeout=self.config.stage1_timeout_ms / 1000,
             )
+        except asyncio.TimeoutError:
+            logger.warning("Stage 1 coarse retrieval timed out — returning empty results")
+            return []
+        except Exception as exc:
+            logger.error(f"Stage 1 retrieval failed: {exc}")
+            return []
 
-            results = reranked
+        if not candidates:
+            logger.info("Stage 1 returned 0 candidates — skipping reranking")
+            return []
+
+        # Stage 2: Reranking — pass ALL candidates, let the reranker pick top-k
+        if self.reranker:
+            logger.debug(f"Stage 2: Reranking {len(candidates)} candidates to top {final_k}")
+            try:
+                reranked = await asyncio.wait_for(
+                    self.reranker.rerank(query, candidates, top_k=final_k),
+                    timeout=self.config.stage2_timeout_ms / 1000,
+                )
+                results = reranked
+            except asyncio.TimeoutError:
+                logger.warning("Stage 2 reranking timed out — falling back to coarse results")
+                results = candidates[:final_k]
+            except Exception as exc:
+                logger.error(f"Stage 2 reranking failed: {exc} — using coarse results")
+                results = candidates[:final_k]
         else:
             results = candidates[:final_k]
 
