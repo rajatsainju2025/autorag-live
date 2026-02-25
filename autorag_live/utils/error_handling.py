@@ -300,7 +300,20 @@ def safe_execute(
 
 
 class ErrorContext:
-    """Context manager for error handling and logging."""
+    """Context manager for error handling and logging.
+
+    Supports both sync (``with``) and async (``async with``) usage so that
+    the same ``ErrorContext`` instance can protect both synchronous and
+    asynchronous code paths without requiring a separate class.
+
+    Example::
+
+        async with ErrorContext("llm_call", error_type=ModelError):
+            result = await llm.generate(prompt)
+
+        with ErrorContext("db_read"):
+            rows = db.fetch_all()
+    """
 
     def __init__(
         self,
@@ -317,11 +330,27 @@ class ErrorContext:
         self.context = context or {}
         self.logger = get_logger(__name__)
 
+    # ---- sync context manager ----
+
     def __enter__(self):
         self.logger.debug(f"Starting operation: {self.operation}")
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        return self._handle_exit(exc_type, exc_val, exc_tb)
+
+    # ---- async context manager ----
+
+    async def __aenter__(self):
+        self.logger.debug(f"Starting operation: {self.operation}")
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        return self._handle_exit(exc_type, exc_val, exc_tb)
+
+    # ---- shared exit logic ----
+
+    def _handle_exit(self, exc_type, exc_val, exc_tb) -> bool:
         if exc_type is None:
             self.logger.debug(f"Completed operation: {self.operation}")
             return False
