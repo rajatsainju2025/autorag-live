@@ -308,11 +308,19 @@ class ReActAgent:
 
         # State
         self._current_trace: Optional[ReActTrace] = None
+        # Cache the system prompt — tools don't change mid-run
+        self._cached_system_prompt: Optional[str] = None
+        # Track (tool_name, args_hash) to detect semantic loops
+        self._seen_calls: set[tuple[str, str]] = set()
 
     def _build_system_prompt(self) -> str:
-        """Build system prompt with tool descriptions."""
+        """Build system prompt with tool descriptions (cached after first call)."""
+        if self._cached_system_prompt is not None:
+            return self._cached_system_prompt
+
         if self.custom_system_prompt:
-            return self.custom_system_prompt
+            self._cached_system_prompt = self.custom_system_prompt
+            return self._cached_system_prompt
 
         # Build tools description
         tools_desc = []
@@ -325,9 +333,10 @@ class ReActAgent:
                 )
                 tools_desc.append(f"- {name}({params_desc}): {tool.description}")
 
-        return REACT_SYSTEM_PROMPT.format(
+        self._cached_system_prompt = REACT_SYSTEM_PROMPT.format(
             tools_description="\n".join(tools_desc) or "No tools available"
         )
+        return self._cached_system_prompt
 
     def _build_history(self, steps: List[ReActStep]) -> str:
         """Build history string from previous steps."""
@@ -530,6 +539,8 @@ class ReActAgent:
         # Initialize trace
         trace = ReActTrace(query=query)
         self._current_trace = trace
+        # Reset loop-detection state for this run
+        self._seen_calls = set()
 
         try:
             for i in range(max_iter):
@@ -546,6 +557,23 @@ class ReActAgent:
                     trace.final_answer = step.action.answer
                     trace.stop_reason = StopReason.FINAL_ANSWER
                     break
+
+                # --- Semantic loop detection ---
+                if step.action.tool_name:
+                    call_sig = (
+                        step.action.tool_name,
+                        json.dumps(step.action.tool_args, sort_keys=True),
+                    )
+                    if call_sig in self._seen_calls:
+                        logger.warning(
+                            "ReAct detected repeated tool call %s — stopping",
+                            call_sig[0],
+                        )
+                        trace.stop_reason = StopReason.NO_PROGRESS
+                        # Use the last thought as a best-effort answer
+                        trace.final_answer = step.thought.content
+                        break
+                    self._seen_calls.add(call_sig)
 
                 # Check for stuck state (no observation)
                 if not step.observation or not step.observation.success:
