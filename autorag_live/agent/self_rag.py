@@ -24,6 +24,7 @@ Example:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from dataclasses import dataclass, field
 from enum import Enum
@@ -573,11 +574,19 @@ class SelfRAG:
             if self.retriever:
                 documents = await self.retriever.retrieve(query, top_k=top_k)
 
-                # Assess relevance of each document
-                for i, doc in enumerate(documents):
-                    relevance = await self.reflection_predictor.assess_relevance(query, doc)
-                    reflection_tokens.append(relevance)
-                    relevance_scores[f"doc_{i}"] = relevance.confidence
+                # Assess relevance of ALL documents in parallel (N× speedup)
+                relevance_tasks = [
+                    self.reflection_predictor.assess_relevance(query, doc) for doc in documents
+                ]
+                relevance_results = await asyncio.gather(*relevance_tasks, return_exceptions=True)
+
+                for i, result in enumerate(relevance_results):
+                    if isinstance(result, Exception):
+                        logger.warning(f"Relevance assessment failed for doc_{i}: {result}")
+                        relevance_scores[f"doc_{i}"] = 0.5
+                    else:
+                        reflection_tokens.append(result)
+                        relevance_scores[f"doc_{i}"] = result.confidence
 
         # Step 3: Generate answer
         answer = await self._generate_answer(query, documents)
@@ -598,14 +607,21 @@ class SelfRAG:
         # Step 6: Critique and refine if needed
         iterations = 1
         if include_critique and utility_score < 0.7:
-            for i in range(self.max_iterations - 1):
+            for _refinement_round in range(self.max_iterations - 1):
                 critique_result = await self.critique.critique(query, answer, documents)
 
                 if critique_result.is_satisfactory:
                     break
 
                 # Refine answer based on critique
-                answer = await self._refine_answer(query, answer, documents, critique_result)
+                refined = await self._refine_answer(query, answer, documents, critique_result)
+
+                # Early convergence: stop if the answer didn't actually change
+                if refined.strip() == answer.strip():
+                    logger.debug("Answer unchanged after refinement — converged early")
+                    break
+
+                answer = refined
                 iterations += 1
 
                 # Re-assess
