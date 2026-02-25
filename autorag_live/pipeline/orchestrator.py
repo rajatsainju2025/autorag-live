@@ -180,6 +180,19 @@ class PipelineOrchestrator:
             result.sources = retrieval_result.data.get("documents", [])
             self._notify_stage_complete(retrieval_result)
 
+            # Fail-fast: skip downstream stages when retrieval fails or
+            # returns nothing — avoids wasting compute on empty context.
+            if not retrieval_result.success or not result.sources:
+                self.logger.warning(
+                    "Retrieval returned 0 documents — skipping synthesis/multi-agent"
+                )
+                result.answer = (
+                    "I couldn't find relevant information to answer this query. "
+                    "Please try rephrasing or providing more context."
+                )
+                result.total_latency_ms = (time.perf_counter() - start_time) * 1000
+                return result
+
             # Stage 3: Knowledge Graph enrichment
             if self.config.enable_knowledge_graph:
                 kg_result = self._execute_knowledge_graph(query, result.sources)
@@ -482,16 +495,17 @@ class PipelineOrchestrator:
             )
 
     def _get_corpus(self) -> List[str]:
-        """Get the document corpus from config or return default."""
+        """Get the document corpus from config.
+
+        Raises:
+            ValueError: If no corpus has been configured.
+        """
         if self.config.corpus:
             return self.config.corpus
-        return [
-            "Machine learning is a subset of artificial intelligence.",
-            "Deep learning uses neural networks with many layers.",
-            "Natural language processing enables computers to understand text.",
-            "Retrieval-augmented generation combines retrieval with generation.",
-            "Large language models are trained on vast amounts of text data.",
-        ]
+        raise ValueError(
+            "No corpus configured. Pass a corpus via PipelineConfig(corpus=[...]) "
+            "or set it before calling execute()."
+        )
 
     # ----- async parallel execution ----------------------------------------
 
