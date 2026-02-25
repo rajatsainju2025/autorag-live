@@ -351,8 +351,8 @@ class SpeculativeRAG:
         self.config = config or PrefetchConfig()
         self.predictor = QueryPredictor(llm=llm)
 
-        # Prefetch cache
-        self._cache: Dict[str, PrefetchEntry] = {}
+        # LRU-bounded prefetch cache (OrderedDict gives O(1) move_to_end)
+        self._cache: OrderedDict[str, PrefetchEntry] = OrderedDict()
         self._background_tasks: List[asyncio.Task] = []
 
         # Metrics
@@ -395,7 +395,10 @@ class SpeculativeRAG:
 
         # Predict and prefetch follow-ups in background
         if self.config.prefetch_enabled:
-            asyncio.create_task(self._prefetch_followups(query, conversation_history, top_k))
+            task = asyncio.create_task(self._prefetch_followups(query, conversation_history, top_k))
+            # Attach a callback so fire-and-forget exceptions are logged
+            task.add_done_callback(self._on_prefetch_done)
+            self._background_tasks.append(task)
 
         return {
             "results": results,
@@ -446,13 +449,13 @@ class SpeculativeRAG:
                             timeout=self.config.timeout_seconds,
                         )
 
-                        # Add to cache
+                        # Add to cache via LRU-bounded helper
                         entry = PrefetchEntry(
                             query=pred.query,
                             results=results,
                             confidence=pred.confidence,
                         )
-                        self._cache[pred.query] = entry
+                        self._put_in_cache(pred.query, entry)
                         self._prefetch_count += 1
 
                         logger.debug(f"Prefetched: {pred.query[:50]}")
@@ -470,10 +473,12 @@ class SpeculativeRAG:
             logger.error(f"Prefetch failed: {e}")
 
     def _get_from_cache(self, query: str) -> Optional[PrefetchEntry]:
-        """Get entry from cache if exists and not expired."""
+        """Get entry from cache if exists and not expired (LRU promotion)."""
         entry = self._cache.get(query)
 
         if entry and not entry.is_expired(self.config.prefetch_ttl_seconds):
+            # Promote to most-recently-used end
+            self._cache.move_to_end(query)
             return entry
 
         # Remove expired entry
@@ -481,6 +486,27 @@ class SpeculativeRAG:
             del self._cache[query]
 
         return None
+
+    # ------------------------------------------------------------------
+    # LRU helpers
+    # ------------------------------------------------------------------
+
+    def _put_in_cache(self, key: str, entry: PrefetchEntry) -> None:
+        """Insert *entry* with LRU eviction when cache exceeds max size."""
+        self._cache[key] = entry
+        self._cache.move_to_end(key)
+        # Evict oldest entries when the cache is full
+        while len(self._cache) > self.config.prefetch_cache_size:
+            self._cache.popitem(last=False)  # pop oldest (LRU end)
+
+    @staticmethod
+    def _on_prefetch_done(task: asyncio.Task) -> None:
+        """Log exceptions from fire-and-forget prefetch tasks."""
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            logger.error(f"Background prefetch task failed: {exc}")
 
     def get_stats(self) -> Dict[str, Any]:
         """Get prefetch statistics."""
