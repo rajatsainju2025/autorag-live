@@ -4,9 +4,12 @@ Standardized error handling and logging for AutoRAG-Live.
 This module provides consistent error patterns, logging utilities, and recovery
 strategies across the entire codebase.
 """
+import asyncio
 import enum
 import functools
+import inspect
 import logging
+import random
 import sys
 import threading
 import time
@@ -142,9 +145,18 @@ def with_retry(
     backoff_factor: float = 2.0,
     exceptions: tuple[Type[Exception], ...] = (Exception,),
     log_attempts: bool = True,
+    jitter: bool = True,
 ) -> Callable[[F], F]:
     """
-    Decorator for automatic retry with exponential backoff.
+    Decorator for automatic retry with exponential backoff and jitter.
+
+    Automatically detects sync vs async callables and uses the appropriate
+    sleep mechanism (``time.sleep`` for sync, ``asyncio.sleep`` for async)
+    so it never blocks the event loop when decorating coroutines.
+
+    Jitter (enabled by default) adds ±25 % randomness to the delay,
+    preventing **thundering-herd** retries when multiple coroutines fail
+    simultaneously.
 
     Args:
         max_attempts: Maximum number of attempts
@@ -152,50 +164,96 @@ def with_retry(
         backoff_factor: Multiplier for delay after each failure
         exceptions: Exceptions to retry on
         log_attempts: Whether to log retry attempts
+        jitter: Whether to add random jitter to backoff delay
 
     Returns:
         Decorated function
     """
 
+    def _add_jitter(base_delay: float) -> float:
+        """Add ±25 % uniform jitter to the delay."""
+        if not jitter:
+            return base_delay
+        return base_delay * (0.75 + random.random() * 0.5)  # noqa: S311
+
     def decorator(func: F) -> F:
         logger = get_logger(func.__module__)  # Cache logger
         func_name = func.__name__  # Cache function name
 
-        @functools.wraps(func)
-        def wrapper(*args: Any, **kwargs: Any) -> Any:
-            last_exception = None
-            current_delay = delay
+        if inspect.iscoroutinefunction(func):
+            # ---- async path ----
+            @functools.wraps(func)
+            async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+                last_exception = None
+                current_delay = delay
 
-            for attempt in range(max_attempts):
-                try:
-                    return func(*args, **kwargs)
+                for attempt in range(max_attempts):
+                    try:
+                        return await func(*args, **kwargs)
 
-                except exceptions as e:
-                    last_exception = e
+                    except exceptions as e:
+                        last_exception = e
 
-                    if attempt == max_attempts - 1:
-                        # Last attempt failed
-                        break
+                        if attempt == max_attempts - 1:
+                            break
 
-                    if log_attempts:
-                        logger.warning(
-                            f"Attempt {attempt + 1}/{max_attempts} failed for {func_name}: {str(e)}"
-                        )
+                        if log_attempts:
+                            logger.warning(
+                                f"Attempt {attempt + 1}/{max_attempts} failed "
+                                f"for {func_name}: {e!s}"
+                            )
 
-                    time.sleep(current_delay)
-                    current_delay *= backoff_factor
+                        await asyncio.sleep(_add_jitter(current_delay))
+                        current_delay *= backoff_factor
 
-            # All attempts failed
-            if isinstance(last_exception, AutoRAGError):
-                raise last_exception
-            else:
-                raise AutoRAGError(
-                    message=f"Function {func_name} failed after {max_attempts} attempts",
-                    context={"last_error": str(last_exception)},
-                    cause=last_exception,
-                )
+                # All attempts failed
+                if isinstance(last_exception, AutoRAGError):
+                    raise last_exception
+                else:
+                    raise AutoRAGError(
+                        message=f"Function {func_name} failed after {max_attempts} attempts",
+                        context={"last_error": str(last_exception)},
+                        cause=last_exception,
+                    )
 
-        return wrapper  # type: ignore
+            return async_wrapper  # type: ignore
+        else:
+            # ---- sync path ----
+            @functools.wraps(func)
+            def wrapper(*args: Any, **kwargs: Any) -> Any:
+                last_exception = None
+                current_delay = delay
+
+                for attempt in range(max_attempts):
+                    try:
+                        return func(*args, **kwargs)
+
+                    except exceptions as e:
+                        last_exception = e
+
+                        if attempt == max_attempts - 1:
+                            break
+
+                        if log_attempts:
+                            logger.warning(
+                                f"Attempt {attempt + 1}/{max_attempts} failed "
+                                f"for {func_name}: {e!s}"
+                            )
+
+                        time.sleep(_add_jitter(current_delay))
+                        current_delay *= backoff_factor
+
+                # All attempts failed
+                if isinstance(last_exception, AutoRAGError):
+                    raise last_exception
+                else:
+                    raise AutoRAGError(
+                        message=f"Function {func_name} failed after {max_attempts} attempts",
+                        context={"last_error": str(last_exception)},
+                        cause=last_exception,
+                    )
+
+            return wrapper  # type: ignore
 
     return decorator
 
