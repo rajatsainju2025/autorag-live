@@ -5,6 +5,14 @@ Provides protocol-based interfaces and foundational abstractions
 for building modular, state-of-the-art agentic RAG systems.
 """
 
+from .context import (  # Unified pipeline context
+    ContextStage,
+    EvalScore,
+    RAGContext,
+    ReasoningTrace,
+    RetrievedDocument,
+    StageLatency,
+)
 from .protocols import (  # Base protocols; Data types; Enums; Registry
     AgentAction,
     AgentState,
@@ -30,6 +38,13 @@ from .protocols import (  # Base protocols; Data types; Enums; Registry
 )
 
 __all__ = [
+    # Unified context
+    "RAGContext",
+    "ContextStage",
+    "RetrievedDocument",
+    "ReasoningTrace",
+    "EvalScore",
+    "StageLatency",
     # Protocols
     "BaseLLM",
     "BaseRetriever",
