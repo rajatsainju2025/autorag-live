@@ -3,6 +3,9 @@ import json
 import logging
 from typing import Any, Dict, List, Optional
 
+from autorag_live.core.agent_policy import AgentPolicy
+from autorag_live.core.state_manager import StateManager
+
 logger = logging.getLogger(__name__)
 
 
@@ -16,7 +19,13 @@ class EntityExtractor:
     unstructured text.
     """
 
-    def __init__(self, llm: Any, extraction_prompt: Optional[str] = None):
+    def __init__(
+        self,
+        llm: Any,
+        extraction_prompt: Optional[str] = None,
+        state_manager: Optional[StateManager] = None,
+        policy: Optional[AgentPolicy] = None,
+    ):
         """
         Initialize the EntityExtractor.
 
@@ -25,6 +34,9 @@ class EntityExtractor:
             extraction_prompt: The prompt template instructing the LLM on how to extract entities.
         """
         self.llm = llm
+        self.state_manager = state_manager
+        self.policy = policy
+
         self.extraction_prompt = extraction_prompt or (
             "You are an expert knowledge graph builder. Extract entities and their relationships from the following text.\n"
             "Return ONLY a valid JSON object with two keys: 'entities' and 'relationships'.\n"
@@ -67,7 +79,23 @@ class EntityExtractor:
                     raise ValueError("LLM must have 'agenerate', 'ainvoke', or 'invoke' method.")
 
             # Parse the JSON response
-            return self._parse_json_response(content)
+            parsed = self._parse_json_response(content)
+
+            # Allow a policy to inspect/decide based on the parsed result and current state
+            try:
+                if self.policy is not None:
+                    state_snapshot = (
+                        self.state_manager.snapshot() if self.state_manager is not None else {}
+                    )
+                    # Policy may return instructions or modifications; for now we log the decision
+                    decision = self.policy.decide(
+                        {"text": text, "response": parsed}, state=state_snapshot
+                    )
+                    logger.debug(f"Policy decision: {decision}")
+            except Exception:
+                logger.exception("Policy decision failed")
+
+            return parsed
 
         except Exception as e:
             logger.error(f"Error during entity extraction: {e}")
