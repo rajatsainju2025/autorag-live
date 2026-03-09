@@ -16,7 +16,7 @@ from .hybrid_optimizer import (
     load_hybrid_config,
     save_hybrid_config,
 )
-from .orchestrator import (
+from .orchestrator_minimal import (
     PipelineConfig,
     PipelineOrchestrator,
     PipelineResult,
