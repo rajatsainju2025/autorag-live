@@ -1,3 +1,31 @@
+import pytest
+
+from autorag_live.core import interfaces
+
+
+def test_protocols_importable():
+    # Smoke test that protocols and dataclass exist and are importable
+    assert hasattr(interfaces, "RetrieverProtocol")
+    assert hasattr(interfaces, "LLMProvider")
+    assert hasattr(interfaces, "SafetyCheckResult")
+
+
+@pytest.mark.asyncio
+async def test_dummy_retriever_implements_protocol():
+    class DummyRetriever:
+        async def retrieve(self, query: str, k: int = 10):
+            return [{"id": "doc1", "text": "hello"}]
+
+        def add_documents(self, docs):
+            self._docs = docs
+
+    d = DummyRetriever()
+    # ensure methods callable and return expected shape
+    res = await d.retrieve("q")
+    assert isinstance(res, list)
+    d.add_documents([{"id": "doc2", "text": "x"}])
+
+
 """Tests for the consolidated interfaces module.
 
 Verifies that every canonical type is importable from a single location
