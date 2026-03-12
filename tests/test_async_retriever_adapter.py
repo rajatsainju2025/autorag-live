@@ -1,7 +1,7 @@
 import pytest
 
-from autorag_live.retrievers.base import BaseRetriever
 from autorag_live.core.adapters import AsyncRetrieverAdapter
+from autorag_live.retrievers.base import BaseRetriever
 
 
 class DummySyncRetriever(BaseRetriever):
