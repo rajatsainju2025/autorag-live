@@ -23,14 +23,9 @@ Example::
 from __future__ import annotations
 
 import logging
-import time
-from typing import Any, Callable, Coroutine, Dict, List, Optional, Protocol, runtime_checkable
+from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
 
-from autorag_live.core.context import (
-    ContextStage,
-    RAGContext,
-    RetrievedDocument,
-)
+from autorag_live.core.context import ContextStage, RAGContext, RetrievedDocument
 from autorag_live.core.state_graph import END, CompiledGraph, StateGraph
 
 logger = logging.getLogger(__name__)
@@ -43,12 +38,14 @@ logger = logging.getLogger(__name__)
 
 @runtime_checkable
 class LLMCallable(Protocol):
-    async def __call__(self, prompt: str, **kwargs: Any) -> str: ...
+    async def __call__(self, prompt: str, **kwargs: Any) -> str:
+        ...
 
 
 @runtime_checkable
 class RetrieverCallable(Protocol):
-    async def __call__(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]: ...
+    async def __call__(self, query: str, top_k: int = 5) -> List[Dict[str, Any]]:
+        ...
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +158,9 @@ def build_corrective_rag(
     graph.add_node("generate", generate)
     graph.set_entry_point("retrieve")
     graph.add_edge("retrieve", "grade")
-    graph.add_conditional_edges("grade", grade_router, {"generate": "generate", "rewrite": "rewrite"})
+    graph.add_conditional_edges(
+        "grade", grade_router, {"generate": "generate", "rewrite": "rewrite"}
+    )
     graph.add_edge("rewrite", "retrieve")  # cycle
     graph.add_edge("generate", END)
     return graph.compile()
@@ -209,7 +208,9 @@ def build_self_rag(
         )
 
     def relevance_router(ctx: RAGContext) -> str:
-        return "generate" if ctx.metadata.get("relevance", 0) >= relevance_threshold else "re_retrieve"
+        return (
+            "generate" if ctx.metadata.get("relevance", 0) >= relevance_threshold else "re_retrieve"
+        )
 
     async def re_retrieve(ctx: RAGContext) -> RAGContext:
         raw = await retriever_fn(f"more detail: {ctx.query}", top_k=top_k)
@@ -247,7 +248,8 @@ def build_self_rag(
     graph.set_entry_point("retrieve")
     graph.add_edge("retrieve", "assess_relevance")
     graph.add_conditional_edges(
-        "assess_relevance", relevance_router,
+        "assess_relevance",
+        relevance_router,
         {"generate": "generate", "re_retrieve": "re_retrieve"},
     )
     graph.add_edge("re_retrieve", "generate")
@@ -312,7 +314,8 @@ def build_adaptive_rag(
     graph.add_node("generate", generate)
     graph.set_entry_point("classify")
     graph.add_conditional_edges(
-        "classify", complexity_router,
+        "classify",
+        complexity_router,
         {"simple": "simple_generate", "complex": "retrieve"},
     )
     graph.add_edge("simple_generate", END)
@@ -366,7 +369,8 @@ def build_plan_execute(
         results = ctx.metadata.get("step_results", [])
         prompt = (
             f"Question: {ctx.query}\n\n"
-            f"Step results:\n" + "\n".join(f"- {r}" for r in results)
+            f"Step results:\n"
+            + "\n".join(f"- {r}" for r in results)
             + "\n\nSynthesize a final answer."
         )
         answer = await llm_fn(prompt)
