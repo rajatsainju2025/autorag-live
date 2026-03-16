@@ -72,6 +72,20 @@ class AgentProposal:
         agreement_ratio = len(self.agreements) / total_votes
         return (self.confidence * 0.5) + (agreement_ratio * 0.5)
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert proposal to dictionary."""
+        return {
+            "proposer_id": self.proposer_id,
+            "proposer_role": self.proposer_role.value,
+            "proposal": self.proposal,
+            "reasoning": self.reasoning,
+            "confidence": self.confidence,
+            "supporting_evidence": self.supporting_evidence,
+            "agreements": self.agreements,
+            "disagreements": self.disagreements,
+            "consensus_score": self.get_consensus_score(),
+        }
+
 
 class SpecializedAgent:
     """Base class for specialized agents in multi-agent system."""
