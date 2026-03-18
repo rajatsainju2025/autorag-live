@@ -313,6 +313,23 @@ class AsyncOllamaProvider(AsyncLLMProvider):
         """Initialize async Ollama provider."""
         super().__init__(config)
         self.base_url = config.base_url or "http://localhost:11434"
+        self._session: Optional[Any] = None
+
+    async def _get_session(self) -> Any:
+        """Get or create a reusable aiohttp session (connection pooling)."""
+        if self._session is None or self._session.closed:
+            import aiohttp
+
+            self._session = aiohttp.ClientSession(
+                timeout=aiohttp.ClientTimeout(total=self.config.timeout),
+            )
+        return self._session
+
+    async def close(self) -> None:
+        """Close the shared HTTP session."""
+        if self._session and not self._session.closed:
+            await self._session.close()
+            self._session = None
 
     async def generate_async(
         self,
@@ -326,8 +343,6 @@ class AsyncOllamaProvider(AsyncLLMProvider):
         start_time = time.perf_counter()
 
         try:
-            import aiohttp
-
             endpoint = f"{self.base_url}/api/generate"
 
             payload = {
@@ -341,14 +356,13 @@ class AsyncOllamaProvider(AsyncLLMProvider):
             if system_prompt:
                 payload["system"] = system_prompt
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    endpoint,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=self.config.timeout),
-                ) as response:
-                    response.raise_for_status()
-                    result = await response.json()
+            session = await self._get_session()
+            async with session.post(
+                endpoint,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                result = await response.json()
 
             latency_ms = (time.perf_counter() - start_time) * 1000
             content = result.get("response", "")
@@ -380,8 +394,6 @@ class AsyncOllamaProvider(AsyncLLMProvider):
         try:
             import json
 
-            import aiohttp
-
             endpoint = f"{self.base_url}/api/generate"
 
             payload = {
@@ -395,18 +407,17 @@ class AsyncOllamaProvider(AsyncLLMProvider):
             if system_prompt:
                 payload["system"] = system_prompt
 
-            async with aiohttp.ClientSession() as session:
-                async with session.post(
-                    endpoint,
-                    json=payload,
-                    timeout=aiohttp.ClientTimeout(total=self.config.timeout),
-                ) as response:
-                    response.raise_for_status()
-                    async for line in response.content:
-                        if line:
-                            data = json.loads(line)
-                            if "response" in data:
-                                yield data["response"]
+            session = await self._get_session()
+            async with session.post(
+                endpoint,
+                json=payload,
+            ) as response:
+                response.raise_for_status()
+                async for line in response.content:
+                    if line:
+                        data = json.loads(line)
+                        if "response" in data:
+                            yield data["response"]
         except Exception as e:
             self.logger.error(f"Async Ollama streaming error: {str(e)}")
             raise
