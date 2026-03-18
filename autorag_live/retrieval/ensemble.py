@@ -680,12 +680,14 @@ class EnsembleRetriever:
         if self.config.use_query_weights and self.query_adapter:
             weights = self.query_adapter.adapt_weights(query, self.weights)
 
-        # Retrieve from all retrievers
-        retriever_results: dict[str, list[RetrievedDocument]] = {}
+        # Retrieve from all retrievers in parallel
+        names = list(self.retrievers.keys())
+        all_results = await asyncio.gather(
+            *(r.retrieve(query, top_k=top_k * 2) for r in self.retrievers.values())
+        )
 
-        for name, retriever in self.retrievers.items():
-            results = await retriever.retrieve(query, top_k=top_k * 2)
-            # Tag with source retriever
+        retriever_results: dict[str, list[RetrievedDocument]] = {}
+        for name, results in zip(names, all_results):
             for doc in results:
                 doc.source_retriever = name
             retriever_results[name] = results
