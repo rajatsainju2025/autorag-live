@@ -529,7 +529,14 @@ class DIContainer:
         """Instantiate a class with constructor injection."""
         import inspect
 
-        sig = inspect.signature(cls.__init__)
+        # Cache signatures to avoid repeated reflection (expensive per call)
+        if not hasattr(self, "_sig_cache"):
+            self._sig_cache: dict = {}
+
+        if cls not in self._sig_cache:
+            self._sig_cache[cls] = inspect.signature(cls.__init__)
+
+        sig = self._sig_cache[cls]
         kwargs = {}
 
         for param_name, param in sig.parameters.items():
