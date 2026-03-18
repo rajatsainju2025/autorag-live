@@ -669,8 +669,8 @@ class VectorSimilarity:
         Returns:
             Similarity score (0-1)
         """
-        arr1 = np.array(vec1)
-        arr2 = np.array(vec2)
+        arr1 = np.asarray(vec1, dtype=np.float32)
+        arr2 = np.asarray(vec2, dtype=np.float32)
 
         dot_product = np.dot(arr1, arr2)
         norm1 = np.linalg.norm(arr1)
@@ -680,6 +680,42 @@ class VectorSimilarity:
             return 0.0
 
         return float(dot_product / (norm1 * norm2))
+
+    @staticmethod
+    def batch_cosine_similarity(
+        query: List[float],
+        candidates: List[List[float]],
+    ) -> np.ndarray:
+        """
+        Vectorized cosine similarity: query against all candidates at once.
+
+        Instead of computing cosine similarity one-by-one in a Python loop,
+        this stacks all candidates into a matrix and uses a single matrix-vector
+        multiply. ~10-50x faster for >10 candidates.
+
+        Args:
+            query: Query embedding vector
+            candidates: List of candidate embedding vectors
+
+        Returns:
+            Array of similarity scores
+        """
+        if not candidates:
+            return np.array([], dtype=np.float32)
+
+        q = np.asarray(query, dtype=np.float32)
+        mat = np.asarray(candidates, dtype=np.float32)
+
+        q_norm = np.linalg.norm(q)
+        if q_norm == 0:
+            return np.zeros(len(candidates), dtype=np.float32)
+
+        q_normed = q / q_norm
+        row_norms = np.linalg.norm(mat, axis=1, keepdims=True)
+        row_norms = np.where(row_norms == 0, 1.0, row_norms)
+        mat_normed = mat / row_norms
+
+        return mat_normed @ q_normed
 
     @staticmethod
     def euclidean_distance(
@@ -767,21 +803,22 @@ class EmbeddingSemanticCache(Generic[T]):
         async with self._lock:
             entries = [e for e in self._cache.values() if not e.is_expired()]
 
-        best_match: Optional[EmbeddingCacheEntry[T]] = None
-        best_similarity = 0.0
+        if not entries:
+            self.stats.cache_misses += 1
+            return EmbeddingCacheLookupResult(hit=False)
 
-        for entry in entries:
-            similarity = self.calculator.cosine_similarity(
-                query_embedding,
-                entry.embedding,
-            )
+        # Vectorized similarity: single matrix multiply instead of O(n) loop
+        candidate_embeddings = [e.embedding for e in entries]
+        similarities = self.calculator.batch_cosine_similarity(
+            query_embedding, candidate_embeddings
+        )
 
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_match = entry
+        best_idx = int(np.argmax(similarities))
+        best_similarity = float(similarities[best_idx])
+        best_match = entries[best_idx]
 
         # Check if above threshold
-        if best_match and best_similarity >= self.similarity_threshold:
+        if best_similarity >= self.similarity_threshold:
             self.stats.cache_hits += 1
             self._update_avg_similarity(best_similarity)
             best_match.touch()
