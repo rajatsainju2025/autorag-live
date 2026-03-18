@@ -7,6 +7,7 @@ with built-in disagreement analysis, automatic optimization, and self-improvemen
 
 import sys
 import warnings
+from typing import Any
 
 __version__ = "0.1.0"
 
@@ -19,67 +20,75 @@ if sys.version_info < MIN_PYTHON:
     )
     sys.exit(1)
 
-# Check critical dependencies versions
-try:
-    import numpy as np
+# Fast module availability checks (no imports)
+_HAS_NUMPY = False
+_HAS_OMEGACONF = False
 
-    if hasattr(np, "__version__"):
-        np_version = tuple(map(int, np.__version__.split(".")[:2]))
-        if np_version < (1, 20):
-            warnings.warn(
-                f"NumPy {np.__version__} is installed. AutoRAG-Live works best with NumPy >= 1.20.0",
-                UserWarning,
-                stacklevel=2,
-            )
+try:
+    import importlib.util
+
+    _HAS_NUMPY = importlib.util.find_spec("numpy") is not None
+    _HAS_OMEGACONF = importlib.util.find_spec("omegaconf") is not None
 except ImportError:
+    pass
+
+if not _HAS_NUMPY:
     warnings.warn(
         "NumPy is not installed. Some features may not work properly.", UserWarning, stacklevel=2
     )
 
-try:
-    from omegaconf import __version__ as omegaconf_version
-
-    oc_version = tuple(map(int, omegaconf_version.split(".")[:2]))
-    if oc_version < (2, 3):
-        warnings.warn(
-            f"OmegaConf {omegaconf_version} is installed. AutoRAG-Live requires OmegaConf >= 2.3.0",
-            UserWarning,
-            stacklevel=2,
-        )
-except (ImportError, AttributeError):
+if not _HAS_OMEGACONF:
     warnings.warn(
-        "OmegaConf version check failed. Please ensure OmegaConf >= 2.3.0 is installed.",
+        "OmegaConf is not installed. Configuration features may not work properly.",
         UserWarning,
         stacklevel=2,
     )
 
-from .disagreement.metrics import jaccard_at_k, kendall_tau_at_k  # noqa: E402, F401
-from .retrievers.bm25 import bm25_retrieve  # noqa: E402, F401
-from .retrievers.dense import dense_retrieve  # noqa: E402, F401
-from .retrievers.hybrid import hybrid_retrieve  # noqa: E402, F401
 
-# Optional heavy imports with try-except for better performance
-try:
-    from .retrievers.faiss_adapter import (  # noqa: F401
-        DenseRetriever,
-        SentenceTransformerRetriever,
-        create_dense_retriever,
-        load_retriever_index,
-        save_retriever_index,
-    )
-except ImportError:
-    pass
+# Lazy-loaded core metrics (lightweight imports)
+def __getattr__(name: str) -> Any:
+    """Lazy load commonly used functions on first access."""
+    _lazy_imports = {
+        "jaccard_at_k": ("disagreement.metrics", "jaccard_at_k"),
+        "kendall_tau_at_k": ("disagreement.metrics", "kendall_tau_at_k"),
+        "bm25_retrieve": ("retrievers.bm25", "bm25_retrieve"),
+        "dense_retrieve": ("retrievers.dense", "dense_retrieve"),
+        "hybrid_retrieve": ("retrievers.hybrid", "hybrid_retrieve"),
+        "DenseRetriever": ("retrievers.faiss_adapter", "DenseRetriever"),
+        "SentenceTransformerRetriever": (
+            "retrievers.faiss_adapter",
+            "SentenceTransformerRetriever",
+        ),
+        "create_dense_retriever": ("retrievers.faiss_adapter", "create_dense_retriever"),
+        "QdrantRetriever": ("retrievers.qdrant_adapter", "QdrantRetriever"),
+        "ElasticsearchRetriever": ("retrievers.elasticsearch_adapter", "ElasticsearchRetriever"),
+    }
 
-try:
-    from .retrievers.qdrant_adapter import QdrantRetriever  # noqa: F401
-except ImportError:
-    pass
+    if name in _lazy_imports:
+        module_name, attr_name = _lazy_imports[name]
+        try:
+            module = __import__(f"autorag_live.{module_name}", fromlist=[attr_name])
+            return getattr(module, attr_name)
+        except (ImportError, AttributeError) as e:
+            raise AttributeError(f"Cannot import {name}: {e}") from e
 
-try:
-    from .retrievers.elasticsearch_adapter import ElasticsearchRetriever  # noqa: F401
-except ImportError:
-    pass
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
+__all__ = [
+    "jaccard_at_k",
+    "kendall_tau_at_k",
+    "bm25_retrieve",
+    "dense_retrieve",
+    "hybrid_retrieve",
+    "DenseRetriever",
+    "SentenceTransformerRetriever",
+    "create_dense_retriever",
+    "QdrantRetriever",
+    "ElasticsearchRetriever",
+]
+
+# Extended lazy imports for optional modules
 try:
     from .evals.advanced_metrics import aggregate_metrics, comprehensive_evaluation  # noqa: F401
     from .evals.llm_judge import DeterministicJudge, LLMJudge  # noqa: F401
