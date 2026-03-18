@@ -1007,10 +1007,14 @@ class TextChunker:
 
         params.update(self.kwargs)
 
-        # Filter valid params for chunker
+        # Filter valid params for chunker (cached to avoid repeated reflection)
         import inspect
 
-        sig = inspect.signature(chunker_class.__init__)
+        if not hasattr(self, "_sig_cache"):
+            self._sig_cache: dict = {}
+        if chunker_class not in self._sig_cache:
+            self._sig_cache[chunker_class] = inspect.signature(chunker_class.__init__)
+        sig = self._sig_cache[chunker_class]
         valid_params = {k: v for k, v in params.items() if k in sig.parameters}
 
         return chunker_class(**valid_params)
@@ -1072,6 +1076,10 @@ class TextChunker:
 # Convenience functions
 
 
+# Module-level cache for convenience-function chunkers
+_chunker_cache: Dict[tuple, "TextChunker"] = {}
+
+
 def chunk_text(
     text: str,
     strategy: str = "recursive",
@@ -1088,8 +1096,10 @@ def chunk_text(
     Returns:
         List of chunks
     """
-    chunker = TextChunker(strategy=strategy, chunk_size=chunk_size)
-    return chunker.chunk(text)
+    cache_key = (strategy, chunk_size)
+    if cache_key not in _chunker_cache:
+        _chunker_cache[cache_key] = TextChunker(strategy=strategy, chunk_size=chunk_size)
+    return _chunker_cache[cache_key].chunk(text)
 
 
 def chunk_code(
