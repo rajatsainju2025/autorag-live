@@ -91,7 +91,7 @@ PoolingStrategy = Literal["mean", "max", "weighted_mean", "cls"]
 CacheStrategy = Literal["lru", "ttl", "fifo"]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Document:
     """
     Immutable document representation.
@@ -109,7 +109,7 @@ class Document:
     embedding: Optional[Embedding] = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class Query:
     """
     Immutable query representation.
@@ -125,7 +125,7 @@ class Query:
     embedding: Optional[Embedding] = None
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class ScoredDocument(Generic[D, S]):
     """
     Generic scored document container.
