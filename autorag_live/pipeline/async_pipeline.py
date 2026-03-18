@@ -190,16 +190,24 @@ class EventEmitter:
         self._global_listeners.append(callback)
 
     async def emit(self, event: PipelineEvent) -> None:
-        """Emit an event to all listeners."""
+        """Emit an event to all listeners with bounded concurrency."""
         tasks = []
+
+        # Cap concurrent listener tasks to prevent task explosion
+        _MAX_LISTENER_CONCURRENCY = 32
+        sem = asyncio.Semaphore(_MAX_LISTENER_CONCURRENCY)
+
+        async def _guarded(listener, ev):
+            async with sem:
+                await listener(ev)
 
         # Type-specific listeners
         for listener in self._listeners.get(event.event_type, []):
-            tasks.append(asyncio.create_task(listener(event)))
+            tasks.append(asyncio.create_task(_guarded(listener, event)))
 
         # Global listeners
         for listener in self._global_listeners:
-            tasks.append(asyncio.create_task(listener(event)))
+            tasks.append(asyncio.create_task(_guarded(listener, event)))
 
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
