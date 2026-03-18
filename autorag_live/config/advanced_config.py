@@ -625,6 +625,7 @@ class ConfigurationManager:
         self._watchers: List[Callable[[str, Any, Any], None]] = []
         self._lock = threading.Lock()
         self._file_hash: Optional[str] = None
+        self._file_mtime: Optional[float] = None
         self._reload_thread: Optional[threading.Thread] = None
 
         self.logger = logging.getLogger("ConfigurationManager")
@@ -662,6 +663,7 @@ class ConfigurationManager:
             return
 
         try:
+            self._file_mtime = path.stat().st_mtime
             content = path.read_text()
             self._file_hash = hashlib.md5(content.encode()).hexdigest()
 
@@ -792,8 +794,14 @@ class ConfigurationManager:
         if not self.config_path or not self.config_path.exists():
             return
 
+        # Fast mtime check avoids reading the entire file every cycle
+        current_mtime = self.config_path.stat().st_mtime
+        if self._file_mtime is not None and current_mtime == self._file_mtime:
+            return
+
         content = self.config_path.read_text()
         new_hash = hashlib.md5(content.encode()).hexdigest()
+        self._file_mtime = current_mtime
 
         if new_hash != self._file_hash:
             self.logger.info("Config file changed, reloading...")
