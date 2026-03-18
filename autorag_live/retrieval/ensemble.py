@@ -13,6 +13,7 @@ Key techniques:
 """
 
 import asyncio
+import heapq
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -188,10 +189,10 @@ class RRFFuser(ScoreFuser):
 
                 doc_scores[doc_id] += rrf_score
 
-        # Sort by fused score
-        sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
+        # Use heapq.nlargest for O(n log k) instead of O(n log n) full sort
+        top_docs = heapq.nlargest(len(doc_scores), doc_scores.items(), key=lambda x: x[1])
 
-        return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in sorted_docs]
+        return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in top_docs]
 
 
 class LinearFuser(ScoreFuser):
@@ -260,10 +261,10 @@ class LinearFuser(ScoreFuser):
                 doc_scores[doc_id] += weight * score
                 doc_counts[doc_id] += 1
 
-        # Sort by fused score
-        sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
+        # Use heapq.nlargest for O(n log k) instead of O(n log n) full sort
+        top_docs = heapq.nlargest(len(doc_scores), doc_scores.items(), key=lambda x: x[1])
 
-        return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in sorted_docs]
+        return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in top_docs]
 
 
 class MaxScoreFuser(ScoreFuser):
@@ -292,8 +293,8 @@ class MaxScoreFuser(ScoreFuser):
                 else:
                     doc_scores[doc_id] = max(doc_scores[doc_id], doc.score)
 
-        sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
-        return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in sorted_docs]
+        top_docs = heapq.nlargest(len(doc_scores), doc_scores.items(), key=lambda x: x[1])
+        return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in top_docs]
 
 
 class BordaFuser(ScoreFuser):
@@ -329,8 +330,8 @@ class BordaFuser(ScoreFuser):
 
                 doc_scores[doc_id] += borda_score
 
-        sorted_docs = sorted(doc_scores.items(), key=lambda x: x[1], reverse=True)
-        return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in sorted_docs]
+        top_docs = heapq.nlargest(len(doc_scores), doc_scores.items(), key=lambda x: x[1])
+        return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in top_docs]
 
 
 # ============================================================================
