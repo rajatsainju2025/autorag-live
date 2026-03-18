@@ -244,28 +244,39 @@ class OTLPBridgeExporter(TelemetryExporter):
         if self._meter is None:
             return
 
+        # Lazily cache instruments to avoid recreation per export call
+        if not hasattr(self, "_instrument_cache"):
+            self._instrument_cache: dict = {}
+
         for m in metrics:
             try:
-                if m.metric_type == MetricType.COUNTER:
-                    counter = self._meter.create_counter(
-                        m.name,
-                        description=f"AutoRAG counter: {m.name}",
-                    )
-                    counter.add(m.value, attributes=m.labels)
+                cache_key = (m.name, m.metric_type)
 
-                elif m.metric_type == MetricType.GAUGE:
-                    gauge = self._meter.create_up_down_counter(
-                        m.name,
-                        description=f"AutoRAG gauge: {m.name}",
-                    )
-                    gauge.add(m.value, attributes=m.labels)
+                if cache_key not in self._instrument_cache:
+                    if m.metric_type == MetricType.COUNTER:
+                        self._instrument_cache[cache_key] = self._meter.create_counter(
+                            m.name,
+                            description=f"AutoRAG counter: {m.name}",
+                        )
+                    elif m.metric_type == MetricType.GAUGE:
+                        self._instrument_cache[cache_key] = self._meter.create_up_down_counter(
+                            m.name,
+                            description=f"AutoRAG gauge: {m.name}",
+                        )
+                    elif m.metric_type in (MetricType.HISTOGRAM, MetricType.SUMMARY):
+                        self._instrument_cache[cache_key] = self._meter.create_histogram(
+                            m.name,
+                            description=f"AutoRAG histogram: {m.name}",
+                        )
 
-                elif m.metric_type in (MetricType.HISTOGRAM, MetricType.SUMMARY):
-                    hist = self._meter.create_histogram(
-                        m.name,
-                        description=f"AutoRAG histogram: {m.name}",
-                    )
-                    hist.record(m.value, attributes=m.labels)
+                instrument = self._instrument_cache.get(cache_key)
+                if instrument is not None:
+                    if m.metric_type == MetricType.COUNTER:
+                        instrument.add(m.value, attributes=m.labels)
+                    elif m.metric_type == MetricType.GAUGE:
+                        instrument.add(m.value, attributes=m.labels)
+                    else:
+                        instrument.record(m.value, attributes=m.labels)
             except Exception as exc:
                 logger.debug(f"OTel metric export failed for {m.name}: {exc}")
 
