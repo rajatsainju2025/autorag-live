@@ -36,6 +36,7 @@ class EntityExtractor:
         self.llm = llm
         self.state_manager = state_manager
         self.policy = policy
+        self._llm_runner = self._resolve_llm_runner(llm)
 
         self.extraction_prompt = extraction_prompt or (
             "You are an expert knowledge graph builder. Extract entities and their relationships from the following text.\n"
@@ -45,6 +46,29 @@ class EntityExtractor:
             "Text:\n{text}\n\n"
             "JSON Output:"
         )
+
+    def _resolve_llm_runner(self, llm: Any):
+        """Resolve the fastest supported LLM call path once during initialization."""
+        if hasattr(llm, "agenerate"):
+            return self._run_agenerate
+        if hasattr(llm, "ainvoke"):
+            return self._run_ainvoke
+        if hasattr(llm, "invoke"):
+            return self._run_invoke
+        return None
+
+    async def _run_agenerate(self, prompt: str) -> str:
+        response = await self.llm.agenerate([prompt])
+        return response.generations[0][0].text
+
+    async def _run_ainvoke(self, prompt: str) -> str:
+        response = await self.llm.ainvoke(prompt)
+        return response.content
+
+    async def _run_invoke(self, prompt: str) -> str:
+        loop = asyncio.get_running_loop()
+        response = await loop.run_in_executor(None, self.llm.invoke, prompt)
+        return response.content
 
     async def extract(self, text: str) -> Dict[str, Any]:
         """
@@ -62,33 +86,22 @@ class EntityExtractor:
         prompt = self.extraction_prompt.format(text=text)
 
         try:
-            # Assuming the LLM has an async generate or invoke method
-            if hasattr(self.llm, "agenerate"):
-                response = await self.llm.agenerate([prompt])
-                content = response.generations[0][0].text
-            elif hasattr(self.llm, "ainvoke"):
-                response = await self.llm.ainvoke(prompt)
-                content = response.content
-            else:
-                # Fallback to synchronous if async is not available
-                loop = asyncio.get_running_loop()
-                if hasattr(self.llm, "invoke"):
-                    response = await loop.run_in_executor(None, self.llm.invoke, prompt)
-                    content = response.content
-                else:
-                    raise ValueError("LLM must have 'agenerate', 'ainvoke', or 'invoke' method.")
+            if self._llm_runner is None:
+                raise ValueError("LLM must have 'agenerate', 'ainvoke', or 'invoke' method.")
+
+            content = await self._llm_runner(prompt)
 
             # Parse the JSON response
             parsed = self._parse_json_response(content)
 
             # Allow a policy to inspect/decide based on the parsed result and current state
             try:
-                if self.policy is not None:
-                    state_snapshot = (
-                        self.state_manager.snapshot() if self.state_manager is not None else {}
-                    )
+                policy = self.policy
+                if policy is not None:
+                    state_manager = self.state_manager
+                    state_snapshot = state_manager.snapshot() if state_manager is not None else {}
                     # Policy may return instructions or modifications; for now we log the decision
-                    decision = self.policy.decide(
+                    decision = policy.decide(
                         {"text": text, "response": parsed}, state=state_snapshot
                     )
                     logger.debug(f"Policy decision: {decision}")
@@ -105,18 +118,9 @@ class EntityExtractor:
         """
         Safely parse the JSON response from the LLM, handling potential markdown formatting.
         """
-        clean_content = content.strip()
-
-        # Remove markdown code blocks if present
-        if clean_content.startswith("```json"):
-            clean_content = clean_content[7:]
-        elif clean_content.startswith("```"):
-            clean_content = clean_content[3:]
-
-        if clean_content.endswith("```"):
-            clean_content = clean_content[:-3]
-
-        clean_content = clean_content.strip()
+        clean_content = (
+            content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        )
 
         try:
             data = json.loads(clean_content)
@@ -144,17 +148,14 @@ class EntityExtractor:
             The documents with an added 'knowledge_graph' key containing the extracted data.
         """
         # Process concurrently for efficiency
-        tasks = []
-        for doc in documents:
-            text = doc.get(text_key, "")
-            tasks.append(self.extract(text))
+        results = await asyncio.gather(
+            *(self.extract(doc.get(text_key, "")) for doc in documents),
+            return_exceptions=True,
+        )
 
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        for i, doc in enumerate(documents):
-            result = results[i]
+        for index, (doc, result) in enumerate(zip(documents, results)):
             if isinstance(result, Exception):
-                logger.error(f"Error processing document {i}: {result}")
+                logger.error(f"Error processing document {index}: {result}")
                 doc["knowledge_graph"] = {"entities": [], "relationships": [], "error": str(result)}
             else:
                 doc["knowledge_graph"] = result
