@@ -427,14 +427,19 @@ class RuleBasedEntityExtractor(EntityExtractor):
     async def extract(self, text: str) -> List[Entity]:
         """Extract entities using rules."""
         entities = []
+        seen_names = set()
         entity_id = 0
 
         for entity_type, pattern in self.patterns.items():
             for match in pattern.finditer(text):
+                name = match.group()
+                if name in seen_names:
+                    continue
+                seen_names.add(name)
                 entities.append(
                     Entity(
                         id=f"rule_{entity_id}",
-                        name=match.group(),
+                        name=name,
                         type=entity_type,
                     )
                 )
@@ -446,15 +451,17 @@ class RuleBasedEntityExtractor(EntityExtractor):
         caps_pattern = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
         for match in caps_pattern.finditer(text):
             name = match.group()
-            if not any(e.name == name for e in entities):
-                entities.append(
-                    Entity(
-                        id=f"rule_{entity_id}",
-                        name=name,
-                        type=EntityType.OTHER,
-                    )
+            if name in seen_names:
+                continue
+            seen_names.add(name)
+            entities.append(
+                Entity(
+                    id=f"rule_{entity_id}",
+                    name=name,
+                    type=EntityType.OTHER,
                 )
-                entity_id += 1
+            )
+            entity_id += 1
 
         return entities
 
@@ -478,6 +485,8 @@ Output format (one entity per line):
 ENTITY: <name> | TYPE: <type>
 
 Entities:"""
+
+    TYPE_MAP = {entity_type.value: entity_type for entity_type in EntityType}
 
     def __init__(self, llm: Optional[Callable[[str], str]] = None):
         """Initialize extractor."""
@@ -515,11 +524,7 @@ Entities:"""
                     name = parts[0].replace("ENTITY:", "").strip()
                     type_str = parts[1].replace("TYPE:", "").strip().lower()
 
-                    entity_type = EntityType.OTHER
-                    for et in EntityType:
-                        if et.value == type_str:
-                            entity_type = et
-                            break
+                    entity_type = self.TYPE_MAP.get(type_str, EntityType.OTHER)
 
                     entities.append(
                         Entity(
