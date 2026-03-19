@@ -82,7 +82,7 @@ class RetrievalStrategy(str, Enum):
 # =============================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class Document:
     """
     Universal document representation.
@@ -126,7 +126,7 @@ class Document:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class Message:
     """
     Chat message for LLM interactions.
@@ -188,7 +188,7 @@ class Message:
         )
 
 
-@dataclass
+@dataclass(slots=True)
 class ToolCall:
     """
     Represents a tool/function call from the LLM.
@@ -230,7 +230,7 @@ class ToolCall:
             return {"raw": self.arguments}
 
 
-@dataclass
+@dataclass(slots=True)
 class ToolResult:
     """
     Result from tool execution.
@@ -263,7 +263,7 @@ class ToolResult:
         return Message.tool(content, self.tool_call_id, self.name)
 
 
-@dataclass
+@dataclass(slots=True)
 class RetrievalResult:
     """
     Result from retrieval operation.
@@ -293,7 +293,7 @@ class RetrievalResult:
         return "\n\n".join(doc.content for doc in docs)
 
 
-@dataclass
+@dataclass(slots=True)
 class GenerationResult:
     """
     Result from LLM generation.
@@ -325,7 +325,7 @@ class GenerationResult:
         return self.usage.get("total_tokens", 0)
 
 
-@dataclass
+@dataclass(slots=True)
 class EmbeddingResult:
     """
     Result from embedding operation.
@@ -350,7 +350,7 @@ class EmbeddingResult:
             self.dimensions = len(self.embeddings[0])
 
 
-@dataclass
+@dataclass(slots=True)
 class AgentAction:
     """
     Represents an action taken by an agent.
@@ -392,7 +392,7 @@ class AgentAction:
         return cls(type="final_answer", thought=thought)
 
 
-@dataclass
+@dataclass(slots=True)
 class AgentState:
     """
     Complete agent state at a point in time.
