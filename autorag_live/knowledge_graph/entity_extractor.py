@@ -25,6 +25,7 @@ class EntityExtractor:
         extraction_prompt: Optional[str] = None,
         state_manager: Optional[StateManager] = None,
         policy: Optional[AgentPolicy] = None,
+        max_concurrency: int = 8,
     ):
         """
         Initialize the EntityExtractor.
@@ -36,6 +37,7 @@ class EntityExtractor:
         self.llm = llm
         self.state_manager = state_manager
         self.policy = policy
+        self.max_concurrency = max(1, max_concurrency)
         self._llm_runner = self._resolve_llm_runner(llm)
 
         self.extraction_prompt = extraction_prompt or (
@@ -118,9 +120,14 @@ class EntityExtractor:
         """
         Safely parse the JSON response from the LLM, handling potential markdown formatting.
         """
-        clean_content = (
-            content.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
-        )
+        clean_content = content.strip()
+        if clean_content.startswith("```"):
+            first_newline = clean_content.find("\n")
+            if first_newline != -1:
+                clean_content = clean_content[first_newline + 1 :]
+            if clean_content.endswith("```"):
+                clean_content = clean_content[:-3]
+            clean_content = clean_content.strip()
 
         try:
             data = json.loads(clean_content)
@@ -147,9 +154,14 @@ class EntityExtractor:
         Returns:
             The documents with an added 'knowledge_graph' key containing the extracted data.
         """
-        # Process concurrently for efficiency
+        semaphore = asyncio.Semaphore(self.max_concurrency)
+
+        async def extract_with_limit(document: Dict[str, Any]) -> Dict[str, Any]:
+            async with semaphore:
+                return await self.extract(document.get(text_key, ""))
+
         results = await asyncio.gather(
-            *(self.extract(doc.get(text_key, "")) for doc in documents),
+            *(extract_with_limit(doc) for doc in documents),
             return_exceptions=True,
         )
 
