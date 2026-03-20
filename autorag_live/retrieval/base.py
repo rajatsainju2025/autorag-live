@@ -129,7 +129,7 @@ class CacheMixin:
 class DeduplicationMixin:
     """Mixin for automatic result deduplication."""
 
-    def __init__(self, dedup_field: str = "content"):
+    def __init__(self, dedup_field: str = "text"):
         """
         Initialize deduplication mixin.
 
@@ -173,6 +173,9 @@ class FilterMixin:
 
     def _apply_filters(self, docs: List[Document]) -> List[Document]:
         """Apply all registered filters to documents."""
+        if not self._filters:
+            return docs
+
         result = docs
         for filter_fn in self._filters:
             result = [doc for doc in result if filter_fn(doc)]
@@ -190,7 +193,7 @@ class ComposableRetriever(SyncRetriever, CacheMixin, DeduplicationMixin, FilterM
         self,
         cache_size: int = 1000,
         ttl_seconds: Optional[int] = None,
-        dedup_field: str = "content",
+        dedup_field: str = "text",
         enable_cache: bool = True,
         enable_dedup: bool = True,
     ):
@@ -270,7 +273,7 @@ class AsyncComposableRetriever(AsyncRetriever, CacheMixin, DeduplicationMixin, F
         self,
         cache_size: int = 1000,
         ttl_seconds: Optional[int] = None,
-        dedup_field: str = "content",
+        dedup_field: str = "text",
         enable_cache: bool = True,
         enable_dedup: bool = True,
     ):
