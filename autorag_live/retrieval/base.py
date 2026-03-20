@@ -2,6 +2,7 @@
 
 import asyncio
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional, Set
 
 from autorag_live.types.types import Document
@@ -70,7 +71,7 @@ class CacheMixin:
             cache_size: Maximum number of cached results
             ttl_seconds: Time-to-live for cache entries in seconds, None for permanent
         """
-        self._cache: Dict[str, List[Document]] = {}
+        self._cache: "OrderedDict[str, List[Document]]" = OrderedDict()
         self._cache_size = cache_size
         self._ttl_seconds = ttl_seconds
         self._timestamps: Dict[str, float] = {}
