@@ -710,12 +710,14 @@ class VectorSimilarity:
         if q_norm == 0:
             return np.zeros(len(candidates), dtype=np.float32)
 
-        q_normed = q / q_norm
-        row_norms = np.linalg.norm(mat, axis=1, keepdims=True)
-        row_norms = np.where(row_norms == 0, 1.0, row_norms)
-        mat_normed = mat / row_norms
+        row_norms = np.linalg.norm(mat, axis=1)
+        nonzero_rows = row_norms != 0
+        similarities = np.zeros(len(candidates), dtype=np.float32)
+        if np.any(nonzero_rows):
+            dots = mat[nonzero_rows] @ q
+            similarities[nonzero_rows] = dots / (row_norms[nonzero_rows] * q_norm)
 
-        return mat_normed @ q_normed
+        return similarities
 
     @staticmethod
     def euclidean_distance(
@@ -948,15 +950,18 @@ class EmbeddingSemanticCache(Generic[T]):
 
         async with self._lock:
             entries = list(self._cache.values())
-            to_delete = []
+            if not entries:
+                return 0
 
-            for entry in entries:
-                similarity = self.calculator.cosine_similarity(
-                    query_embedding,
-                    entry.embedding,
-                )
-                if similarity >= threshold:
-                    to_delete.append(entry.key_hash)
+            similarities = self.calculator.batch_cosine_similarity(
+                query_embedding,
+                [entry.embedding for entry in entries],
+            )
+            to_delete = [
+                entry.key_hash
+                for entry, similarity in zip(entries, similarities)
+                if similarity >= threshold
+            ]
 
             for key in to_delete:
                 if key in self._cache:
