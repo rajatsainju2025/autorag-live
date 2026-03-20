@@ -118,12 +118,11 @@ class CacheMixin:
         key = self._get_cache_key(query, k, **kwargs)
 
         if len(self._cache) >= self._cache_size and key not in self._cache:
-            # Evict oldest entry (FIFO)
-            oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
+            oldest_key, _ = self._cache.popitem(last=False)
             del self._timestamps[oldest_key]
 
         self._cache[key] = results
+        self._cache.move_to_end(key)
         self._timestamps[key] = time.time()
 
 
