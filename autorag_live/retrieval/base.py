@@ -102,6 +102,7 @@ class CacheMixin:
                 del self._timestamps[key]
                 return None
 
+        self._cache.move_to_end(key)
         return self._cache[key]
 
     def _set_cached(
