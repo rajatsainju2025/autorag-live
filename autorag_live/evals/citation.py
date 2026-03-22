@@ -269,7 +269,8 @@ class CitationVerifier:
                 explanation="Empty claim",
             )
 
-        overlap = len(claim_words & source_words) / len(claim_words)
+        # Count overlap directly to avoid allocating an intersection set
+        overlap = sum(1 for w in claim_words if w in source_words) / len(claim_words)
 
         snippet = source_doc.get_snippet(citation.text)
 
