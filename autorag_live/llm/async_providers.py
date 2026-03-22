@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
@@ -147,8 +148,6 @@ class AsyncOpenAIProvider(AsyncLLMProvider):
         if not self.client:
             raise RuntimeError("Async OpenAI client not initialized")
 
-        import time
-
         start_time = time.perf_counter()
 
         messages = []
@@ -246,8 +245,6 @@ class AsyncAnthropicProvider(AsyncLLMProvider):
         if not self.client:
             raise RuntimeError("Async Anthropic client not initialized")
 
-        import time
-
         start_time = time.perf_counter()
 
         try:
@@ -338,8 +335,6 @@ class AsyncOllamaProvider(AsyncLLMProvider):
         **kwargs: Any,
     ) -> AsyncLLMResponse:
         """Generate response asynchronously using Ollama."""
-        import time
-
         start_time = time.perf_counter()
 
         try:
