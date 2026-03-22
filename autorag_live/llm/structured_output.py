@@ -50,6 +50,15 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 ModelT = TypeVar("ModelT")
 
+# Pre-computed type mapping — avoids rebuilding dict on every recursive call
+_PYTHON_TYPE_MAP = {
+    str: {"type": "string"},
+    int: {"type": "integer"},
+    float: {"type": "number"},
+    bool: {"type": "boolean"},
+    bytes: {"type": "string", "format": "byte"},
+}
+
 
 # =============================================================================
 # Schema Generation
@@ -77,15 +86,8 @@ def python_type_to_json_schema(
         return {"type": "null"}
 
     # Handle basic types
-    type_map = {
-        str: {"type": "string"},
-        int: {"type": "integer"},
-        float: {"type": "number"},
-        bool: {"type": "boolean"},
-        bytes: {"type": "string", "format": "byte"},
-    }
-    if python_type in type_map:
-        return type_map[python_type]
+    if python_type in _PYTHON_TYPE_MAP:
+        return _PYTHON_TYPE_MAP[python_type].copy()
 
     # Handle origin types (generics)
     origin = get_origin(python_type)
@@ -263,6 +265,10 @@ class ParseStrategy(ABC):
 class JSONParseStrategy(ParseStrategy):
     """Parse JSON from text."""
 
+    _MARKDOWN_JSON_RE = re.compile(r"```(?:json)?\s*([\s\S]*?)\s*```")
+    _JSON_OBJ_RE = re.compile(r"\{[\s\S]*\}")
+    _JSON_ARR_RE = re.compile(r"\[[\s\S]*\]")
+
     def parse(self, text: str) -> Optional[Dict[str, Any]]:
         """Extract and parse JSON from text."""
         # Try direct parsing
@@ -272,7 +278,7 @@ class JSONParseStrategy(ParseStrategy):
             pass
 
         # Try to find JSON block in markdown
-        json_match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+        json_match = self._MARKDOWN_JSON_RE.search(text)
         if json_match:
             try:
                 return json.loads(json_match.group(1))
@@ -280,7 +286,7 @@ class JSONParseStrategy(ParseStrategy):
                 pass
 
         # Try to find JSON object
-        obj_match = re.search(r"\{[\s\S]*\}", text)
+        obj_match = self._JSON_OBJ_RE.search(text)
         if obj_match:
             try:
                 return json.loads(obj_match.group())
@@ -288,7 +294,7 @@ class JSONParseStrategy(ParseStrategy):
                 pass
 
         # Try to find JSON array
-        arr_match = re.search(r"\[[\s\S]*\]", text)
+        arr_match = self._JSON_ARR_RE.search(text)
         if arr_match:
             try:
                 result = json.loads(arr_match.group())
