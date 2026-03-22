@@ -1,6 +1,7 @@
 """Efficient content-based deduplication using hashing."""
 
 import hashlib
+from collections import deque
 from typing import List, Set, Tuple
 
 
@@ -17,7 +18,7 @@ class ContentDeduplicator:
         self._hash_algorithm = hash_algorithm
         self._hash_cache = {}
         self._cache_size = cache_size
-        self._cache_order = []  # Track insertion order for LRU
+        self._cache_order: deque = deque()  # Track insertion order for LRU
 
     def _compute_hash(self, content: str) -> str:
         """Compute hash of content with LRU caching."""
@@ -31,7 +32,7 @@ class ContentDeduplicator:
         # Add to cache with LRU eviction
         if self._cache_size > 0 and len(self._hash_cache) >= self._cache_size:
             # Evict oldest entry
-            oldest = self._cache_order.pop(0)
+            oldest = self._cache_order.popleft()
             self._hash_cache.pop(oldest, None)
 
         self._hash_cache[content] = hash_value
