@@ -24,7 +24,6 @@ Example usage:
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -142,7 +141,7 @@ class EmbeddingCache:
     def _make_key(self, text: str, model: str) -> str:
         """Generate cache key."""
         content = f"{model}:{text}"
-        return hashlib.md5(content.encode()).hexdigest()
+        return format(hash(content), "x")
 
     def get(
         self,

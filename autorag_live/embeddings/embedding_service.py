@@ -24,7 +24,6 @@ Example usage:
 
 from __future__ import annotations
 
-import hashlib
 import logging
 import os
 import time
@@ -150,7 +149,7 @@ class EmbeddingCache:
     def _make_key(self, text: str, model: str, provider: str) -> str:
         """Create cache key from text and model."""
         content = f"{provider}:{model}:{text}"
-        return hashlib.md5(content.encode()).hexdigest()
+        return format(hash(content), "x")
 
     def get(self, text: str, model: str, provider: str) -> Optional[List[float]]:
         """Get embedding from cache."""
