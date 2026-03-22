@@ -17,7 +17,7 @@ from typing import Any, AsyncIterator, Dict, List, Optional
 from autorag_live.llm.providers import CostTracker, LLMConfig, ModelProvider, TokenCounter
 
 
-@dataclass
+@dataclass(slots=True)
 class AsyncLLMResponse:
     """Async response from LLM provider."""
 

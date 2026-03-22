@@ -73,7 +73,7 @@ class CircuitState(Enum):
 # =============================================================================
 
 
-@dataclass
+@dataclass(slots=True)
 class PipelineEvent:
     """Event emitted during pipeline execution."""
 
@@ -84,7 +84,7 @@ class PipelineEvent:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
-@dataclass
+@dataclass(slots=True)
 class StreamChunk:
     """A chunk of streaming output."""
 

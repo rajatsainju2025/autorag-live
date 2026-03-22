@@ -73,7 +73,7 @@ class DeliveryGuarantee(Enum):
     EXACTLY_ONCE = auto()  # With deduplication
 
 
-@dataclass
+@dataclass(slots=True)
 class EventMetadata:
     """Event metadata."""
 
