@@ -176,6 +176,8 @@ class EventEmitter:
             PipelineEventType, List[Callable[[PipelineEvent], Awaitable[None]]]
         ] = {event_type: [] for event_type in PipelineEventType}
         self._global_listeners: List[Callable[[PipelineEvent], Awaitable[None]]] = []
+        # Create semaphore once to avoid allocation per emit
+        self._emit_semaphore = asyncio.Semaphore(32)
 
     def on(
         self,
@@ -192,10 +194,7 @@ class EventEmitter:
     async def emit(self, event: PipelineEvent) -> None:
         """Emit an event to all listeners with bounded concurrency."""
         tasks = []
-
-        # Cap concurrent listener tasks to prevent task explosion
-        _MAX_LISTENER_CONCURRENCY = 32
-        sem = asyncio.Semaphore(_MAX_LISTENER_CONCURRENCY)
+        sem = self._emit_semaphore
 
         async def _guarded(listener, ev):
             async with sem:
