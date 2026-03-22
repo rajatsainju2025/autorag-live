@@ -313,6 +313,17 @@ class BaseTool(ABC):
 # Type Conversion Utilities
 # =============================================================================
 
+# Pre-computed type mapping to avoid dict re-creation per call
+_JSON_TYPE_MAP = {
+    str: "string",
+    int: "integer",
+    float: "number",
+    bool: "boolean",
+    list: "array",
+    dict: "object",
+    bytes: "string",
+}
+
 
 def python_type_to_json_type(py_type: Any) -> str:
     """Convert Python type to JSON Schema type."""
@@ -338,17 +349,7 @@ def python_type_to_json_type(py_type: Any) -> str:
         return "object"
 
     # Basic types
-    type_map = {
-        str: "string",
-        int: "integer",
-        float: "number",
-        bool: "boolean",
-        list: "array",
-        dict: "object",
-        bytes: "string",
-    }
-
-    return type_map.get(py_type, "string")
+    return _JSON_TYPE_MAP.get(py_type, "string")
 
 
 def extract_parameters_from_function(
