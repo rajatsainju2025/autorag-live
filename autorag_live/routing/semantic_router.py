@@ -132,18 +132,26 @@ class SemanticRouter:
                 )
 
             query_vec = np.array(query_embedding)
+            query_norm = np.linalg.norm(query_vec)
+            if query_norm == 0:
+                return None
 
             best_route = None
             max_similarity = -1.0
 
-            # Compare query embedding against all route utterances
+            # Vectorized comparison against all route utterances
             for route in self.routes:
                 if route.embeddings is not None:
-                    for utterance_vec in route.embeddings:
-                        similarity = self._cosine_similarity(query_vec, utterance_vec)
-                        if similarity > max_similarity:
-                            max_similarity = similarity
-                            best_route = route
+                    # route.embeddings is (num_utterances, dim) matrix
+                    dots = route.embeddings @ query_vec
+                    norms = np.linalg.norm(route.embeddings, axis=1) * query_norm
+                    # Avoid division by zero
+                    norms = np.where(norms == 0, 1.0, norms)
+                    similarities = dots / norms
+                    route_max = float(np.max(similarities))
+                    if route_max > max_similarity:
+                        max_similarity = route_max
+                        best_route = route
 
             logger.debug(
                 f"Query: '{query}' -> Best Route: '{best_route.name if best_route else None}' (Similarity: {max_similarity:.4f})"
