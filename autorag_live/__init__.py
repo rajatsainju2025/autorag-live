@@ -46,26 +46,28 @@ if not _HAS_OMEGACONF:
 
 
 # Lazy-loaded core metrics (lightweight imports)
+# Hoisted to module level to avoid re-creating dict on every __getattr__ miss
+_LAZY_IMPORTS = {
+    "jaccard_at_k": ("disagreement.metrics", "jaccard_at_k"),
+    "kendall_tau_at_k": ("disagreement.metrics", "kendall_tau_at_k"),
+    "bm25_retrieve": ("retrievers.bm25", "bm25_retrieve"),
+    "dense_retrieve": ("retrievers.dense", "dense_retrieve"),
+    "hybrid_retrieve": ("retrievers.hybrid", "hybrid_retrieve"),
+    "DenseRetriever": ("retrievers.faiss_adapter", "DenseRetriever"),
+    "SentenceTransformerRetriever": (
+        "retrievers.faiss_adapter",
+        "SentenceTransformerRetriever",
+    ),
+    "create_dense_retriever": ("retrievers.faiss_adapter", "create_dense_retriever"),
+    "QdrantRetriever": ("retrievers.qdrant_adapter", "QdrantRetriever"),
+    "ElasticsearchRetriever": ("retrievers.elasticsearch_adapter", "ElasticsearchRetriever"),
+}
+
+
 def __getattr__(name: str) -> Any:
     """Lazy load commonly used functions on first access."""
-    _lazy_imports = {
-        "jaccard_at_k": ("disagreement.metrics", "jaccard_at_k"),
-        "kendall_tau_at_k": ("disagreement.metrics", "kendall_tau_at_k"),
-        "bm25_retrieve": ("retrievers.bm25", "bm25_retrieve"),
-        "dense_retrieve": ("retrievers.dense", "dense_retrieve"),
-        "hybrid_retrieve": ("retrievers.hybrid", "hybrid_retrieve"),
-        "DenseRetriever": ("retrievers.faiss_adapter", "DenseRetriever"),
-        "SentenceTransformerRetriever": (
-            "retrievers.faiss_adapter",
-            "SentenceTransformerRetriever",
-        ),
-        "create_dense_retriever": ("retrievers.faiss_adapter", "create_dense_retriever"),
-        "QdrantRetriever": ("retrievers.qdrant_adapter", "QdrantRetriever"),
-        "ElasticsearchRetriever": ("retrievers.elasticsearch_adapter", "ElasticsearchRetriever"),
-    }
-
-    if name in _lazy_imports:
-        module_name, attr_name = _lazy_imports[name]
+    if name in _LAZY_IMPORTS:
+        module_name, attr_name = _LAZY_IMPORTS[name]
         try:
             module = __import__(f"autorag_live.{module_name}", fromlist=[attr_name])
             return getattr(module, attr_name)
