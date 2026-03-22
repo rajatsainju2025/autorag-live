@@ -212,6 +212,18 @@ class ToxicityFilter:
             ],
         }
 
+        # Pre-compile patterns into single regex per category for O(1) matching
+        import re
+
+        self._harmful_compiled = {
+            cat: re.compile("|".join(re.escape(p) for p in patterns))
+            for cat, patterns in self.harmful_patterns.items()
+        }
+        self._bias_compiled = {
+            cat: re.compile("|".join(re.escape(p) for p in patterns))
+            for cat, patterns in self.bias_indicators.items()
+        }
+
     def check(self, text: str) -> SafetyCheckResult:
         """
         Check for toxic or harmful content.
@@ -227,16 +239,16 @@ class ToxicityFilter:
         text_lower = text.lower()
 
         # Check for harmful content
-        for category, patterns in self.harmful_patterns.items():
-            matches = sum(1 for p in patterns if p in text_lower)
+        for category, pattern in self._harmful_compiled.items():
+            matches = len(pattern.findall(text_lower))
 
             if matches > 0:
                 issues.append(f"Potential {category} content detected")
                 risk_level += 0.3
 
         # Check for bias
-        for bias_type, patterns in self.bias_indicators.items():
-            matches = sum(1 for p in patterns if p in text_lower)
+        for bias_type, pattern in self._bias_compiled.items():
+            matches = len(pattern.findall(text_lower))
 
             if matches > 2:
                 issues.append(f"Potential {bias_type} detected")
