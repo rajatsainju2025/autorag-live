@@ -14,6 +14,7 @@ Key strategies:
 4. Chunked attention reranking
 """
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -131,14 +132,10 @@ class PositionBiasModel:
 
     def _primacy_weight(self, normalized_pos: float) -> float:
         """Weight favoring early positions."""
-        import math
-
         return math.exp(-self.config.decay_rate * normalized_pos * 10)
 
     def _recency_weight(self, normalized_pos: float) -> float:
         """Weight favoring late positions."""
-        import math
-
         return math.exp(-self.config.decay_rate * (1 - normalized_pos) * 10)
 
     def _u_shaped_weight(self, normalized_pos: float) -> float:
@@ -150,8 +147,6 @@ class PositionBiasModel:
 
     def _middle_focus_weight(self, normalized_pos: float) -> float:
         """Inverse U (focuses on middle)."""
-        import math
-
         # Maximum in middle
         distance_from_middle = abs(normalized_pos - 0.5) * 2
         return math.exp(-self.config.decay_rate * distance_from_middle * 10)

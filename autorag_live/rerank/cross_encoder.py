@@ -11,6 +11,7 @@ Key features:
 4. Score calibration
 """
 
+import math
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from enum import Enum
@@ -112,8 +113,6 @@ class SoftmaxNormalizer(ScoreNormalizer):
 
     def normalize(self, scores: list[float]) -> list[float]:
         """Apply softmax normalization."""
-        import math
-
         if not scores:
             return []
 
@@ -156,8 +155,6 @@ class SigmoidNormalizer(ScoreNormalizer):
 
     def normalize(self, scores: list[float]) -> list[float]:
         """Apply sigmoid normalization."""
-        import math
-
         normalized = []
         for s in scores:
             try:
