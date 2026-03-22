@@ -30,6 +30,7 @@ import asyncio
 import hashlib
 import logging
 import threading
+import time
 from collections import OrderedDict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -298,7 +299,7 @@ class SemanticQueryCache:
     @staticmethod
     def _make_key(query: str) -> str:
         """Create a cache key from query string."""
-        return hashlib.md5(query.encode()).hexdigest()
+        return format(hash(query), "x")
 
     def get_exact(self, query: str) -> Optional[np.ndarray]:
         """Get exact match from cache.
@@ -382,8 +383,6 @@ class SemanticQueryCache:
             query: Query string
             embedding: Embedding array
         """
-        import time
-
         with self.lock:
             key = self._make_key(query)
 
