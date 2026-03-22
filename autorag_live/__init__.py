@@ -90,62 +90,46 @@ __all__ = [
     "ElasticsearchRetriever",
 ]
 
-# Extended lazy imports for optional modules
-try:
-    from .evals.advanced_metrics import aggregate_metrics, comprehensive_evaluation  # noqa: F401
-    from .evals.llm_judge import DeterministicJudge, LLMJudge  # noqa: F401
-    from .evals.performance_benchmarks import run_full_benchmark_suite  # noqa: F401
-    from .evals.small import run_small_suite  # noqa: F401
-except ImportError:
-    pass
-
-try:
-    from .augment.hard_negatives import sample_hard_negatives  # noqa: F401
-    from .augment.query_rewrites import rewrite_query  # noqa: F401
-    from .augment.synonym_miner import (  # noqa: F401
-        mine_synonyms_from_disagreements,
-        update_terms_from_mining,
-    )
-except ImportError:
-    pass
-
-try:
-    from .pipeline.acceptance_policy import AcceptancePolicy, safe_config_update  # noqa: F401
-    from .pipeline.bandit_optimizer import (  # noqa: F401
-        BanditArm,
-        BanditHybridOptimizer,
-        UCB1Bandit,
-    )
-    from .pipeline.hybrid_optimizer import (  # noqa: F401
-        HybridWeights,
-        grid_search_hybrid_weights,
-        load_hybrid_config,
-        save_hybrid_config,
-    )
-except ImportError:
-    pass
-
-try:
-    from .disagreement.report import generate_disagreement_report  # noqa: F401
-except ImportError:
-    pass
-
-try:
-    from .rerank.simple import SimpleReranker  # noqa: F401
-except ImportError:
-    pass
-
-try:
-    from .data.time_series import FFTEmbedder, TimeSeriesNote, TimeSeriesRetriever  # noqa: F401
-except ImportError:
-    pass
-
-try:
-    from . import cli
-
-    app = cli.app  # noqa: F401
-except ImportError:
-    pass
+# Extended lazy imports for optional modules — all deferred via __getattr__
+# to avoid importing heavy dependencies (evals, augment, pipeline, etc.)
+# at package load time.
+_LAZY_IMPORTS.update(
+    {
+        # evals
+        "aggregate_metrics": ("evals.advanced_metrics", "aggregate_metrics"),
+        "comprehensive_evaluation": ("evals.advanced_metrics", "comprehensive_evaluation"),
+        "LLMJudge": ("evals.llm_judge", "LLMJudge"),
+        "DeterministicJudge": ("evals.llm_judge", "DeterministicJudge"),
+        "run_full_benchmark_suite": ("evals.performance_benchmarks", "run_full_benchmark_suite"),
+        "run_small_suite": ("evals.small", "run_small_suite"),
+        # augment
+        "sample_hard_negatives": ("augment.hard_negatives", "sample_hard_negatives"),
+        "rewrite_query": ("augment.query_rewrites", "rewrite_query"),
+        "mine_synonyms_from_disagreements": (
+            "augment.synonym_miner",
+            "mine_synonyms_from_disagreements",
+        ),
+        "update_terms_from_mining": ("augment.synonym_miner", "update_terms_from_mining"),
+        # pipeline
+        "AcceptancePolicy": ("pipeline.acceptance_policy", "AcceptancePolicy"),
+        "safe_config_update": ("pipeline.acceptance_policy", "safe_config_update"),
+        "BanditArm": ("pipeline.bandit_optimizer", "BanditArm"),
+        "BanditHybridOptimizer": ("pipeline.bandit_optimizer", "BanditHybridOptimizer"),
+        "UCB1Bandit": ("pipeline.bandit_optimizer", "UCB1Bandit"),
+        "HybridWeights": ("pipeline.hybrid_optimizer", "HybridWeights"),
+        "grid_search_hybrid_weights": ("pipeline.hybrid_optimizer", "grid_search_hybrid_weights"),
+        "load_hybrid_config": ("pipeline.hybrid_optimizer", "load_hybrid_config"),
+        "save_hybrid_config": ("pipeline.hybrid_optimizer", "save_hybrid_config"),
+        # disagreement
+        "generate_disagreement_report": ("disagreement.report", "generate_disagreement_report"),
+        # rerank
+        "SimpleReranker": ("rerank.simple", "SimpleReranker"),
+        # data
+        "FFTEmbedder": ("data.time_series", "FFTEmbedder"),
+        "TimeSeriesNote": ("data.time_series", "TimeSeriesNote"),
+        "TimeSeriesRetriever": ("data.time_series", "TimeSeriesRetriever"),
+    }
+)
 
 __all__ = [
     # Version
@@ -160,8 +144,6 @@ __all__ = [
     "DenseRetriever",
     "SentenceTransformerRetriever",
     "create_dense_retriever",
-    "save_retriever_index",
-    "load_retriever_index",
     "QdrantRetriever",
     "ElasticsearchRetriever",
     "generate_disagreement_report",
@@ -188,5 +170,4 @@ __all__ = [
     "TimeSeriesRetriever",
     "TimeSeriesNote",
     "FFTEmbedder",
-    "app",
 ]
