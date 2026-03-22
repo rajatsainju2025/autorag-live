@@ -28,6 +28,14 @@ class ToolParameter:
     min_value: Optional[Union[int, float]] = None
     max_value: Optional[Union[int, float]] = None
 
+    _TYPE_MAPPING = {
+        "string": str,
+        "integer": int,
+        "boolean": bool,
+        "array": list,
+        "object": dict,
+    }
+
     def validate(self, value: Any) -> None:
         """
         Validate parameter value.
@@ -46,15 +54,7 @@ class ToolParameter:
             return
 
         # Type validation
-        type_mapping = {
-            "string": str,
-            "integer": int,
-            "boolean": bool,
-            "array": list,
-            "object": dict,
-        }
-
-        expected_type = type_mapping.get(self.param_type)
+        expected_type = self._TYPE_MAPPING.get(self.param_type)
         if expected_type and not isinstance(value, expected_type):
             raise ValidationError(
                 f"Parameter '{self.name}' must be {self.param_type}",
