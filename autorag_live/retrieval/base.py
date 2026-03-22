@@ -1,6 +1,7 @@
 """Base retriever protocol and composable mixins for unified sync/async interface."""
 
 import asyncio
+import concurrent.futures
 from abc import ABC, abstractmethod
 from collections import OrderedDict
 from typing import Any, Callable, Dict, List, Optional, Set
@@ -353,6 +354,8 @@ class SyncAsyncAdapter(SyncRetriever):
             async_retriever: Async retriever to adapt
         """
         self.async_retriever = async_retriever
+        # Reuse a single executor across calls to avoid per-call thread pool creation
+        self._executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
     def retrieve(
         self,
@@ -378,14 +381,11 @@ class SyncAsyncAdapter(SyncRetriever):
             return asyncio.run(self.async_retriever.aretrieve(query, k, **kwargs))
 
         # Already in async context, use run_in_executor
-        import concurrent.futures
-
-        with concurrent.futures.ThreadPoolExecutor() as executor:
-            future = executor.submit(
-                asyncio.run,
-                self.async_retriever.aretrieve(query, k, **kwargs),
-            )
-            return future.result()
+        future = self._executor.submit(
+            asyncio.run,
+            self.async_retriever.aretrieve(query, k, **kwargs),
+        )
+        return future.result()
 
 
 class AsyncSyncAdapter(AsyncRetriever):
