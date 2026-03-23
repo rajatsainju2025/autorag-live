@@ -251,9 +251,10 @@ class ExtractiveCompressor:
         self,
         sentence: str,
         query: str,
+        _query_terms: set[str] | None = None,
     ) -> float:
         """Score based on query term overlap."""
-        query_terms = set(query.lower().split())
+        query_terms = _query_terms if _query_terms is not None else set(query.lower().split())
         sentence_terms = set(sentence.lower().split())
 
         if not query_terms:
@@ -278,6 +279,7 @@ class ExtractiveCompressor:
             List of scored sentences
         """
         all_sentences = []
+        query_terms = set(query.lower().split())
 
         for doc in documents:
             sentences = self.extract_sentences(doc.content)
@@ -288,7 +290,7 @@ class ExtractiveCompressor:
                 pos_score = self.score_sentence_position(i, total)
                 len_score = self.score_sentence_length(sent)
                 info_score = self.score_information_density(sent)
-                query_score = self.score_query_relevance(sent, query)
+                query_score = self.score_query_relevance(sent, query, _query_terms=query_terms)
 
                 # Combined base score
                 base_score = (pos_score + len_score + info_score) / 3
