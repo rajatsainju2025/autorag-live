@@ -3,8 +3,6 @@
 import re
 from typing import Callable, List
 
-import numpy as np
-
 
 def filter_documents_by_length(
     documents: List[str],
@@ -22,12 +20,13 @@ def filter_documents_by_length(
     Returns:
         Tuple of (filtered_documents, kept_indices)
     """
-    lengths = np.array([len(doc) for doc in documents])
-    mask = (lengths >= min_length) & (lengths <= max_length)
-    indices = np.where(mask)[0]
-
-    filtered = [documents[i] for i in indices]
-    return filtered, indices.tolist()
+    filtered = []
+    indices = []
+    for i, doc in enumerate(documents):
+        if min_length <= len(doc) <= max_length:
+            filtered.append(doc)
+            indices.append(i)
+    return filtered, indices
 
 
 def filter_documents_by_pattern(
@@ -47,14 +46,14 @@ def filter_documents_by_pattern(
         Tuple of (filtered_documents, kept_indices)
     """
     regex = re.compile(pattern)
-    mask = np.array([bool(regex.search(doc)) for doc in documents])
-
-    if not keep_matching:
-        mask = ~mask
-
-    indices = np.where(mask)[0]
-    filtered = [documents[i] for i in indices]
-    return filtered, indices.tolist()
+    filtered = []
+    indices = []
+    for i, doc in enumerate(documents):
+        match = bool(regex.search(doc))
+        if match == keep_matching:
+            filtered.append(doc)
+            indices.append(i)
+    return filtered, indices
 
 
 def filter_documents_by_predicate(
@@ -71,10 +70,13 @@ def filter_documents_by_predicate(
     Returns:
         Tuple of (filtered_documents, kept_indices)
     """
-    mask = np.array([predicate(doc) for doc in documents])
-    indices = np.where(mask)[0]
-    filtered = [documents[i] for i in indices]
-    return filtered, indices.tolist()
+    filtered = []
+    indices = []
+    for i, doc in enumerate(documents):
+        if predicate(doc):
+            filtered.append(doc)
+            indices.append(i)
+    return filtered, indices
 
 
 def remove_empty_documents(documents: List[str]) -> tuple[List[str], List[int]]:
@@ -87,10 +89,13 @@ def remove_empty_documents(documents: List[str]) -> tuple[List[str], List[int]]:
     Returns:
         Tuple of (non_empty_documents, kept_indices)
     """
-    mask = np.array([bool(doc.strip()) for doc in documents])
-    indices = np.where(mask)[0]
-    filtered = [documents[i] for i in indices]
-    return filtered, indices.tolist()
+    filtered = []
+    indices = []
+    for i, doc in enumerate(documents):
+        if doc.strip():
+            filtered.append(doc)
+            indices.append(i)
+    return filtered, indices
 
 
 def remove_duplicate_documents(documents: List[str]) -> tuple[List[str], List[int]]:
