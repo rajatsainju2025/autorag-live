@@ -220,6 +220,15 @@ class UnicodeNormalizer(BasePreprocessingStep):
 class HTMLCleaner(BasePreprocessingStep):
     """Clean HTML content."""
 
+    _LINK_RE = re.compile(r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]*)</a>', re.IGNORECASE)
+    _SCRIPT_RE = re.compile(r"<script[^>]*>.*?</script>", re.DOTALL | re.IGNORECASE)
+    _STYLE_RE = re.compile(r"<style[^>]*>.*?</style>", re.DOTALL | re.IGNORECASE)
+    _TAG_RE = re.compile(r"<[^>]+>")
+    _BLOCK_TAG_PATTERNS: list[re.Pattern] = [
+        re.compile(rf"</?{tag}[^>]*>", re.IGNORECASE)
+        for tag in ["p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr"]
+    ]
+
     def __init__(
         self,
         remove_tags: bool = True,
@@ -253,25 +262,21 @@ class HTMLCleaner(BasePreprocessingStep):
         # Extract links if needed
         links = []
         if self.keep_links:
-            link_pattern = re.compile(
-                r'<a[^>]+href=["\']([^"\']+)["\'][^>]*>([^<]*)</a>', re.IGNORECASE
-            )
-            for match in link_pattern.finditer(text):
+            for match in self._LINK_RE.finditer(text):
                 links.append((match.group(2), match.group(1)))
 
         # Remove script and style content
-        text = re.sub(r"<script[^>]*>.*?</script>", "", text, flags=re.DOTALL | re.IGNORECASE)
-        text = re.sub(r"<style[^>]*>.*?</style>", "", text, flags=re.DOTALL | re.IGNORECASE)
+        text = self._SCRIPT_RE.sub("", text)
+        text = self._STYLE_RE.sub("", text)
 
         # Handle structural elements
         if self.preserve_structure:
             # Add newlines for block elements
-            block_tags = ["p", "div", "br", "h1", "h2", "h3", "h4", "h5", "h6", "li", "tr"]
-            for tag in block_tags:
-                text = re.sub(rf"</?{tag}[^>]*>", "\n", text, flags=re.IGNORECASE)
+            for pattern in self._BLOCK_TAG_PATTERNS:
+                text = pattern.sub("\n", text)
 
         # Remove remaining tags
-        text = re.sub(r"<[^>]+>", "", text)
+        text = self._TAG_RE.sub("", text)
 
         # Re-add links if keeping them
         for link_text, url in links:
