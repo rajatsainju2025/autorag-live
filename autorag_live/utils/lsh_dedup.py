@@ -58,8 +58,7 @@ class MinHashLSH:
         for shingle in shingles:
             # Use multiple hash functions
             for i in range(self.num_perm):
-                h = hashlib.md5(f"{shingle}:{i}".encode()).hexdigest()
-                hash_val = int(h, 16)
+                hash_val = int.from_bytes(hashlib.md5(f"{shingle}:{i}".encode()).digest(), "big")
                 signature[i] = min(signature[i], hash_val)
 
         return signature
