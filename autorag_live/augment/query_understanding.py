@@ -647,6 +647,11 @@ class KeywordExtractor(BaseAnalyzer):
 class QueryNormalizer:
     """Normalize queries for consistent processing."""
 
+    _MULTI_SPACE_RE = re.compile(r"\s+")
+    _EXCESS_PUNCT_RE = re.compile(r"[!?]{2,}")
+    _WANNA_RE = re.compile(r"\bwanna\b", re.IGNORECASE)
+    _GONNA_RE = re.compile(r"\bgonna\b", re.IGNORECASE)
+
     def normalize(self, query: str) -> str:
         """Normalize query string.
 
@@ -660,17 +665,17 @@ class QueryNormalizer:
         normalized = query.strip()
 
         # Collapse multiple spaces
-        normalized = re.sub(r"\s+", " ", normalized)
+        normalized = self._MULTI_SPACE_RE.sub(" ", normalized)
 
         # Standardize quotes
-        normalized = normalized.replace("'", "'").replace(""", '"').replace(""", '"')
+        normalized = normalized.replace("\u2018", "'").replace("\u201c", '"').replace("\u201d", '"')
 
         # Remove excessive punctuation
-        normalized = re.sub(r"[!?]{2,}", "?", normalized)
+        normalized = self._EXCESS_PUNCT_RE.sub("?", normalized)
 
         # Fix common typos/patterns
-        normalized = re.sub(r"\bwanna\b", "want to", normalized, flags=re.IGNORECASE)
-        normalized = re.sub(r"\bgonna\b", "going to", normalized, flags=re.IGNORECASE)
+        normalized = self._WANNA_RE.sub("want to", normalized)
+        normalized = self._GONNA_RE.sub("going to", normalized)
 
         return normalized
 
