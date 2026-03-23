@@ -56,7 +56,10 @@ def _minhash_signature(text: str, num_hashes: int = _NUM_HASHES) -> tuple:
     sig = []
     for i in range(num_hashes):
         min_val = min(
-            int(hashlib.md5(f"{i}:{s}".encode(), usedforsecurity=False).hexdigest(), 16)
+            int.from_bytes(
+                hashlib.md5(f"{i}:{s}".encode(), usedforsecurity=False).digest(),
+                "big",
+            )
             for s in shingles
         )
         sig.append(min_val)
