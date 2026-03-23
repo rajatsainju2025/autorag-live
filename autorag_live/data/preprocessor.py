@@ -543,30 +543,29 @@ class ContentTypeDetector:
 class TextExtractor:
     """Extract text from various formats."""
 
+    _URL_RE = re.compile(r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*")
+    _EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
+    _FENCED_CODE_RE = re.compile(r"```[\w]*\n(.*?)```", re.DOTALL)
+    _INDENTED_CODE_RE = re.compile(r"(?:^    .+\n)+", re.MULTILINE)
+    _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+
     def extract_urls(self, text: str) -> List[str]:
         """Extract URLs from text."""
-        url_pattern = re.compile(r"https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+[^\s]*")
-        return url_pattern.findall(text)
+        return self._URL_RE.findall(text)
 
     def extract_emails(self, text: str) -> List[str]:
         """Extract email addresses."""
-        email_pattern = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b")
-        return email_pattern.findall(text)
+        return self._EMAIL_RE.findall(text)
 
     def extract_code_blocks(self, text: str) -> List[str]:
         """Extract code blocks."""
-        # Fenced code blocks
-        fenced = re.findall(r"```[\w]*\n(.*?)```", text, re.DOTALL)
-
-        # Indented code blocks (4 spaces)
-        indented = re.findall(r"(?:^    .+\n)+", text, re.MULTILINE)
-
+        fenced = self._FENCED_CODE_RE.findall(text)
+        indented = self._INDENTED_CODE_RE.findall(text)
         return fenced + indented
 
     def extract_sentences(self, text: str) -> List[str]:
         """Extract sentences from text."""
-        # Simple sentence splitting
-        sentences = re.split(r"(?<=[.!?])\s+", text)
+        sentences = self._SENTENCE_SPLIT_RE.split(text)
         return [s.strip() for s in sentences if s.strip()]
 
 
