@@ -366,6 +366,22 @@ class MarkdownCleaner(BasePreprocessingStep):
 class SpecialCharacterHandler(BasePreprocessingStep):
     """Handle special characters."""
 
+    _EMOJI_RE = re.compile(
+        "["
+        "\U0001F600-\U0001F64F"  # Emoticons
+        "\U0001F300-\U0001F5FF"  # Symbols & pictographs
+        "\U0001F680-\U0001F6FF"  # Transport & map symbols
+        "\U0001F1E0-\U0001F1FF"  # Flags
+        "\U00002702-\U000027B0"
+        "\U000024C2-\U0001F251"
+        "]+",
+        flags=re.UNICODE,
+    )
+    _QUOTE_RE = re.compile(r'[""„]')
+    _APOSTROPHE_RE = re.compile(r"[''‚]")
+    _DASH_RE = re.compile(r"[–—]")
+    _DUP_PUNCT_RE = re.compile(r"([.!?])\1+")
+
     def __init__(
         self,
         remove_emojis: bool = False,
@@ -394,30 +410,19 @@ class SpecialCharacterHandler(BasePreprocessingStep):
 
         # Remove emojis
         if self.remove_emojis:
-            emoji_pattern = re.compile(
-                "["
-                "\U0001F600-\U0001F64F"  # Emoticons
-                "\U0001F300-\U0001F5FF"  # Symbols & pictographs
-                "\U0001F680-\U0001F6FF"  # Transport & map symbols
-                "\U0001F1E0-\U0001F1FF"  # Flags
-                "\U00002702-\U000027B0"
-                "\U000024C2-\U0001F251"
-                "]+",
-                flags=re.UNICODE,
-            )
-            text = emoji_pattern.sub("", text)
+            text = self._EMOJI_RE.sub("", text)
 
         # Normalize punctuation
         if self.normalize_punctuation:
             # Normalize quotes
-            text = re.sub(r'[""„]', '"', text)
-            text = re.sub(r"[''‚]", "'", text)
+            text = self._QUOTE_RE.sub('"', text)
+            text = self._APOSTROPHE_RE.sub("'", text)
 
             # Normalize dashes
-            text = re.sub(r"[–—]", "-", text)
+            text = self._DASH_RE.sub("-", text)
 
             # Remove duplicate punctuation
-            text = re.sub(r"([.!?])\1+", r"\1", text)
+            text = self._DUP_PUNCT_RE.sub(r"\1", text)
 
         return text
 
