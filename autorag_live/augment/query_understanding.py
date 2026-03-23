@@ -435,16 +435,16 @@ class TemporalExtractor(BaseAnalyzer):
 class QueryTypeDetector(BaseAnalyzer):
     """Detect query type (question, statement, command, keyword)."""
 
-    QUESTION_PATTERNS = [
-        r"^(what|who|where|when|why|how|which|whose|whom)\b",
-        r"\?$",
-        r"^(is|are|was|were|do|does|did|can|could|will|would|should)\b",
+    _QUESTION_PATTERNS = [
+        re.compile(r"^(what|who|where|when|why|how|which|whose|whom)\b"),
+        re.compile(r"\?$"),
+        re.compile(r"^(is|are|was|were|do|does|did|can|could|will|would|should)\b"),
     ]
 
-    COMMAND_PATTERNS = [
-        r"^(show|find|get|list|search|display|give|tell|explain)\b",
-        r"^(create|make|build|generate|produce)\b",
-        r"^(please\s+)?(show|find|get|list|search)\b",
+    _COMMAND_PATTERNS = [
+        re.compile(r"^(show|find|get|list|search|display|give|tell|explain)\b"),
+        re.compile(r"^(create|make|build|generate|produce)\b"),
+        re.compile(r"^(please\s+)?(show|find|get|list|search)\b"),
     ]
 
     def analyze(self, query: str) -> dict[str, Any]:
@@ -453,13 +453,13 @@ class QueryTypeDetector(BaseAnalyzer):
         query_lower = query_stripped.lower()
 
         # Check for question
-        for pattern in self.QUESTION_PATTERNS:
-            if re.search(pattern, query_lower):
+        for compiled_re in self._QUESTION_PATTERNS:
+            if compiled_re.search(query_lower):
                 return {"query_type": QueryType.QUESTION}
 
         # Check for command
-        for pattern in self.COMMAND_PATTERNS:
-            if re.search(pattern, query_lower):
+        for compiled_re in self._COMMAND_PATTERNS:
+            if compiled_re.search(query_lower):
                 return {"query_type": QueryType.COMMAND}
 
         # Check for keyword (no spaces, short)
