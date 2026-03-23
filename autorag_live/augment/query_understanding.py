@@ -257,57 +257,75 @@ class IntentClassifier(BaseAnalyzer):
 class EntityExtractor(BaseAnalyzer):
     """Extract named entities from query."""
 
-    # Simple pattern-based entity extraction
-    ENTITY_PATTERNS: dict[EntityType, list[tuple[str, str]]] = {
+    # Pre-compiled pattern-based entity extraction
+    _ENTITY_PATTERNS: dict[EntityType, list[tuple[re.Pattern, str]]] = {
         EntityType.DATE: [
-            (r"\b\d{4}-\d{2}-\d{2}\b", "iso_date"),
-            (r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", "slash_date"),
+            (re.compile(r"\b\d{4}-\d{2}-\d{2}\b", re.IGNORECASE), "iso_date"),
+            (re.compile(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", re.IGNORECASE), "slash_date"),
             (
-                r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s*\d{4}\b",
+                re.compile(
+                    r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{1,2},?\s*\d{4}\b",
+                    re.IGNORECASE,
+                ),
                 "written_date",
             ),
             (
-                r"\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b",
+                re.compile(
+                    r"\b\d{1,2}\s+(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b",
+                    re.IGNORECASE,
+                ),
                 "euro_date",
             ),
         ],
         EntityType.TIME: [
-            (r"\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\b", "time"),
+            (re.compile(r"\b\d{1,2}:\d{2}(?::\d{2})?\s*(?:am|pm)?\b", re.IGNORECASE), "time"),
         ],
         EntityType.NUMBER: [
-            (r"\$\d+(?:,\d{3})*(?:\.\d{2})?\b", "currency"),
-            (r"\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:million|billion|trillion|k|m|b)?\b", "number"),
-            (r"\b\d+%\b", "percentage"),
+            (re.compile(r"\$\d+(?:,\d{3})*(?:\.\d{2})?\b", re.IGNORECASE), "currency"),
+            (
+                re.compile(
+                    r"\b\d+(?:,\d{3})*(?:\.\d+)?\s*(?:million|billion|trillion|k|m|b)?\b",
+                    re.IGNORECASE,
+                ),
+                "number",
+            ),
+            (re.compile(r"\b\d+%\b", re.IGNORECASE), "percentage"),
         ],
         EntityType.LOCATION: [
-            (r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z]{2}\b", "city_state"),
-            (r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z][a-z]+\b", "city_country"),
+            (re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z]{2}\b"), "city_state"),
+            (re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*,\s*[A-Z][a-z]+\b"), "city_country"),
         ],
     }
 
-    # Common organization indicators
-    ORG_SUFFIXES = [
-        "inc",
-        "corp",
-        "llc",
-        "ltd",
-        "co",
-        "company",
-        "corporation",
-        "foundation",
-        "institute",
-        "university",
-        "college",
+    # Pre-compiled organization suffix patterns
+    _ORG_PATTERNS: list[tuple[re.Pattern, str]] = [
+        (re.compile(rf"\b[A-Z][a-zA-Z\s]+\s+{suffix}\b", re.IGNORECASE), suffix)
+        for suffix in [
+            "inc",
+            "corp",
+            "llc",
+            "ltd",
+            "co",
+            "company",
+            "corporation",
+            "foundation",
+            "institute",
+            "university",
+            "college",
+        ]
     ]
+
+    # Pre-compiled capitalized phrase pattern
+    _CAP_PHRASE_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
 
     def analyze(self, query: str) -> dict[str, Any]:
         """Extract entities from query."""
         entities: list[Entity] = []
 
         # Pattern-based extraction
-        for entity_type, patterns in self.ENTITY_PATTERNS.items():
-            for pattern, pattern_name in patterns:
-                for match in re.finditer(pattern, query, re.IGNORECASE):
+        for entity_type, patterns in self._ENTITY_PATTERNS.items():
+            for compiled_re, pattern_name in patterns:
+                for match in compiled_re.finditer(query):
                     entities.append(
                         Entity(
                             text=match.group(),
@@ -320,9 +338,8 @@ class EntityExtractor(BaseAnalyzer):
                     )
 
         # Organization detection
-        for suffix in self.ORG_SUFFIXES:
-            pattern = rf"\b[A-Z][a-zA-Z\s]+\s+{suffix}\b"
-            for match in re.finditer(pattern, query, re.IGNORECASE):
+        for compiled_re, suffix in self._ORG_PATTERNS:
+            for match in compiled_re.finditer(query):
                 entities.append(
                     Entity(
                         text=match.group(),
@@ -335,7 +352,7 @@ class EntityExtractor(BaseAnalyzer):
                 )
 
         # Capitalized phrases (potential entities)
-        for match in re.finditer(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b", query):
+        for match in self._CAP_PHRASE_RE.finditer(query):
             # Check if not already captured
             text = match.group()
             already_captured = any(
