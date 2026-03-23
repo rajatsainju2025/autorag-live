@@ -473,9 +473,11 @@ class QueryTypeDetector(BaseAnalyzer):
 class ComplexityAnalyzer(BaseAnalyzer):
     """Analyze query complexity."""
 
-    CLAUSE_PATTERNS = [
+    _CLAUSE_RE = re.compile(
         r"\b(and|or|but|however|although|because|since|while|if|when|where)\b",
-    ]
+        re.IGNORECASE,
+    )
+    _CONJUNCTION_SPLIT_RE = re.compile(r"\s+(?:and|or)\s+", re.IGNORECASE)
 
     def analyze(self, query: str) -> dict[str, Any]:
         """Analyze query complexity."""
@@ -486,9 +488,7 @@ class ComplexityAnalyzer(BaseAnalyzer):
         token_count = int(word_count * 1.3)
 
         # Count clauses
-        clause_indicators = 0
-        for pattern in self.CLAUSE_PATTERNS:
-            clause_indicators += len(re.findall(pattern, query, re.IGNORECASE))
+        clause_indicators = len(self._CLAUSE_RE.findall(query))
 
         clause_count = max(1, clause_indicators + 1)
 
@@ -499,7 +499,7 @@ class ComplexityAnalyzer(BaseAnalyzer):
         sub_queries: list[str] = []
         if is_compound:
             # Split by conjunctions
-            parts = re.split(r"\s+(?:and|or)\s+", query, flags=re.IGNORECASE)
+            parts = self._CONJUNCTION_SPLIT_RE.split(query)
             sub_queries = [p.strip() for p in parts if len(p.strip()) > 3]
 
         # Complexity score (0-1)
