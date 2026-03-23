@@ -202,6 +202,58 @@ class ClaimExtractor:
 class EvidenceFinder:
     """Finds evidence for claims in source documents."""
 
+    _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+    _STOP_WORDS = frozenset(
+        {
+            "the",
+            "a",
+            "an",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "did",
+            "will",
+            "would",
+            "could",
+            "should",
+            "may",
+            "might",
+            "must",
+            "shall",
+            "can",
+            "to",
+            "of",
+            "in",
+            "for",
+            "on",
+            "with",
+            "at",
+            "by",
+            "from",
+            "as",
+            "or",
+            "and",
+            "but",
+            "if",
+            "then",
+            "than",
+            "so",
+            "that",
+            "this",
+            "it",
+            "its",
+        }
+    )
+
     def __init__(
         self,
         similarity_threshold: float = 0.5,
@@ -212,6 +264,10 @@ class EvidenceFinder:
             similarity_threshold: Minimum similarity for relevance
         """
         self.similarity_threshold = similarity_threshold
+
+    def _tokenize_filtered(self, text: str) -> set[str]:
+        """Tokenize and filter stop words."""
+        return {w for w in text.lower().split() if w not in self._STOP_WORDS}
 
     def find_evidence(
         self,
@@ -232,23 +288,26 @@ class EvidenceFinder:
         doc_ids = doc_ids or [f"doc_{i}" for i in range(len(documents))]
         evidence_list: list[Evidence] = []
 
-        claim_words = set(claim.text.lower().split())
+        # Tokenize claim once, reuse for all sentences
+        claim_words = self._tokenize_filtered(claim.text)
+        claim_lower = claim.text.lower()
 
         for doc, doc_id in zip(documents, doc_ids):
             # Split document into sentences
-            sentences = re.split(r"(?<=[.!?])\s+", doc)
+            sentences = self._SENTENCE_SPLIT_RE.split(doc)
 
             for sentence in sentences:
                 sentence = sentence.strip()
                 if not sentence:
                     continue
 
-                # Calculate relevance
-                relevance = self._calculate_relevance(claim, sentence)
+                # Calculate relevance with pre-tokenized claim words
+                sentence_words = self._tokenize_filtered(sentence)
+                relevance = self._calculate_relevance_fast(claim, claim_words, sentence_words)
 
                 if relevance >= self.similarity_threshold:
                     # Determine match type
-                    match_type = self._determine_match_type(claim.text, sentence)
+                    match_type = self._determine_match_type(claim_lower, sentence)
 
                     evidence_list.append(
                         Evidence(
@@ -264,26 +323,10 @@ class EvidenceFinder:
 
         return evidence_list[:5]  # Return top 5 evidence items
 
-    def _calculate_relevance(self, claim: Claim, sentence: str) -> float:
-        """Calculate relevance between claim and sentence."""
-        # Simple word overlap similarity
-        claim_words = set(claim.text.lower().split())
-        sentence_words = set(sentence.lower().split())
-
-        # Filter common words
-        stop_words = {
-            "the", "a", "an", "is", "are", "was", "were", "be",
-            "been", "being", "have", "has", "had", "do", "does",
-            "did", "will", "would", "could", "should", "may",
-            "might", "must", "shall", "can", "to", "of", "in",
-            "for", "on", "with", "at", "by", "from", "as", "or",
-            "and", "but", "if", "then", "than", "so", "that",
-            "this", "it", "its",
-        }
-
-        claim_words = claim_words - stop_words
-        sentence_words = sentence_words - stop_words
-
+    def _calculate_relevance_fast(
+        self, claim: Claim, claim_words: set[str], sentence_words: set[str]
+    ) -> float:
+        """Calculate relevance with pre-tokenized words."""
         if not claim_words or not sentence_words:
             return 0.0
 
@@ -295,14 +338,37 @@ class EvidenceFinder:
         # Boost for entity matches
         entity_boost = 0.0
         for entity in claim.entities:
-            if entity.lower() in sentence.lower():
+            entity_lower = entity.lower()
+            if any(entity_lower in w for w in sentence_words):
+                entity_boost += 0.1
+
+        return min(1.0, base_similarity + entity_boost)
+
+    def _calculate_relevance(self, claim: Claim, sentence: str) -> float:
+        """Calculate relevance between claim and sentence."""
+        claim_words = self._tokenize_filtered(claim.text)
+        sentence_words = self._tokenize_filtered(sentence)
+
+        if not claim_words or not sentence_words:
+            return 0.0
+
+        intersection = len(claim_words & sentence_words)
+        union = len(claim_words | sentence_words)
+
+        base_similarity = intersection / union if union > 0 else 0.0
+
+        # Boost for entity matches
+        entity_boost = 0.0
+        sentence_lower = sentence.lower()
+        for entity in claim.entities:
+            if entity.lower() in sentence_lower:
                 entity_boost += 0.1
 
         return min(1.0, base_similarity + entity_boost)
 
     def _determine_match_type(self, claim_text: str, evidence_text: str) -> str:
         """Determine the type of match between claim and evidence."""
-        claim_lower = claim_text.lower()
+        claim_lower = claim_text if claim_text.islower() else claim_text.lower()
         evidence_lower = evidence_text.lower()
 
         # Check for exact match
@@ -367,9 +433,7 @@ class RuleBasedVerifier(BaseVerifier):
     ) -> ClaimVerification:
         """Verify claim using rule-based approach."""
         # Filter relevant evidence
-        relevant_evidence = [
-            e for e in evidence if e.relevance_score >= self.min_evidence_score
-        ]
+        relevant_evidence = [e for e in evidence if e.relevance_score >= self.min_evidence_score]
 
         if not relevant_evidence:
             if self.require_evidence:
@@ -538,9 +602,7 @@ class AnswerVerifier:
 
         for claim in claims:
             # Find evidence
-            evidence = self.evidence_finder.find_evidence(
-                claim, source_documents, doc_ids
-            )
+            evidence = self.evidence_finder.find_evidence(claim, source_documents, doc_ids)
 
             # Verify claim
             verification = self.verifier.verify_claim(claim, evidence)
@@ -552,7 +614,9 @@ class AnswerVerifier:
             for v in claim_verifications
             if v.status in (VerificationStatus.VERIFIED, VerificationStatus.PARTIALLY_VERIFIED)
         )
-        verified_percentage = verified_count / len(claim_verifications) if claim_verifications else 0
+        verified_percentage = (
+            verified_count / len(claim_verifications) if claim_verifications else 0
+        )
 
         avg_confidence = (
             sum(v.confidence for v in claim_verifications) / len(claim_verifications)
@@ -561,8 +625,7 @@ class AnswerVerifier:
         )
 
         avg_hallucination = (
-            sum(v.hallucination_risk for v in claim_verifications)
-            / len(claim_verifications)
+            sum(v.hallucination_risk for v in claim_verifications) / len(claim_verifications)
             if claim_verifications
             else 0
         )
@@ -602,12 +665,8 @@ class AnswerVerifier:
         """Generate human-readable summary."""
         total = len(verifications)
         verified = sum(1 for v in verifications if v.status == VerificationStatus.VERIFIED)
-        partial = sum(
-            1 for v in verifications if v.status == VerificationStatus.PARTIALLY_VERIFIED
-        )
-        contradicted = sum(
-            1 for v in verifications if v.status == VerificationStatus.CONTRADICTED
-        )
+        partial = sum(1 for v in verifications if v.status == VerificationStatus.PARTIALLY_VERIFIED)
+        contradicted = sum(1 for v in verifications if v.status == VerificationStatus.CONTRADICTED)
         unverified = total - verified - partial - contradicted
 
         parts = [f"Analyzed {total} claims:"]
