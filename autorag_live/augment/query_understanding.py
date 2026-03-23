@@ -385,33 +385,47 @@ class EntityExtractor(BaseAnalyzer):
 class TemporalExtractor(BaseAnalyzer):
     """Extract temporal expressions from query."""
 
-    TEMPORAL_PATTERNS = [
+    _TEMPORAL_PATTERNS: list[tuple[re.Pattern, str]] = [
         # Relative
-        (r"\b(today|yesterday|tomorrow)\b", "relative"),
-        (r"\b(this|last|next)\s+(week|month|year|quarter)\b", "relative"),
-        (r"\b(\d+)\s+(days?|weeks?|months?|years?)\s+(ago|from\s+now)\b", "relative"),
-        (r"\b(recently|lately|soon|earlier|later)\b", "relative"),
+        (re.compile(r"\b(today|yesterday|tomorrow)\b", re.IGNORECASE), "relative"),
+        (
+            re.compile(r"\b(this|last|next)\s+(week|month|year|quarter)\b", re.IGNORECASE),
+            "relative",
+        ),
+        (
+            re.compile(
+                r"\b(\d+)\s+(days?|weeks?|months?|years?)\s+(ago|from\s+now)\b", re.IGNORECASE
+            ),
+            "relative",
+        ),
+        (re.compile(r"\b(recently|lately|soon|earlier|later)\b", re.IGNORECASE), "relative"),
         # Absolute
-        (r"\b\d{4}\b", "absolute"),
-        (r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b", "absolute"),
+        (re.compile(r"\b\d{4}\b", re.IGNORECASE), "absolute"),
+        (
+            re.compile(
+                r"\b(?:jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\.?\s+\d{4}\b",
+                re.IGNORECASE,
+            ),
+            "absolute",
+        ),
         # Range
-        (r"\b(from|between)\s+.+\s+(to|and)\s+.+\b", "range"),
-        (r"\b(since|until|before|after)\s+\d{4}\b", "range"),
+        (re.compile(r"\b(from|between)\s+.+\s+(to|and)\s+.+\b", re.IGNORECASE), "range"),
+        (re.compile(r"\b(since|until|before|after)\s+\d{4}\b", re.IGNORECASE), "range"),
     ]
 
     def analyze(self, query: str) -> dict[str, Any]:
         """Extract temporal expressions."""
         temporal_expressions: list[TemporalExpression] = []
 
-        for pattern, temporal_type in self.TEMPORAL_PATTERNS:
-            for match in re.finditer(pattern, query, re.IGNORECASE):
+        for compiled_re, temporal_type in self._TEMPORAL_PATTERNS:
+            for match in compiled_re.finditer(query):
                 temporal_expressions.append(
                     TemporalExpression(
                         text=match.group(),
                         temporal_type=temporal_type,
                         start=match.start(),
                         end=match.end(),
-                        metadata={"pattern": pattern},
+                        metadata={"pattern": compiled_re.pattern},
                     )
                 )
 
