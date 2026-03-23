@@ -325,6 +325,46 @@ class BaseVerifier(ABC):
 class TextOverlapVerifier(BaseVerifier):
     """Verify claims using text overlap."""
 
+    _WORD_RE = re.compile(r"\b\w+\b")
+    _STOPWORDS = frozenset(
+        {
+            "a",
+            "an",
+            "the",
+            "and",
+            "or",
+            "but",
+            "in",
+            "on",
+            "at",
+            "to",
+            "for",
+            "of",
+            "with",
+            "by",
+            "is",
+            "are",
+            "was",
+            "were",
+            "be",
+            "been",
+            "being",
+            "have",
+            "has",
+            "had",
+            "do",
+            "does",
+            "this",
+            "that",
+            "it",
+            "its",
+            "they",
+            "them",
+            "he",
+            "she",
+        }
+    )
+
     def __init__(
         self,
         min_overlap: float = 0.3,
@@ -395,47 +435,8 @@ class TextOverlapVerifier(BaseVerifier):
 
     def _tokenize(self, text: str) -> Set[str]:
         """Tokenize text into word set."""
-        words = re.findall(r"\b\w+\b", text.lower())
-
-        # Remove stopwords
-        stopwords = {
-            "a",
-            "an",
-            "the",
-            "and",
-            "or",
-            "but",
-            "in",
-            "on",
-            "at",
-            "to",
-            "for",
-            "of",
-            "with",
-            "by",
-            "is",
-            "are",
-            "was",
-            "were",
-            "be",
-            "been",
-            "being",
-            "have",
-            "has",
-            "had",
-            "do",
-            "does",
-            "this",
-            "that",
-            "it",
-            "its",
-            "they",
-            "them",
-            "he",
-            "she",
-        }
-
-        return {w for w in words if w not in stopwords and len(w) > 1}
+        words = self._WORD_RE.findall(text.lower())
+        return {w for w in words if w not in self._STOPWORDS and len(w) > 1}
 
 
 class NLIVerifier(BaseVerifier):
