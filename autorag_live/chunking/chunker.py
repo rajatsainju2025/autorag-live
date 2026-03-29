@@ -248,67 +248,62 @@ class SentenceChunker(BaseChunker):
         if not sentences:
             return chunks
 
-        current_chunk = []
-        current_length = 0
+        sentence_lengths = [len(sentence) for sentence in sentences]
+        cumulative_lengths = [0]
+        for sentence_length in sentence_lengths:
+            cumulative_lengths.append(cumulative_lengths[-1] + sentence_length)
+
+        def _window_length(start_idx: int, end_idx: int) -> int:
+            return (
+                cumulative_lengths[end_idx + 1]
+                - cumulative_lengths[start_idx]
+                + (end_idx - start_idx)
+            )
+
+        def _start_char(start_idx: int) -> int:
+            return cumulative_lengths[start_idx] + start_idx
+
+        def _append_chunk(start_idx: int, end_idx: int, chunk_index: int) -> None:
+            chunk_text = " ".join(sentences[start_idx : end_idx + 1])
+            if not chunk_text:
+                return
+
+            chunk_metadata = ChunkMetadata(
+                start_char=_start_char(start_idx),
+                end_char=_start_char(start_idx) + _window_length(start_idx, end_idx),
+            )
+            if metadata:
+                chunk_metadata.custom.update(metadata)
+
+            chunks.append(
+                TextChunk(
+                    text=chunk_text,
+                    index=chunk_index,
+                    metadata=chunk_metadata,
+                )
+            )
+
         index = 0
-        char_pos = 0
+        window_start = 0
 
-        for i, sentence in enumerate(sentences):
-            sentence_len = len(sentence) + 1  # +1 for space
-
-            # Check if adding sentence exceeds max
-            if current_length + sentence_len > self.max_chunk_size and current_chunk:
-                # Create chunk from current sentences
-                chunk_text = " ".join(current_chunk)
-
-                chunk_metadata = ChunkMetadata(
-                    start_char=char_pos - len(chunk_text),
-                    end_char=char_pos,
-                )
-                if metadata:
-                    chunk_metadata.custom.update(metadata)
-
-                chunks.append(
-                    TextChunk(
-                        text=chunk_text,
-                        index=index,
-                        metadata=chunk_metadata,
-                    )
-                )
-
+        for sentence_index in range(len(sentences)):
+            if (
+                _window_length(window_start, sentence_index) > self.max_chunk_size
+                and sentence_index > window_start
+            ):
+                _append_chunk(window_start, sentence_index - 1, index)
                 index += 1
 
-                # Keep overlap sentences
                 if self.overlap_sentences > 0:
-                    current_chunk = current_chunk[-self.overlap_sentences :]
-                    current_length = sum(len(s) + 1 for s in current_chunk)
+                    window_start = max(sentence_index - self.overlap_sentences, 0)
                 else:
-                    current_chunk = []
-                    current_length = 0
-
-            current_chunk.append(sentence)
-            current_length += sentence_len
-            char_pos += sentence_len
+                    window_start = sentence_index
 
         # Add remaining sentences
-        if current_chunk:
-            chunk_text = " ".join(current_chunk)
-
-            if len(chunk_text) >= self.min_chunk_size or not chunks:
-                chunk_metadata = ChunkMetadata(
-                    start_char=char_pos - len(chunk_text),
-                    end_char=char_pos,
-                )
-                if metadata:
-                    chunk_metadata.custom.update(metadata)
-
-                chunks.append(
-                    TextChunk(
-                        text=chunk_text,
-                        index=index,
-                        metadata=chunk_metadata,
-                    )
-                )
+        if window_start < len(sentences):
+            final_length = _window_length(window_start, len(sentences) - 1)
+            if final_length >= self.min_chunk_size or not chunks:
+                _append_chunk(window_start, len(sentences) - 1, index)
 
         return chunks
 

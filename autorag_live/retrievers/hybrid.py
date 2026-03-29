@@ -1,3 +1,4 @@
+import heapq
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
@@ -49,18 +50,21 @@ def hybrid_retrieve(query: str, corpus: List[str], k: int, bm25_weight: float = 
 
     # Assign scores based on ranking position (inverse ranking)
     # Lower position = higher score
+    bm25_count = len(bm25_results)
+    dense_count = len(dense_results)
+
     for i, doc in enumerate(bm25_results):
         if doc not in scores:
             scores[doc] = 0.0
-        scores[doc] += bm25_weight * (1.0 - i / len(bm25_results))
+        scores[doc] += bm25_weight * (1.0 - i / bm25_count)
 
     for i, doc in enumerate(dense_results):
         if doc not in scores:
             scores[doc] = 0.0
-        scores[doc] += dense_weight * (1.0 - i / len(dense_results))
+        scores[doc] += dense_weight * (1.0 - i / dense_count)
 
     # Return top-k by combined score
-    top_docs = sorted(scores.items(), key=lambda x: x[1], reverse=True)[:k]
+    top_docs = heapq.nlargest(k, scores.items(), key=lambda item: item[1])
     return [doc for doc, _ in top_docs]
 
 
@@ -139,9 +143,8 @@ class HybridRetriever:
                 if doc not in combined_scores:
                     combined_scores[doc] = self.dense_weight * dense_score
 
-            # Sort by combined score and return top-k
-            sorted_docs = sorted(combined_scores.items(), key=lambda x: x[1], reverse=True)
-            return sorted_docs[:k]
+            # Select only the top-k rather than fully sorting all candidates
+            return heapq.nlargest(k, combined_scores.items(), key=lambda item: item[1])
 
     def load(self, path: str) -> None:
         """Load retriever state from disk."""
