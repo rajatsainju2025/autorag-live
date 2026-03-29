@@ -10,7 +10,29 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
+from functools import lru_cache
 from typing import Any, AsyncIterator, Callable, Dict, List, Optional, Protocol, Tuple
+
+_CONFIDENCE_PATTERN = re.compile(r"\b(certainly|definitely|absolutely|always|never)\b")
+_SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[.!?])\s+")
+_WORD_PATTERN = re.compile(r"\b\w+\b")
+_CLAIM_STOP_WORDS = frozenset({"that", "this", "which", "where", "when"})
+
+
+@lru_cache(maxsize=8192)
+def _extract_word_set(text: str, min_length: int = 4) -> frozenset[str]:
+    """Extract normalized word set for repeated text analysis."""
+    return frozenset(
+        word for word in _WORD_PATTERN.findall(text.casefold()) if len(word) > min_length
+    )
+
+
+@lru_cache(maxsize=4096)
+def _split_sentences(text: str) -> Tuple[str, ...]:
+    """Split text into normalized non-empty sentences."""
+    return tuple(
+        sentence.strip() for sentence in _SENTENCE_BOUNDARY_PATTERN.split(text) if sentence.strip()
+    )
 
 
 @dataclass
@@ -78,10 +100,7 @@ class HallucinationDetector:
                 risk_level += 0.4
 
             # Check for overconfidence
-            confidence_matches = re.findall(
-                r"(certainly|definitely|absolutely|always|never)",
-                response.lower(),
-            )
+            confidence_matches = _CONFIDENCE_PATTERN.findall(response.casefold())
 
             if len(confidence_matches) > 3:
                 issues.append(f"High confidence language ({len(confidence_matches)} instances)")
@@ -107,33 +126,33 @@ class HallucinationDetector:
 
     def _verify_claims(self, response: str, sources: List[str]) -> Dict[str, bool]:
         """Verify individual claims against sources."""
-        # Extract claims (simple heuristic: sentences)
-        claims = response.split(".")
-        source_text = " ".join(sources).lower()
+        claims = _split_sentences(response)
+        source_words = set()
+        for source in sources:
+            source_words.update(_extract_word_set(source, min_length=4))
 
         grounded = {}
 
         for claim in claims:
-            claim = claim.strip()
             if len(claim) < 10:
                 continue
 
-            # Check if key words from claim appear in sources
-            words = claim.lower().split()
-            key_words = [
-                w
-                for w in words
-                if len(w) > 4 and w not in {"that", "this", "which", "where", "when"}
-            ]
+            key_words = {
+                word
+                for word in _extract_word_set(claim, min_length=4)
+                if word not in _CLAIM_STOP_WORDS
+            }
+            if not key_words:
+                continue
 
-            matches = sum(1 for w in key_words if w in source_text)
+            matches = len(key_words & source_words)
             grounded[claim[:50]] = matches >= len(key_words) * 0.5
 
         return grounded
 
     def _detect_contradictions(self, response: str) -> List[str]:
         """Detect contradictions within response."""
-        sentences = response.split(".")
+        sentences = _split_sentences(response)
         contradictions = []
 
         # Simple heuristic: check for "but" statements
@@ -167,8 +186,8 @@ class HallucinationDetector:
     @staticmethod
     def _similarity(text1: str, text2: str) -> float:
         """Compute text similarity."""
-        words1 = set(text1.lower().split())
-        words2 = set(text2.lower().split())
+        words1 = set(_extract_word_set(text1, min_length=1))
+        words2 = set(_extract_word_set(text2, min_length=1))
 
         overlap = len(words1 & words2)
         union = len(words1 | words2)
@@ -331,11 +350,11 @@ class GroundingValidator:
         if not sources or not response:
             return 0.0
 
-        response_words = set(w.lower() for w in response.split() if len(w) > 3)
+        response_words = set(_extract_word_set(response, min_length=3))
         source_words = set()
 
         for source in sources:
-            source_words.update(w.lower() for w in source.split() if len(w) > 3)
+            source_words.update(_extract_word_set(source, min_length=3))
 
         if not response_words:
             return 0.0
@@ -491,7 +510,7 @@ class LLMProtocol(Protocol):
         """Generate response from prompt."""
         ...
 
-    async def stream(self, prompt: str, **kwargs: Any) -> AsyncIterator[str]:
+    def stream(self, prompt: str, **kwargs: Any) -> AsyncIterator[str]:
         """Stream response chunks."""
         ...
 
