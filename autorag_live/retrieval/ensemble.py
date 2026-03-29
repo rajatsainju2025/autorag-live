@@ -450,8 +450,11 @@ class GradientWeightLearner(WeightLearner):
             dcg += (2**rel - 1) / self._log2(i + 1)
 
         # Ideal DCG
-        sorted_rels = sorted(relevance_labels.values(), reverse=True)[:k]
-        idcg = sum((2**rel - 1) / self._log2(i + 1) for i, rel in enumerate(sorted_rels, 1))
+        # Use heapq.nlargest to avoid fully sorting large label sets
+        import heapq
+
+        top_rels = heapq.nlargest(k, relevance_labels.values())
+        idcg = sum((2**rel - 1) / self._log2(i + 1) for i, rel in enumerate(top_rels, 1))
 
         if idcg == 0:
             return 0.0
