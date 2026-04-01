@@ -1208,12 +1208,12 @@ class HierarchicalLateFusion:
         doc_map: dict[str, RetrievedDocument] = {}
 
         for doc in existing:
-            key = doc.doc_id or doc.content[:100]
+            key = _document_key(doc)
             if key not in doc_map or doc.score > doc_map[key].score:
                 doc_map[key] = doc
 
         for doc in new_docs:
-            key = doc.doc_id or doc.content[:100]
+            key = _document_key(doc)
             if key not in doc_map or doc.score > doc_map[key].score:
                 doc_map[key] = doc
 
@@ -1234,7 +1234,7 @@ class HierarchicalLateFusion:
 
         for level_name, docs in level_results.items():
             for doc in docs:
-                key = doc.doc_id or doc.content[:100]
+                key = _document_key(doc)
                 if key not in all_docs:
                     all_docs[key] = doc
                     doc_level_scores[key] = {}
