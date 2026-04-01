@@ -1357,9 +1357,11 @@ class LateInteractionScorer:
     def __init__(
         self,
         embedding_provider: Optional[EmbeddingProtocol] = None,
+        cache_max_size: int = 4096,
     ):
         """Initialize late interaction scorer."""
         self.embedding_provider = embedding_provider
+        self.cache_max_size = max(1, cache_max_size)
         self._cache: dict[str, list[float]] = {}
 
     async def score(
@@ -1410,6 +1412,9 @@ class LateInteractionScorer:
 
         if self.embedding_provider:
             embedding = self._normalize_embedding(await self.embedding_provider.embed(text))
+            if len(self._cache) >= self.cache_max_size:
+                oldest_key = next(iter(self._cache))
+                del self._cache[oldest_key]
             self._cache[text] = embedding
             return embedding
 
