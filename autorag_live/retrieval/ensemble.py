@@ -1409,7 +1409,7 @@ class LateInteractionScorer:
             return self._cache[text]
 
         if self.embedding_provider:
-            embedding = await self.embedding_provider.embed(text)
+            embedding = self._normalize_embedding(await self.embedding_provider.embed(text))
             self._cache[text] = embedding
             return embedding
 
@@ -1427,16 +1427,20 @@ class LateInteractionScorer:
         if not a or not b or len(a) != len(b):
             return 0.0
 
+        return sum(x * y for x, y in zip(a, b))
+
+    def _normalize_embedding(self, embedding: list[float]) -> list[float]:
+        """Normalize an embedding once so similarity reduces to a dot product."""
+        if not embedding:
+            return embedding
+
         import math
 
-        dot = sum(x * y for x, y in zip(a, b))
-        norm_a = math.sqrt(sum(x * x for x in a))
-        norm_b = math.sqrt(sum(x * x for x in b))
+        norm = math.sqrt(sum(value * value for value in embedding))
+        if norm == 0:
+            return [0.0 for _value in embedding]
 
-        if norm_a == 0 or norm_b == 0:
-            return 0.0
-
-        return dot / (norm_a * norm_b)
+        return [value / norm for value in embedding]
 
 
 def create_hierarchical_retriever(
