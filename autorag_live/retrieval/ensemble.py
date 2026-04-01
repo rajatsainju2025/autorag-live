@@ -1388,8 +1388,8 @@ class LateInteractionScorer:
         doc_tokens = document.split()[:200]  # Limit document tokens
 
         # Get embeddings for each token
-        query_embeddings = await asyncio.gather(*[self._get_embedding(t) for t in query_tokens])
-        doc_embeddings = await asyncio.gather(*[self._get_embedding(t) for t in doc_tokens])
+        query_embeddings = await self._get_embeddings(query_tokens)
+        doc_embeddings = await self._get_embeddings(doc_tokens)
 
         # Compute MaxSim
         total_score = 0.0
@@ -1414,6 +1414,13 @@ class LateInteractionScorer:
             return embedding
 
         return []
+
+    async def _get_embeddings(self, tokens: list[str]) -> list[list[float]]:
+        """Resolve embeddings for a token sequence with per-request deduplication."""
+        unique_tokens = list(dict.fromkeys(tokens))
+        resolved = await asyncio.gather(*(self._get_embedding(token) for token in unique_tokens))
+        embedding_map = dict(zip(unique_tokens, resolved, strict=False))
+        return [embedding_map[token] for token in tokens]
 
     def _cosine_similarity(self, a: list[float], b: list[float]) -> float:
         """Compute cosine similarity between vectors."""
