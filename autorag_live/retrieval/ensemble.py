@@ -13,6 +13,7 @@ Key techniques:
 """
 
 import asyncio
+import hashlib
 import heapq
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -77,6 +78,16 @@ class RetrievedDocument:
     metadata: dict[str, Any] = field(default_factory=dict)
     doc_id: str = ""
     source_retriever: str = ""
+
+
+def _document_key(doc: RetrievedDocument) -> str:
+    """Return a stable, cached identifier for a retrieved document."""
+    if doc.doc_id:
+        return doc.doc_id
+
+    content_hash = hashlib.blake2b(doc.content.encode("utf-8"), digest_size=16).hexdigest()
+    doc.doc_id = f"content:{content_hash}"
+    return doc.doc_id
 
 
 # ============================================================================
@@ -180,7 +191,7 @@ class RRFFuser(ScoreFuser):
             weight = weights.get(retriever_name, 1.0)
 
             for rank, doc in enumerate(results, 1):
-                doc_id = doc.doc_id or hash(doc.content)
+                doc_id = _document_key(doc)
                 rrf_score = weight * (1.0 / (self.k + rank))
 
                 if doc_id not in doc_scores:
@@ -235,13 +246,13 @@ class LinearFuser(ScoreFuser):
                         norm_score = (doc.score - min_score) / score_range
                     else:
                         norm_score = 1.0
-                    doc_id = doc.doc_id or hash(doc.content)
+                    doc_id = _document_key(doc)
                     normalized.append((doc_id, norm_score, doc))
 
                 normalized_results[retriever_name] = normalized
             else:
                 normalized_results[retriever_name] = [
-                    (doc.doc_id or hash(doc.content), doc.score, doc) for doc in results
+                    (_document_key(doc), doc.score, doc) for doc in results
                 ]
 
         # Combine scores
@@ -285,7 +296,7 @@ class MaxScoreFuser(ScoreFuser):
 
         for _retriever_name, results in retriever_results.items():
             for doc in results:
-                doc_id = doc.doc_id or hash(doc.content)
+                doc_id = _document_key(doc)
 
                 if doc_id not in doc_scores:
                     doc_scores[doc_id] = doc.score
@@ -321,7 +332,7 @@ class BordaFuser(ScoreFuser):
             n = len(results)
 
             for rank, doc in enumerate(results):
-                doc_id = doc.doc_id or hash(doc.content)
+                doc_id = _document_key(doc)
                 borda_score = weight * (n - rank)
 
                 if doc_id not in doc_scores:
@@ -505,7 +516,7 @@ class BayesianWeightLearner(WeightLearner):
             for name, docs in results.items():
                 # Count relevant documents retrieved
                 relevant_count = sum(
-                    1 for doc in docs[:10] if labels.get(doc.doc_id or hash(doc.content), 0) > 0
+                    1 for doc in docs[:10] if labels.get(_document_key(doc), 0) > 0
                 )
                 irrelevant_count = min(10, len(docs)) - relevant_count
 
@@ -730,7 +741,7 @@ class EnsembleRetriever:
         doc_appearances: dict[str, int] = {}
         for _name, results in retriever_results.items():
             for doc in results:
-                doc_id = doc.doc_id or hash(doc.content)
+                doc_id = _document_key(doc)
                 doc_appearances[doc_id] = doc_appearances.get(doc_id, 0) + 1
 
         # Filter
