@@ -1,3 +1,4 @@
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
@@ -5,6 +6,16 @@ from typing import Any, Dict, List, Optional, Protocol, Set, Tuple, cast
 
 import numpy as np
 from scipy.stats import kendalltau
+
+# Pre-compiled regex patterns for debate response parsing
+_AGREEMENT_SCORE_RE = re.compile(r"AGREEMENT_SCORE:\s*([0-9.]+)", re.I)
+_LIST_ITEM_RE = re.compile(r"-\s*(.+)")
+
+
+@lru_cache(maxsize=16)
+def _section_list_re(section: str) -> re.Pattern[str]:
+    """Return a compiled regex for extracting a named section's list items."""
+    return re.compile(rf"{re.escape(section)}:\s*\n((?:\s*-[^\n]+\n?)+)", re.I)
 
 
 @lru_cache(maxsize=256)
@@ -625,20 +636,14 @@ Best option:"""
 
     def _extract_list(self, text: str, section: str) -> List[str]:
         """Extract list items from a section."""
-        import re
-
-        pattern = rf"{section}:\s*\n((?:\s*-[^\n]+\n?)+)"
-        match = re.search(pattern, text, re.I)
+        match = _section_list_re(section).search(text)
         if match:
-            items = re.findall(r"-\s*(.+)", match.group(1))
-            return items
+            return _LIST_ITEM_RE.findall(match.group(1))
         return []
 
     def _extract_score(self, text: str) -> float:
         """Extract agreement score from text."""
-        import re
-
-        match = re.search(r"AGREEMENT_SCORE:\s*([0-9.]+)", text, re.I)
+        match = _AGREEMENT_SCORE_RE.search(text)
         if match:
             try:
                 return float(match.group(1))
