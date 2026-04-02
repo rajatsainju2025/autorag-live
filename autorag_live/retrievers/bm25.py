@@ -182,19 +182,18 @@ class BM25Retriever(BaseRetriever):
                 while len(self._tokenized_cache) > _SCORES_CACHE_MAXSIZE:
                     self._tokenized_cache.popitem(last=False)
 
-            cache_key = tuple(tokenized_query)
-            cached_scores = self._scores_cache.get(cache_key)
+            cached_scores = self._scores_cache.get(query)
 
             if cached_scores is None:
                 scores = np.asarray(self.bm25.get_scores(tokenized_query), dtype=np.float32)
                 # Insert into LRU scores cache and enforce size bound
-                self._scores_cache[cache_key] = scores
-                self._scores_cache.move_to_end(cache_key)
+                self._scores_cache[query] = scores
+                self._scores_cache.move_to_end(query)
                 while len(self._scores_cache) > _SCORES_CACHE_MAXSIZE:
                     self._scores_cache.popitem(last=False)
             else:
                 # Touch for LRU
-                self._scores_cache.move_to_end(cache_key)
+                self._scores_cache.move_to_end(query)
                 scores = cached_scores
 
             if scores.size == 0:
