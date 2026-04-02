@@ -13,7 +13,6 @@ from autorag_live.utils import get_logger
 logger = get_logger(__name__)
 
 SEED = 1337
-random.seed(SEED)
 
 
 @dataclass
@@ -99,6 +98,7 @@ def run_small_suite(runs_dir: str = "runs", judge_type: str = "deterministic") -
     if not isinstance(judge_type, str) or not judge_type.strip():
         raise ValueError("judge_type must be a non-empty string")
 
+    random.seed(SEED)
     logger.info(f"Starting small evaluation suite with judge_type: {judge_type}")
     os.makedirs(runs_dir, exist_ok=True)
     ts = int(time.time())
