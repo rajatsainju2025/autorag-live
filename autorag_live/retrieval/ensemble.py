@@ -143,6 +143,7 @@ class ScoreFuser(ABC):
         self,
         retriever_results: dict[str, list[RetrievedDocument]],
         weights: dict[str, float] | None = None,
+        top_k: int | None = None,
     ) -> list[tuple[str, float, RetrievedDocument]]:
         """
         Fuse scores from multiple retrievers.
@@ -150,6 +151,7 @@ class ScoreFuser(ABC):
         Args:
             retriever_results: Mapping of retriever name to results
             weights: Optional retriever weights
+            top_k: Return only the top-k results (default: all)
 
         Returns:
             List of (doc_id, fused_score, document) tuples
@@ -173,6 +175,7 @@ class RRFFuser(ScoreFuser):
         self,
         retriever_results: dict[str, list[RetrievedDocument]],
         weights: dict[str, float] | None = None,
+        top_k: int | None = None,
     ) -> list[tuple[str, float, RetrievedDocument]]:
         """Fuse using RRF."""
         # Initialize weights if not provided
@@ -200,8 +203,8 @@ class RRFFuser(ScoreFuser):
 
                 doc_scores[doc_id] += rrf_score
 
-        # Use heapq.nlargest for O(n log k) instead of O(n log n) full sort
-        top_docs = heapq.nlargest(len(doc_scores), doc_scores.items(), key=lambda x: x[1])
+        n = top_k if top_k is not None else len(doc_scores)
+        top_docs = heapq.nlargest(n, doc_scores.items(), key=lambda x: x[1])
 
         return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in top_docs]
 
@@ -221,6 +224,7 @@ class LinearFuser(ScoreFuser):
         self,
         retriever_results: dict[str, list[RetrievedDocument]],
         weights: dict[str, float] | None = None,
+        top_k: int | None = None,
     ) -> list[tuple[str, float, RetrievedDocument]]:
         """Fuse using linear combination."""
         if weights is None:
@@ -272,8 +276,8 @@ class LinearFuser(ScoreFuser):
                 doc_scores[doc_id] += weight * score
                 doc_counts[doc_id] += 1
 
-        # Use heapq.nlargest for O(n log k) instead of O(n log n) full sort
-        top_docs = heapq.nlargest(len(doc_scores), doc_scores.items(), key=lambda x: x[1])
+        n = top_k if top_k is not None else len(doc_scores)
+        top_docs = heapq.nlargest(n, doc_scores.items(), key=lambda x: x[1])
 
         return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in top_docs]
 
@@ -289,6 +293,7 @@ class MaxScoreFuser(ScoreFuser):
         self,
         retriever_results: dict[str, list[RetrievedDocument]],
         weights: dict[str, float] | None = None,
+        top_k: int | None = None,
     ) -> list[tuple[str, float, RetrievedDocument]]:
         """Fuse using max score."""
         doc_scores: dict[str, float] = {}
@@ -304,7 +309,8 @@ class MaxScoreFuser(ScoreFuser):
                 else:
                     doc_scores[doc_id] = max(doc_scores[doc_id], doc.score)
 
-        top_docs = heapq.nlargest(len(doc_scores), doc_scores.items(), key=lambda x: x[1])
+        n = top_k if top_k is not None else len(doc_scores)
+        top_docs = heapq.nlargest(n, doc_scores.items(), key=lambda x: x[1])
         return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in top_docs]
 
 
@@ -319,6 +325,7 @@ class BordaFuser(ScoreFuser):
         self,
         retriever_results: dict[str, list[RetrievedDocument]],
         weights: dict[str, float] | None = None,
+        top_k: int | None = None,
     ) -> list[tuple[str, float, RetrievedDocument]]:
         """Fuse using Borda count."""
         if weights is None:
@@ -341,7 +348,8 @@ class BordaFuser(ScoreFuser):
 
                 doc_scores[doc_id] += borda_score
 
-        top_docs = heapq.nlargest(len(doc_scores), doc_scores.items(), key=lambda x: x[1])
+        n_top = top_k if top_k is not None else len(doc_scores)
+        top_docs = heapq.nlargest(n_top, doc_scores.items(), key=lambda x: x[1])
         return [(doc_id, score, doc_objects[doc_id]) for doc_id, score in top_docs]
 
 
