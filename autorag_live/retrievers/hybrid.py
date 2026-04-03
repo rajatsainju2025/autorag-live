@@ -303,11 +303,16 @@ class AdaptiveFusionRetriever(HybridRetriever):
         bm25_scores = {doc: score for doc, score in bm25_results}
         dense_scores = {doc: score for doc, score in dense_results}
 
-        # Min-max normalize both score sets to [0, 1]
+        # Min-max normalize both score sets to [0, 1] (single pass)
         for scores in [bm25_scores, dense_scores]:
             if scores:
-                vals = list(scores.values())
-                min_v, max_v = min(vals), max(vals)
+                it = iter(scores.values())
+                min_v = max_v = next(it)
+                for v in it:
+                    if v < min_v:
+                        min_v = v
+                    elif v > max_v:
+                        max_v = v
                 rng = max_v - min_v
                 if rng > 0:
                     for doc in scores:
