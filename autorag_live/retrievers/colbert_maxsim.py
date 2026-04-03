@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections import OrderedDict
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Protocol, Tuple
 
@@ -159,7 +160,8 @@ class ColBERTScorer:
         self.embedder = embedder
         self.cfg = config or ColBERTScorerConfig()
         self._vocab: Dict[str, int] = {}  # For fallback bag-of-words embeddings
-        self._embedding_cache: Dict[str, np.ndarray] = {}
+        self._embedding_cache: OrderedDict[str, np.ndarray] = OrderedDict()
+        self._token_vector_cache: Dict[str, np.ndarray] = {}
 
     # ------------------------------------------------------------------ #
     # Public API                                                           #
@@ -179,8 +181,11 @@ class ColBERTScorer:
         Returns:
             Array of shape (min(T, max_tokens), D) of L2-normalised embeddings.
         """
+        _EMBEDDING_CACHE_MAXSIZE = 2048
+
         cache_key = hashlib.md5(f"{text}:{max_tokens}".encode()).hexdigest()
         if cache_key in self._embedding_cache:
+            self._embedding_cache.move_to_end(cache_key)
             return self._embedding_cache[cache_key]
 
         if self.embedder is not None:
@@ -193,6 +198,8 @@ class ColBERTScorer:
             embs = _l2_normalise(embs)
 
         self._embedding_cache[cache_key] = embs
+        while len(self._embedding_cache) > _EMBEDDING_CACHE_MAXSIZE:
+            self._embedding_cache.popitem(last=False)
         return embs
 
     def embed_query_tokens(self, query: str) -> np.ndarray:
@@ -280,6 +287,8 @@ class ColBERTScorer:
     # Fallback embedder (no external model required)                       #
     # ------------------------------------------------------------------ #
 
+    _TOKEN_CACHE_MAXSIZE = 10_000
+
     def _fallback_embed(self, text: str) -> np.ndarray:
         """
         Deterministic random-projection token embeddings.
@@ -292,12 +301,18 @@ class ColBERTScorer:
         tokens = text.lower().split(self.cfg.token_sep)[: self.cfg.doc_max_tokens]
         D = self.cfg.dim
         embs = np.empty((len(tokens), D), dtype=np.float32)
+        cache = self._token_vector_cache
         for i, token in enumerate(tokens):
-            # Reproducible per-token random vector via seeded RNG
-            h = int(hashlib.md5(token.encode()).hexdigest(), 16) % (2**31)
-            rng = np.random.default_rng(h)
-            vec = rng.standard_normal(D).astype(np.float32)
-            embs[i] = vec
+            cached = cache.get(token)
+            if cached is not None:
+                embs[i] = cached
+            else:
+                h = int(hashlib.md5(token.encode()).hexdigest(), 16) % (2**31)
+                rng = np.random.default_rng(h)
+                vec = rng.standard_normal(D).astype(np.float32)
+                if len(cache) < self._TOKEN_CACHE_MAXSIZE:
+                    cache[token] = vec
+                embs[i] = vec
         return embs
 
 
