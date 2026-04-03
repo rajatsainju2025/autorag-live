@@ -288,8 +288,7 @@ class AdaptiveFusionRetriever(HybridRetriever):
         for rank, (doc, _score) in enumerate(dense_results):
             rrf_scores[doc] = rrf_scores.get(doc, 0.0) + 1.0 / (self.rrf_k + rank + 1)
 
-        sorted_docs = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-        return sorted_docs[:k]
+        return heapq.nlargest(k, rrf_scores.items(), key=lambda x: x[1])
 
     def _weighted_fusion(
         self,
