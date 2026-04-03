@@ -1,5 +1,6 @@
 import os
 from collections import Counter
+from itertools import chain
 from typing import Dict, List
 
 import yaml
@@ -18,22 +19,20 @@ def mine_synonyms_from_disagreements(
         or not isinstance(hybrid_results, list)
     ):
         raise TypeError("All result parameters must be lists")
-    if not all(isinstance(doc, str) for doc in bm25_results + dense_results + hybrid_results):
+    if not all(isinstance(doc, str) for doc in chain(bm25_results, dense_results, hybrid_results)):
         raise TypeError("All documents must be strings")
     if min_freq < 1:
         raise ValueError("min_freq must be at least 1")
 
-    all_docs = bm25_results + dense_results + hybrid_results
-
-    # Extract n-grams (1-3 tokens)
-    ngrams = []
-    for doc in all_docs:
+    # Extract n-grams (1-3 tokens) and stream into Counter
+    ngram_counts: Counter[str] = Counter()
+    for doc in chain(bm25_results, dense_results, hybrid_results):
         tokens = doc.lower().split()
-        for i in range(len(tokens)):
-            for j in range(i + 1, min(i + 4, len(tokens) + 1)):
-                ngrams.append(" ".join(tokens[i:j]))
-
-    ngram_counts = Counter(ngrams)
+        ngram_counts.update(
+            " ".join(tokens[i:j])
+            for i in range(len(tokens))
+            for j in range(i + 1, min(i + 4, len(tokens) + 1))
+        )
 
     # Group by frequency patterns - this is a simplified heuristic
     synonym_groups: Dict[str, List[str]] = {}
