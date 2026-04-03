@@ -321,8 +321,7 @@ class AdaptiveFusionRetriever(HybridRetriever):
                 doc, 0.0
             ) + dense_weight * dense_scores.get(doc, 0.0)
 
-        sorted_docs = sorted(combined.items(), key=lambda x: x[1], reverse=True)
-        return sorted_docs[:k]
+        return heapq.nlargest(k, combined.items(), key=lambda x: x[1])
 
     def update_weights(
         self,
