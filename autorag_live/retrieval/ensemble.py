@@ -81,13 +81,17 @@ class RetrievedDocument:
 
 
 def _document_key(doc: RetrievedDocument) -> str:
-    """Return a stable, cached identifier for a retrieved document."""
+    """Return a stable identifier for a retrieved document.
+
+    Computes a content-based hash when ``doc_id`` is empty.  The result is
+    **not** written back onto the document so that callers do not observe
+    surprising mutations.
+    """
     if doc.doc_id:
         return doc.doc_id
 
     content_hash = hashlib.blake2b(doc.content.encode("utf-8"), digest_size=16).hexdigest()
-    doc.doc_id = f"content:{content_hash}"
-    return doc.doc_id
+    return f"content:{content_hash}"
 
 
 # ============================================================================
@@ -725,8 +729,12 @@ class EnsembleRetriever:
         if self.config.cross_encoder_rerank and self.cross_encoder:
             fused = await self._cross_encoder_rerank(query, fused, self.config.top_k_rerank)
 
-        # Build result
-        documents = [doc for _doc_id, _score, doc in fused[:top_k]]
+        # Build result — assign stable doc_ids to documents that lack one
+        documents = []
+        for doc_id, _score, doc in fused[:top_k]:
+            if not doc.doc_id:
+                doc.doc_id = doc_id
+            documents.append(doc)
         fusion_scores = {doc_id: score for doc_id, score, _doc in fused}
 
         # Calculate contributions
