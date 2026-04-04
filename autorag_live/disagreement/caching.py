@@ -11,6 +11,7 @@ class DisagreementCache:
         """Initialize disagreement cache."""
         self._cache: Dict[str, Dict] = {}
         self._dependencies: Dict[str, set] = {}
+        self._reverse_deps: Dict[str, set] = {}  # dependency -> cache keys
         self._max_size = max_size
 
     @staticmethod
@@ -45,18 +46,33 @@ class DisagreementCache:
         if len(self._cache) >= self._max_size:
             # Evict oldest entry
             oldest_key = next(iter(self._cache))
-            del self._cache[oldest_key]
-            if oldest_key in self._dependencies:
-                del self._dependencies[oldest_key]
+            self._remove_key(oldest_key)
 
         key = self._make_key(retriever_names, query, k)
         self._cache[key] = result
         if depends_on:
-            self._dependencies[key] = set(depends_on)
+            deps = set(depends_on)
+            self._dependencies[key] = deps
+            for dep in deps:
+                self._reverse_deps.setdefault(dep, set()).add(key)
+
+    def _remove_key(self, key: str) -> None:
+        """Remove a key from cache and all dependency indices."""
+        self._cache.pop(key, None)
+        deps = self._dependencies.pop(key, None)
+        if deps:
+            for dep in deps:
+                rev = self._reverse_deps.get(dep)
+                if rev is not None:
+                    rev.discard(key)
+                    if not rev:
+                        del self._reverse_deps[dep]
 
     def invalidate_if_depends_on(self, dependency: str) -> int:
         """
         Invalidate cache entries depending on a component.
+
+        Uses a reverse index for O(1) lookup instead of scanning all entries.
 
         Args:
             dependency: Component name that changed
@@ -64,21 +80,16 @@ class DisagreementCache:
         Returns:
             Number of entries invalidated
         """
-        invalid_keys = []
-        for key, deps in self._dependencies.items():
-            if dependency in deps:
-                invalid_keys.append(key)
-
+        invalid_keys = list(self._reverse_deps.pop(dependency, set()))
         for key in invalid_keys:
-            del self._cache[key]
-            del self._dependencies[key]
-
+            self._remove_key(key)
         return len(invalid_keys)
 
     def clear(self):
         """Clear the cache."""
         self._cache.clear()
         self._dependencies.clear()
+        self._reverse_deps.clear()
 
     def get_stats(self) -> Dict:
         """Get cache statistics."""
