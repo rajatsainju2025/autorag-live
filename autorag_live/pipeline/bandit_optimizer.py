@@ -206,14 +206,15 @@ class BanditHybridOptimizer:
 
         # Find matching arm
         best_match = None
-        best_similarity = -1
+        best_similarity = -1.0
+
+        w1 = np.array([normalized_weights.get(name, 0) for name in self.retriever_names])
+        norm_w1 = np.linalg.norm(w1)
 
         for arm in self.arms:
-            # Calculate cosine similarity between weight vectors
-            w1 = np.array([normalized_weights.get(name, 0) for name in self.retriever_names])
             w2 = np.array([arm.weights.get(name, 0) for name in self.retriever_names])
-
-            similarity = np.dot(w1, w2) / (np.linalg.norm(w1) * np.linalg.norm(w2))
+            denom = norm_w1 * np.linalg.norm(w2)
+            similarity = np.dot(w1, w2) / denom if denom > 0 else 0.0
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_match = arm
