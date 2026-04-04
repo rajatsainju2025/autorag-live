@@ -79,6 +79,10 @@ def grid_search_hybrid_weights(
     best_score = -1.0
     eval_count = 0
 
+    # Pre-compute retrieval results per query (independent of weight config)
+    cached_bm25 = {q: bm25.bm25_retrieve(q, corpus, k) for q in queries}
+    cached_dense = {q: dense.dense_retrieve(q, corpus, k) for q in queries}
+
     for i in range(grid_size + 1):
         bm25_w = i / grid_size
         dense_w = 1.0 - bm25_w
@@ -89,8 +93,8 @@ def grid_search_hybrid_weights(
 
         total_diversity = 0.0
         for query in queries:
-            bm25_res = bm25.bm25_retrieve(query, corpus, k)
-            dense_res = dense.dense_retrieve(query, corpus, k)
+            bm25_res = cached_bm25[query]
+            dense_res = cached_dense[query]
             hybrid_res = hybrid_retrieve_weighted(query, corpus, k, weights)
 
             # Measure diversity as average disagreement
