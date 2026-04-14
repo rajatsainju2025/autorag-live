@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass
+from functools import lru_cache
 from typing import Dict, Optional
 
 
@@ -17,6 +18,16 @@ class CachedPrompt:
     prefix_text: str
     token_count: int
     hit_count: int = 0
+
+
+@lru_cache(maxsize=512)
+def _hash_prefix_cached(prefix: str) -> str:
+    """Module-level cached SHA-256 hash for prompt prefixes.
+
+    Cached at module level so the same system prompt reused across many
+    queries only pays the SHA-256 cost once.
+    """
+    return hashlib.sha256(prefix.encode("utf-8")).hexdigest()
 
 
 class PromptCachingManager:
@@ -29,7 +40,7 @@ class PromptCachingManager:
         self._total_misses = 0
 
     def _hash_prefix(self, prefix: str) -> str:
-        return hashlib.sha256(prefix.encode("utf-8")).hexdigest()
+        return _hash_prefix_cached(prefix)
 
     def get_cached_prefix(self, prefix: str) -> Optional[CachedPrompt]:
         """Check if a prefix is already cached."""
