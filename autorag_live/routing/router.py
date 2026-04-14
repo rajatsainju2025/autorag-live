@@ -94,108 +94,52 @@ class QueryClassifier:
         """Initialize query classifier."""
         self.logger = logging.getLogger("QueryClassifier")
 
-        # Type indicators
-        self.type_indicators = {
-            QueryType.FACTUAL: [
-                "what",
-                "when",
-                "where",
-                "who",
-                "which",
-                "name",
-                "list",
-                "define",
-                "explain",
-            ],
-            QueryType.PROCEDURAL: [
-                "how",
-                "steps",
-                "instructions",
-                "guide",
-                "process",
-                "teach",
-                "create",
-                "build",
-            ],
-            QueryType.COMPARATIVE: [
-                "compare",
-                "difference",
-                "contrast",
-                "versus",
-                "vs",
-                "better",
-                "worse",
-                "similar",
-            ],
-            QueryType.ANALYTICAL: [
-                "why",
-                "cause",
-                "effect",
-                "reason",
-                "impact",
-                "consequence",
-                "result",
-            ],
-            QueryType.CREATIVE: [
-                "generate",
-                "create",
-                "invent",
-                "suggest",
-                "brainstorm",
-                "idea",
-                "novel",
-                "unique",
-            ],
+        # Type indicators stored as frozensets for O(1) membership testing
+        # (previously lists — O(n) per `in` check)
+        self.type_indicators: Dict[QueryType, frozenset] = {
+            QueryType.FACTUAL: frozenset(
+                ["what", "when", "where", "who", "which", "name", "list", "define", "explain"]
+            ),
+            QueryType.PROCEDURAL: frozenset(
+                ["how", "steps", "instructions", "guide", "process", "teach", "create", "build"]
+            ),
+            QueryType.COMPARATIVE: frozenset(
+                ["compare", "difference", "contrast", "versus", "vs", "better", "worse", "similar"]
+            ),
+            QueryType.ANALYTICAL: frozenset(
+                ["why", "cause", "effect", "reason", "impact", "consequence", "result"]
+            ),
+            QueryType.CREATIVE: frozenset(
+                ["generate", "create", "invent", "suggest", "brainstorm", "idea", "novel", "unique"]
+            ),
         }
 
-        # Domain indicators
-        self.domain_indicators = {
-            QueryDomain.TECHNICAL: [
-                "code",
-                "programming",
-                "software",
-                "api",
-                "database",
-                "algorithm",
-                "system",
-            ],
-            QueryDomain.MEDICAL: [
-                "disease",
-                "treatment",
-                "medicine",
-                "symptom",
-                "health",
-                "clinical",
-                "doctor",
-            ],
-            QueryDomain.LEGAL: [
-                "law",
-                "legal",
-                "court",
-                "contract",
-                "attorney",
-                "statute",
-                "regulation",
-            ],
-            QueryDomain.FINANCIAL: [
-                "money",
-                "finance",
-                "investment",
-                "stock",
-                "bank",
-                "economy",
-                "budget",
-            ],
-            QueryDomain.SCIENTIFIC: [
-                "research",
-                "study",
-                "theory",
-                "hypothesis",
-                "experiment",
-                "data",
-                "scientific",
-                "science",
-            ],
+        # Domain indicators stored as frozensets for O(1) membership testing
+        self.domain_indicators: Dict[QueryDomain, frozenset] = {
+            QueryDomain.TECHNICAL: frozenset(
+                ["code", "programming", "software", "api", "database", "algorithm", "system"]
+            ),
+            QueryDomain.MEDICAL: frozenset(
+                ["disease", "treatment", "medicine", "symptom", "health", "clinical", "doctor"]
+            ),
+            QueryDomain.LEGAL: frozenset(
+                ["law", "legal", "court", "contract", "attorney", "statute", "regulation"]
+            ),
+            QueryDomain.FINANCIAL: frozenset(
+                ["money", "finance", "investment", "stock", "bank", "economy", "budget"]
+            ),
+            QueryDomain.SCIENTIFIC: frozenset(
+                [
+                    "research",
+                    "study",
+                    "theory",
+                    "hypothesis",
+                    "experiment",
+                    "data",
+                    "scientific",
+                    "science",
+                ]
+            ),
         }
 
     def classify(self, query: str) -> QueryAnalysis:
