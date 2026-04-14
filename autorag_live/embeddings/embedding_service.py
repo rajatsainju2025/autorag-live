@@ -24,6 +24,7 @@ Example usage:
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import time
@@ -147,9 +148,14 @@ class EmbeddingCache:
         self._misses = 0
 
     def _make_key(self, text: str, model: str, provider: str) -> str:
-        """Create cache key from text and model."""
-        content = f"{provider}:{model}:{text}"
-        return format(hash(content), "x")
+        """Create a deterministic, collision-resistant cache key.
+
+        Uses hashlib.md5 instead of built-in hash() which is randomised
+        per-process by PYTHONHASHSEED and therefore unsuitable as a
+        stable cache key.
+        """
+        content = f"{provider}:{model}:{text}".encode()
+        return hashlib.md5(content, usedforsecurity=False).hexdigest()
 
     def get(self, text: str, model: str, provider: str) -> Optional[List[float]]:
         """Get embedding from cache."""
