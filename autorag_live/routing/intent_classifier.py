@@ -337,11 +337,15 @@ class FeatureExtractor:
             if first_word in self.QUESTION_WORDS:
                 features.question_word = first_word
 
-        # Find comparison terms
-        features.comparison_terms = [t for t in tokens if t in self.COMPARISON_TERMS]
+        # Build token set once; reuse for O(1) set-intersection lookups
+        # instead of O(n * m) list comprehensions where n = tokens, m = term set size.
+        token_set = set(tokens)
 
-        # Find temporal terms
-        features.temporal_terms = [t for t in tokens if t in self.TEMPORAL_TERMS]
+        # Find comparison terms via set intersection — O(min(|tokens|, |COMPARISON_TERMS|))
+        features.comparison_terms = sorted(token_set & self.COMPARISON_TERMS)
+
+        # Find temporal terms via set intersection
+        features.temporal_terms = sorted(token_set & self.TEMPORAL_TERMS)
 
         # Check listing patterns
         features.listing_patterns = any(p.search(normalized) for p in self._listing_patterns)
