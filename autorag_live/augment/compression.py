@@ -37,6 +37,18 @@ logger = logging.getLogger(__name__)
 _token_counter = TokenCounter()
 
 # ---------------------------------------------------------------------------
+# Pre-compiled regex patterns used in ExtractiveCompressor (avoid repeated
+# re-compilation on every call to hot-path methods)
+# ---------------------------------------------------------------------------
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_CAPS_RE = re.compile(r"\b[A-Z][a-z]+\b")
+_NUMBERS_RE = re.compile(r"\b\d+[\d,.]*\b")
+_TECHNICAL_RE = re.compile(
+    r"\b(e\.g\.|i\.e\.|etc\.|vs\.|namely|specifically)\b",
+    re.IGNORECASE,
+)
+
+# ---------------------------------------------------------------------------
 # MinHash approximate deduplication (O(n·k) instead of O(n²) pairwise Jaccard)
 # ---------------------------------------------------------------------------
 _NUM_HASHES = 64  # number of hash functions — higher = more accurate
@@ -197,8 +209,7 @@ class ExtractiveCompressor:
 
     def extract_sentences(self, text: str) -> List[str]:
         """Split text into sentences."""
-        # Simple sentence splitting
-        sentences = re.split(r"(?<=[.!?])\s+", text)
+        sentences = _SENTENCE_SPLIT_RE.split(text)
         return [s.strip() for s in sentences if s.strip()]
 
     def estimate_tokens(self, text: str) -> int:
@@ -243,17 +254,17 @@ class ExtractiveCompressor:
         score = 0.5
 
         # Check for named entities (simple heuristic)
-        caps = re.findall(r"\b[A-Z][a-z]+\b", sentence)
+        caps = _CAPS_RE.findall(sentence)
         if caps:
             score += min(len(caps) * 0.1, 0.2)
 
         # Check for numbers
-        numbers = re.findall(r"\b\d+[\d,.]*\b", sentence)
+        numbers = _NUMBERS_RE.findall(sentence)
         if numbers:
             score += min(len(numbers) * 0.05, 0.15)
 
         # Check for technical indicators
-        if re.search(r"\b(e\.g\.|i\.e\.|etc\.|vs\.|namely|specifically)\b", sentence.lower()):
+        if _TECHNICAL_RE.search(sentence):
             score += 0.1
 
         return min(score, 1.0)
