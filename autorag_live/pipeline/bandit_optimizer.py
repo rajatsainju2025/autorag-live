@@ -101,10 +101,13 @@ class ThompsonSamplingBandit:
                 # Prior: beta(1, 1) for unpulled arms
                 sample = np.random.beta(1, 1)
             else:
-                # Posterior: beta(successes + 1, failures + 1)
-                successes = sum(1 for r in arm.reward_history if r > 0)
-                failures = arm.pull_count - successes
-                sample = np.random.beta(successes + 1, failures + 1)
+                # Use mean reward to parameterise beta distribution so that
+                # continuous reward magnitudes are preserved instead of
+                # binarising into success/failure.
+                mean_r = np.clip(arm.average_reward, 0.0, 1.0)
+                alpha = max(1.0, mean_r * arm.pull_count + 1)
+                beta_param = max(1.0, (1 - mean_r) * arm.pull_count + 1)
+                sample = np.random.beta(alpha, beta_param)
             samples.append(sample)
 
         # Return arm with highest sample

@@ -53,14 +53,18 @@ def _minhash_signature(text: str, num_hashes: int = _NUM_HASHES) -> tuple:
     if not shingles:
         shingles = {text.lower().strip()}
 
+    # Pre-encode shingles once; reuse across all hash functions
+    encoded_shingles = [s.encode() for s in shingles]
+
     sig = []
     for i in range(num_hashes):
+        prefix = f"{i}:".encode()
         min_val = min(
             int.from_bytes(
-                hashlib.md5(f"{i}:{s}".encode(), usedforsecurity=False).digest(),
+                hashlib.md5(prefix + es, usedforsecurity=False).digest(),
                 "big",
             )
-            for s in shingles
+            for es in encoded_shingles
         )
         sig.append(min_val)
     return tuple(sig)
