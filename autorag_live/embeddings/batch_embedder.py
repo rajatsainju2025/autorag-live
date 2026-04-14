@@ -28,6 +28,7 @@ import hashlib
 import logging
 import time
 from abc import ABC, abstractmethod
+from collections import OrderedDict
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Awaitable, Callable, Dict, Iterator, List, Optional, Tuple
@@ -121,7 +122,7 @@ class BatchResult:
 
 
 class EmbeddingCache:
-    """Simple in-memory embedding cache."""
+    """In-memory embedding cache with O(1) LRU eviction and TTL support."""
 
     def __init__(
         self,
@@ -137,7 +138,10 @@ class EmbeddingCache:
         """
         self.max_size = max_size
         self.ttl = ttl
-        self._cache: Dict[str, Tuple[List[float], float]] = {}
+        # OrderedDict preserves insertion order for O(1) LRU eviction via
+        # popitem(last=False) — the previous plain dict required O(n log n)
+        # sort over all entries every time the cache was full.
+        self._cache: OrderedDict[str, Tuple[List[float], float]] = OrderedDict()
 
     def _make_key(self, text: str, model: str) -> str:
         """Generate a deterministic, collision-resistant cache key.
@@ -162,6 +166,8 @@ class EmbeddingCache:
 
             # Check TTL
             if time.time() - timestamp < self.ttl:
+                # Move to end to mark as recently used
+                self._cache.move_to_end(key)
                 return embedding
             else:
                 del self._cache[key]
@@ -174,15 +180,16 @@ class EmbeddingCache:
         model: str,
         embedding: List[float],
     ) -> None:
-        """Cache embedding."""
-        # Evict if at capacity
-        if len(self._cache) >= self.max_size:
-            # Remove oldest entries
-            sorted_keys = sorted(self._cache.keys(), key=lambda k: self._cache[k][1])
-            for key in sorted_keys[: len(sorted_keys) // 4]:
-                del self._cache[key]
-
+        """Cache embedding with O(1) LRU eviction."""
         key = self._make_key(text, model)
+        if key in self._cache:
+            # Refresh timestamp and mark as recently used
+            self._cache.move_to_end(key)
+            self._cache[key] = (embedding, time.time())
+            return
+        # Evict oldest entry when at capacity — O(1) with OrderedDict
+        if len(self._cache) >= self.max_size:
+            self._cache.popitem(last=False)
         self._cache[key] = (embedding, time.time())
 
     def clear(self) -> None:
