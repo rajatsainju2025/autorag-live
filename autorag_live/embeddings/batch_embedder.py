@@ -24,6 +24,7 @@ Example usage:
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import time
 from abc import ABC, abstractmethod
@@ -139,9 +140,14 @@ class EmbeddingCache:
         self._cache: Dict[str, Tuple[List[float], float]] = {}
 
     def _make_key(self, text: str, model: str) -> str:
-        """Generate cache key."""
-        content = f"{model}:{text}"
-        return format(hash(content), "x")
+        """Generate a deterministic, collision-resistant cache key.
+
+        Uses hashlib.md5 instead of the built-in hash() whose seed is
+        randomised per-process (PYTHONHASHSEED), making hash() unsuitable
+        for any cache that outlives a single interpreter session.
+        """
+        content = f"{model}:{text}".encode()
+        return hashlib.md5(content, usedforsecurity=False).hexdigest()
 
     def get(
         self,
