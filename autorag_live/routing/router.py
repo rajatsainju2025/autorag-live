@@ -156,15 +156,13 @@ class QueryClassifier:
         # Assess complexity
         complexity = self._assess_complexity(query)
 
-        # Check multi-step requirements
-        requires_multi_step = any(
-            word in query_lower for word in ["and", "then", "next", "after", "also"]
-        )
+        # Check multi-step requirements — use set membership (word boundary safe)
+        # instead of `word in query_lower` which matches substrings, e.g.
+        # "and" would incorrectly match inside "handler" or "standard".
+        requires_multi_step = bool(words & {"and", "then", "next", "after", "also"})
 
-        # Check reasoning requirement
-        requires_reasoning = any(
-            word in query_lower for word in ["why", "how", "analyze", "explain", "reason"]
-        )
+        # Check reasoning requirement — same fix
+        requires_reasoning = bool(words & {"why", "how", "analyze", "explain", "reason"})
 
         # Extract key phrases
         key_phrases = self._extract_key_phrases(query)
