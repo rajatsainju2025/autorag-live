@@ -121,20 +121,26 @@ class BloomFilter:
         return bool(self._bits[byte_idx] & np.uint8(1 << bit_idx))
 
     def add(self, item: str) -> None:
-        """Add item to filter."""
-        for h in self._hashes(item):
-            self._set_bit(int(h))
+        """Add item to filter using vectorised NumPy batch bit-setting."""
+        positions = self._hashes(item)  # already a numpy int64 array
+        byte_indices = (positions >> 3).astype(np.intp)
+        bit_shifts = (positions & 7).astype(np.uint8)
+        # Set all required bits in one vectorised pass
+        self._bits[byte_indices] |= np.uint8(1) << bit_shifts
         self._item_count += 1
         self._items.append(item)
 
     def contains(self, item: str) -> bool:
         """
-        Check if item might be in set.
+        Check if item might be in set using vectorised NumPy batch bit-testing.
 
         Returns:
             True if possibly present, False if definitely not present
         """
-        return all(self._get_bit(int(h)) for h in self._hashes(item))
+        positions = self._hashes(item)
+        byte_indices = (positions >> 3).astype(np.intp)
+        bit_shifts = (positions & 7).astype(np.uint8)
+        return bool(np.all(self._bits[byte_indices] & (np.uint8(1) << bit_shifts)))
 
     def clear(self) -> None:
         """Clear the filter."""
