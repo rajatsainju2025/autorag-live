@@ -231,9 +231,19 @@ class ExtractiveCompressor:
             return 0.8
         return 0.5
 
-    def score_sentence_length(self, sentence: str) -> float:
-        """Score based on length (very short/long less useful)."""
-        length = len(sentence.split())
+    def score_sentence_length(
+        self,
+        sentence: str,
+        word_count: Optional[int] = None,
+    ) -> float:
+        """Score based on length (very short/long less useful).
+
+        Args:
+            sentence: Sentence text.
+            word_count: Pre-computed word count to avoid redundant split().
+                        If *None* the count is computed from *sentence*.
+        """
+        length = word_count if word_count is not None else len(sentence.split())
         if length < 5:
             return 0.3  # Too short
         elif length > 50:
@@ -308,9 +318,13 @@ class ExtractiveCompressor:
             total = len(sentences)
 
             for i, sent in enumerate(sentences):
+                # Compute word count once and share with scoring helpers to
+                # avoid redundant str.split() calls on the same sentence.
+                sent_word_count = len(sent.split())
+
                 # Compute scores
                 pos_score = self.score_sentence_position(i, total)
-                len_score = self.score_sentence_length(sent)
+                len_score = self.score_sentence_length(sent, word_count=sent_word_count)
                 info_score = self.score_information_density(sent)
                 query_score = self.score_query_relevance(sent, query, _query_terms=query_terms)
 
