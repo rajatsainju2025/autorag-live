@@ -115,10 +115,11 @@ class SummaryResult:
     processing_time_ms: float = 0.0
 
     def __post_init__(self) -> None:
-        """Compute metrics."""
-        if self.source_text:
+        """Compute metrics only when the caller has not provided them."""
+        if self.source_text and not self.compression_ratio:
             self.compression_ratio = len(self.summary) / len(self.source_text)
-        self.word_count = len(self.summary.split())
+        if not self.word_count:
+            self.word_count = len(self.summary.split())
 
 
 class SentenceTokenizer:
