@@ -344,20 +344,14 @@ class PositionScorer:
         if n == 0:
             return []
 
-        scores = []
-        for i, sentence in enumerate(sentences):
-            # Exponential decay from position
-            position_score = np.exp(-0.1 * i)
+        # Compute all position scores in one vectorised numpy call instead of
+        # a Python loop with per-element np.exp.
+        indices = np.arange(n, dtype=np.float64)
+        scores_arr = np.exp(-0.1 * indices)
+        scores_arr[0] *= 1.5  # Boost first sentence
 
-            # Boost first sentence
-            if i == 0:
-                position_score *= 1.5
-
-            scores.append(position_score)
-
-        # Normalize
-        max_score = max(scores) if scores else 1.0
-        return [s / max_score for s in scores]
+        max_score = float(scores_arr.max())
+        return (scores_arr / max_score).tolist()
 
 
 class FrequencyScorer:
