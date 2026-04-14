@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Optional, Protocol, runtime_checkable
 
+import numpy as np
+
 # ============================================================================
 # Protocols and Types
 # ============================================================================
@@ -243,21 +245,18 @@ class LinearFuser(ScoreFuser):
 
         for retriever_name, results in retriever_results.items():
             if self.normalize and results:
-                scores = [doc.score for doc in results]
-                min_score = min(scores)
-                max_score = max(scores)
-                score_range = max_score - min_score
+                scores_arr = np.asarray([doc.score for doc in results], dtype=np.float64)
+                lo, hi = float(scores_arr.min()), float(scores_arr.max())
+                score_range = hi - lo
 
-                normalized = []
-                for doc in results:
-                    if score_range > 0:
-                        norm_score = (doc.score - min_score) / score_range
-                    else:
-                        norm_score = 1.0
-                    doc_id = _document_key(doc)
-                    normalized.append((doc_id, norm_score, doc))
+                if score_range > 0:
+                    norm_scores = ((scores_arr - lo) / score_range).tolist()
+                else:
+                    norm_scores = [1.0] * len(results)
 
-                normalized_results[retriever_name] = normalized
+                normalized_results[retriever_name] = [
+                    (_document_key(doc), ns, doc) for doc, ns in zip(results, norm_scores)
+                ]
             else:
                 normalized_results[retriever_name] = [
                     (_document_key(doc), doc.score, doc) for doc in results
