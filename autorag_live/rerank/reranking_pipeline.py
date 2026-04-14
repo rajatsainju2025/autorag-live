@@ -97,17 +97,17 @@ class BaseReranker(ABC, Generic[T]):
         pass
 
     def _normalize_scores(self, scores: list[float]) -> list[float]:
-        """Normalize scores to 0-1 range."""
+        """Normalize scores to 0-1 range using vectorised NumPy operations."""
         if not scores:
             return []
 
-        min_score = min(scores)
-        max_score = max(scores)
+        arr = np.asarray(scores, dtype=np.float64)
+        lo, hi = float(arr.min()), float(arr.max())
 
-        if max_score == min_score:
+        if hi == lo:
             return [1.0] * len(scores)
 
-        return [(s - min_score) / (max_score - min_score) for s in scores]
+        return ((arr - lo) / (hi - lo)).tolist()
 
     def _apply_threshold(
         self,
