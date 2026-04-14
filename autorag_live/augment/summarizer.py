@@ -363,6 +363,10 @@ class PositionScorer:
 class FrequencyScorer:
     """Score sentences by word frequency."""
 
+    # Pre-compiled pattern for stripping non-word characters in the hot inner
+    # loop — avoids re-compiling on every word in every sentence.
+    _NON_WORD_RE = re.compile(r"[^\w]")
+
     STOPWORDS = {
         "a",
         "an",
@@ -476,7 +480,7 @@ class FrequencyScorer:
         word_freq: Dict[str, int] = {}
         for sentence in sentences:
             for word in sentence.text.lower().split():
-                word = re.sub(r"[^\w]", "", word)
+                word = self._NON_WORD_RE.sub("", word)
                 if word and word not in self.STOPWORDS and len(word) > 2:
                     word_freq[word] = word_freq.get(word, 0) + 1
 
@@ -489,7 +493,7 @@ class FrequencyScorer:
             score = 0.0
             words = sentence.text.lower().split()
             for word in words:
-                word = re.sub(r"[^\w]", "", word)
+                word = self._NON_WORD_RE.sub("", word)
                 if word in word_freq:
                     score += word_freq[word]
 
