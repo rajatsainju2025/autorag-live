@@ -265,7 +265,6 @@ class LinearFuser(ScoreFuser):
         # Combine scores
         doc_scores: dict[str, float] = {}
         doc_objects: dict[str, RetrievedDocument] = {}
-        doc_counts: dict[str, int] = {}
 
         for retriever_name, results in normalized_results.items():
             weight = weights.get(retriever_name, 1.0)
@@ -274,10 +273,8 @@ class LinearFuser(ScoreFuser):
                 if doc_id not in doc_scores:
                     doc_scores[doc_id] = 0.0
                     doc_objects[doc_id] = doc
-                    doc_counts[doc_id] = 0
 
                 doc_scores[doc_id] += weight * score
-                doc_counts[doc_id] += 1
 
         n = top_k if top_k is not None else len(doc_scores)
         top_docs = heapq.nlargest(n, doc_scores.items(), key=lambda x: x[1])
