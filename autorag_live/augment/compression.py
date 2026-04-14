@@ -26,6 +26,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
+import numpy as np
+
 from autorag_live.core.protocols import BaseLLM, Document, Message
 from autorag_live.utils.tokenizer import TokenCounter
 
@@ -46,28 +48,33 @@ def _minhash_signature(text: str, num_hashes: int = _NUM_HASHES) -> tuple:
     Returns a tuple of *num_hashes* minimum hash values.  Two texts with
     Jaccard similarity *J* will have identical signature entries with
     probability *J*, so comparing tuples gives a cheap approximate overlap.
+
+    Uses Kirsch-Mitzenmacher double hashing: h_i(x) = h1(x) + i * h2(x).
+    Only one SHA-256 per shingle is needed, reducing MD5 calls from
+    O(num_hashes * num_shingles) to O(num_shingles), then applying fast
+    NumPy matrix operations for the remaining work.
     """
     words = text.lower().split()
     # Build 3-word shingles for better discrimination
-    shingles = {" ".join(words[i : i + 3]) for i in range(max(1, len(words) - 2))}
-    if not shingles:
-        shingles = {text.lower().strip()}
+    shingles = list(
+        {" ".join(words[i : i + 3]) for i in range(max(1, len(words) - 2))}
+        or {text.lower().strip()}
+    )
 
-    # Pre-encode shingles once; reuse across all hash functions
-    encoded_shingles = [s.encode() for s in shingles]
+    n = len(shingles)
+    h1 = np.empty(n, dtype=np.uint64)
+    h2 = np.empty(n, dtype=np.uint64)
+    for j, s in enumerate(shingles):
+        digest = hashlib.sha256(s.encode(), usedforsecurity=False).digest()
+        h1[j] = int.from_bytes(digest[:8], "little")
+        h2[j] = int.from_bytes(digest[8:16], "little")
 
-    sig = []
-    for i in range(num_hashes):
-        prefix = f"{i}:".encode()
-        min_val = min(
-            int.from_bytes(
-                hashlib.md5(prefix + es, usedforsecurity=False).digest(),
-                "big",
-            )
-            for es in encoded_shingles
-        )
-        sig.append(min_val)
-    return tuple(sig)
+    # Build (num_hashes, n) matrix via outer product: h1[j] + i * h2[j]
+    i_vec = np.arange(num_hashes, dtype=np.uint64)
+    # all_hashes[i, j] = h1[j] + i * h2[j]  (uint64 wraps on overflow)
+    all_hashes = h1[np.newaxis, :] + i_vec[:, np.newaxis] * h2[np.newaxis, :]
+    # Minimum across shingles for each hash function
+    return tuple(int(v) for v in all_hashes.min(axis=1))
 
 
 def _minhash_similarity(sig_a: tuple, sig_b: tuple) -> float:
