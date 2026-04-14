@@ -21,6 +21,7 @@ Example usage:
 
 from __future__ import annotations
 
+import itertools
 import logging
 import re
 from abc import ABC, abstractmethod
@@ -249,9 +250,9 @@ class SentenceChunker(BaseChunker):
             return chunks
 
         sentence_lengths = [len(sentence) for sentence in sentences]
-        cumulative_lengths = [0]
-        for sentence_length in sentence_lengths:
-            cumulative_lengths.append(cumulative_lengths[-1] + sentence_length)
+        # itertools.accumulate builds the prefix-sum list in a single C-level
+        # pass — no per-element Python loop required.
+        cumulative_lengths = [0] + list(itertools.accumulate(sentence_lengths))
 
         def _window_length(start_idx: int, end_idx: int) -> int:
             return (
