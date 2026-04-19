@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
+import numpy as np
+
 logger = logging.getLogger(__name__)
 
 _PUNCTUATION_RE = re.compile(r"[^\w\s]")
@@ -438,14 +440,11 @@ class CosineSimilarity(BaseSimilarityMetric):
 
     def _cosine(self, vec1: List[float], vec2: List[float]) -> float:
         """Compute cosine similarity between vectors."""
-        dot = sum(a * b for a, b in zip(vec1, vec2))
-        norm1 = sum(a * a for a in vec1) ** 0.5
-        norm2 = sum(b * b for b in vec2) ** 0.5
-
-        if norm1 == 0 or norm2 == 0:
+        a, b = np.asarray(vec1), np.asarray(vec2)
+        norm_a, norm_b = np.linalg.norm(a), np.linalg.norm(b)
+        if norm_a == 0 or norm_b == 0:
             return 0.0
-
-        return dot / (norm1 * norm2)
+        return float(np.dot(a, b) / (norm_a * norm_b))
 
     def _term_freq(self, tokens: List[str]) -> Dict[str, float]:
         """Compute term frequency."""
