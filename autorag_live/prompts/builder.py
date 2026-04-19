@@ -651,8 +651,7 @@ class PromptOptimizer:
 
         result = prompt
         for vague, specific in vague_terms.items():
-            pattern = rf"\b{vague}\b"
-            result = re.sub(pattern, specific, result, flags=re.IGNORECASE)
+            result = re.sub(rf"\b{vague}\b", specific, result, flags=re.IGNORECASE)
 
         return result
 
@@ -965,12 +964,19 @@ class Signature:
 
     def parse_output(self, text: str) -> Dict[str, Any]:
         """Parse output text into structured fields."""
+        # Lazily build and cache compiled patterns for output fields
+        if not hasattr(self, "_output_patterns"):
+            self._output_patterns: Dict[str, re.Pattern] = {}
+            for out_field in self.outputs:
+                prefix = out_field.prefix or f"{out_field.name.title()}:"
+                self._output_patterns[out_field.name] = re.compile(
+                    rf"{re.escape(prefix)}\s*(.+?)(?=\n[A-Z]|\Z)",
+                    re.DOTALL | re.IGNORECASE,
+                )
+
         result: Dict[str, Any] = {}
         for out_field in self.outputs:
-            prefix = out_field.prefix or f"{out_field.name.title()}:"
-            # Simple extraction - look for prefix
-            pattern = rf"{re.escape(prefix)}\s*(.+?)(?=\n[A-Z]|\Z)"
-            match = re.search(pattern, text, re.DOTALL | re.IGNORECASE)
+            match = self._output_patterns[out_field.name].search(text)
             if match:
                 value = match.group(1).strip()
                 if out_field.parse_fn:
