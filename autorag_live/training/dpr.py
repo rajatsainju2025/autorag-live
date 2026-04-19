@@ -268,20 +268,17 @@ class DenseHardNegativeMiner(HardNegativeMiner):
         hard_negatives = []
         question_embeddings = self.encoder.encode(questions)
 
-        for q_emb, positive in zip(question_embeddings, positives):
-            # Calculate similarities (placeholder)
-            # In practice: use FAISS or similar
-            similarities = []
-            for i, c_emb in enumerate(self.corpus_embeddings):
-                sim = sum(q * c for q, c in zip(q_emb, c_emb))
-                similarities.append((i, sim))
+        corpus_arr = np.asarray(self.corpus_embeddings)
 
-            # Sort by similarity
-            similarities.sort(key=lambda x: x[1], reverse=True)
+        for q_emb, positive in zip(question_embeddings, positives):
+            # Vectorized dot-product similarity against entire corpus
+            q_arr = np.asarray(q_emb)
+            sims = corpus_arr @ q_arr  # shape (num_corpus,)
+            ranked_indices = np.argsort(-sims)  # descending
 
             # Get top candidates excluding positive
             negatives = []
-            for idx, _ in similarities:
+            for idx in ranked_indices:
                 if corpus[idx] != positive:
                     negatives.append(corpus[idx])
                     if len(negatives) >= top_k:
@@ -361,15 +358,10 @@ class BiEncoder:
         passage_embeddings: list[list[float]],
     ) -> list[list[float]]:
         """Compute similarity matrix."""
-        # Dot product similarity
-        similarities = []
-        for q_emb in query_embeddings:
-            row = []
-            for p_emb in passage_embeddings:
-                sim = sum(q * p for q, p in zip(q_emb, p_emb))
-                row.append(sim)
-            similarities.append(row)
-        return similarities
+        # Vectorized dot product similarity matrix
+        q_arr = np.asarray(query_embeddings)
+        p_arr = np.asarray(passage_embeddings)
+        return (q_arr @ p_arr.T).tolist()
 
 
 # ============================================================================
