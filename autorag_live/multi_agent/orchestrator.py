@@ -27,6 +27,7 @@ Example usage:
 from __future__ import annotations
 
 import asyncio
+import heapq
 import logging
 import time
 import uuid
@@ -408,12 +409,14 @@ class SharedMemoryWorkspace:
 
     async def _evict_lru(self) -> None:
         """Evict least recently used entries."""
-        # Sort by access time
-        sorted_entries = sorted(self._entries.items(), key=lambda x: x[1].accessed_at)
-
-        # Remove oldest 10%
-        evict_count = max(1, len(sorted_entries) // 10)
-        for key, _ in sorted_entries[:evict_count]:
+        # Use heapq.nsmallest for O(n) selection instead of O(n log n) sort
+        evict_count = max(1, len(self._entries) // 10)
+        oldest = heapq.nsmallest(
+            evict_count,
+            self._entries.items(),
+            key=lambda x: x[1].accessed_at,
+        )
+        for key, _ in oldest:
             await self._remove_entry(key)
             self._stats["evictions"] += 1
 
