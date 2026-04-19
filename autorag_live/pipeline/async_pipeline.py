@@ -193,23 +193,26 @@ class EventEmitter:
 
     async def emit(self, event: PipelineEvent) -> None:
         """Emit an event to all listeners with bounded concurrency."""
-        tasks = []
         sem = self._emit_semaphore
 
         async def _guarded(listener, ev):
             async with sem:
                 await listener(ev)
 
+        # Collect coroutines directly and pass to gather() to avoid
+        # creating a separate Task object per listener.
+        coros = []
+
         # Type-specific listeners
         for listener in self._listeners.get(event.event_type, []):
-            tasks.append(asyncio.create_task(_guarded(listener, event)))
+            coros.append(_guarded(listener, event))
 
         # Global listeners
         for listener in self._global_listeners:
-            tasks.append(asyncio.create_task(_guarded(listener, event)))
+            coros.append(_guarded(listener, event))
 
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        if coros:
+            await asyncio.gather(*coros, return_exceptions=True)
 
 
 # =============================================================================
