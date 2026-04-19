@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 from abc import ABC, abstractmethod
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -31,6 +32,14 @@ from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Protocol, Set, Tuple
 
 logger = logging.getLogger(__name__)
+
+# Pre-compiled patterns for RuleBasedEntityExtractor
+_DATE_RE = re.compile(
+    r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b",
+    re.IGNORECASE,
+)
+_ORG_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:Inc|Corp|LLC|Ltd|Company|Co)\.?)\b")
+_CAPS_PHRASE_RE = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
 
 
 # =============================================================================
@@ -411,17 +420,10 @@ class RuleBasedEntityExtractor(EntityExtractor):
 
     def __init__(self):
         """Initialize extractor."""
-        import re
-
-        # Simple patterns for common entity types
+        # Use module-level pre-compiled patterns
         self.patterns = {
-            EntityType.DATE: re.compile(
-                r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]* \d{1,2},? \d{4}\b",
-                re.IGNORECASE,
-            ),
-            EntityType.ORGANIZATION: re.compile(
-                r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)*(?:\s+(?:Inc|Corp|LLC|Ltd|Company|Co)\.?)\b"
-            ),
+            EntityType.DATE: _DATE_RE,
+            EntityType.ORGANIZATION: _ORG_RE,
         }
 
     async def extract(self, text: str) -> List[Entity]:
@@ -446,10 +448,7 @@ class RuleBasedEntityExtractor(EntityExtractor):
                 entity_id += 1
 
         # Extract capitalized phrases (likely proper nouns)
-        import re
-
-        caps_pattern = re.compile(r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)+\b")
-        for match in caps_pattern.finditer(text):
+        for match in _CAPS_PHRASE_RE.finditer(text):
             name = match.group()
             if name in seen_names:
                 continue
