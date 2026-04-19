@@ -25,12 +25,15 @@ Example:
 from __future__ import annotations
 
 import asyncio
+import heapq
 import logging
 import time
 from collections import deque
 from dataclasses import dataclass, field
 from enum import Enum, auto
 from typing import Any, Dict, List, Optional, Protocol, runtime_checkable
+
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -333,11 +336,11 @@ class ColBERTRetriever:
             score = self._maxsim_score(query_token_embs, doc_token_embs)
             scored_docs.append((score, doc))
 
-        # Sort and return top_k
-        scored_docs.sort(key=lambda x: x[0], reverse=True)
+        # Sort and return top_k using heapq for O(n log k) vs O(n log n)
+        top_docs = heapq.nlargest(top_k, scored_docs, key=lambda x: x[0])
 
         results = []
-        for score, doc in scored_docs[:top_k]:
+        for score, doc in top_docs:
             result = RetrievedDocument(
                 id=doc.id,
                 content=doc.content,
@@ -358,22 +361,25 @@ class ColBERTRetriever:
         if not query_embs or not doc_embs:
             return 0.0
 
-        total_score = 0.0
-        for q_emb in query_embs:
-            max_sim = max(self._cosine_similarity(q_emb, d_emb) for d_emb in doc_embs)
-            total_score += max_sim
-
-        return total_score / len(query_embs)
+        q_arr = np.asarray(query_embs)  # (Q, D)
+        d_arr = np.asarray(doc_embs)  # (N, D)
+        # Compute similarity matrix
+        q_norms = np.linalg.norm(q_arr, axis=1, keepdims=True)
+        d_norms = np.linalg.norm(d_arr, axis=1, keepdims=True)
+        q_norms = np.where(q_norms == 0, 1.0, q_norms)
+        d_norms = np.where(d_norms == 0, 1.0, d_norms)
+        sim_matrix = (q_arr / q_norms) @ (d_arr / d_norms).T
+        # MaxSim: max similarity per query token, then average
+        return float(sim_matrix.max(axis=1).mean())
 
     @staticmethod
     def _cosine_similarity(a: List[float], b: List[float]) -> float:
         """Compute cosine similarity."""
-        dot = sum(x * y for x, y in zip(a, b))
-        norm_a = sum(x * x for x in a) ** 0.5
-        norm_b = sum(x * x for x in b) ** 0.5
+        a_arr, b_arr = np.asarray(a), np.asarray(b)
+        norm_a, norm_b = np.linalg.norm(a_arr), np.linalg.norm(b_arr)
         if norm_a == 0 or norm_b == 0:
             return 0.0
-        return dot / (norm_a * norm_b)
+        return float(np.dot(a_arr, b_arr) / (norm_a * norm_b))
 
 
 # =============================================================================
