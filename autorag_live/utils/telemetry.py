@@ -278,24 +278,28 @@ class MetricCollector:
                     )
                 )
 
-            # Histograms (emit percentiles)
-            for key, values in self._histograms.items():
-                name, labels = self._parse_key(key)
-                if values:
-                    sorted_values = sorted(values)
+            # Snapshot histogram values under lock; sort outside
+            histogram_snapshot = {key: list(values) for key, values in self._histograms.items()}
 
-                    # P50, P90, P99
-                    for p in [0.5, 0.9, 0.99]:
-                        idx = int(len(sorted_values) * p)
-                        metrics.append(
-                            Metric(
-                                name=name,
-                                metric_type=MetricType.HISTOGRAM,
-                                value=sorted_values[min(idx, len(sorted_values) - 1)],
-                                labels=labels,
-                                quantile=p,
-                            )
+        # Sort and compute percentiles outside the lock to avoid
+        # blocking other threads during O(n log n) sort.
+        for key, values in histogram_snapshot.items():
+            name, labels = self._parse_key(key)
+            if values:
+                sorted_values = sorted(values)
+
+                # P50, P90, P99
+                for p in [0.5, 0.9, 0.99]:
+                    idx = int(len(sorted_values) * p)
+                    metrics.append(
+                        Metric(
+                            name=name,
+                            metric_type=MetricType.HISTOGRAM,
+                            value=sorted_values[min(idx, len(sorted_values) - 1)],
+                            labels=labels,
+                            quantile=p,
                         )
+                    )
 
         return metrics
 
