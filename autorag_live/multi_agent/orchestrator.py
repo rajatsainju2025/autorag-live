@@ -1009,6 +1009,9 @@ class MessageBus:
 class TaskQueue:
     """Priority queue for tasks."""
 
+    # Pre-compute sorted priority order once as a class constant
+    _PRIORITY_ORDER = tuple(sorted(TaskPriority, key=lambda p: p.value, reverse=True))
+
     def __init__(self):
         """Initialize queue."""
         self._queues: Dict[TaskPriority, asyncio.Queue] = {
@@ -1025,7 +1028,7 @@ class TaskQueue:
     ) -> Optional[Task]:
         """Get highest priority task."""
         # Check queues in priority order
-        for priority in sorted(TaskPriority, key=lambda p: p.value, reverse=True):
+        for priority in self._PRIORITY_ORDER:
             queue = self._queues[priority]
 
             if not queue.empty():
