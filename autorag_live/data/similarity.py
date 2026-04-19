@@ -465,9 +465,9 @@ class CosineSimilarity(BaseSimilarityMetric):
         tf2: Dict[str, float],
     ) -> float:
         """Compute cosine similarity from term frequencies."""
-        all_terms = set(tf1.keys()) | set(tf2.keys())
+        # Only shared terms contribute to dot product — skip union iteration
+        dot = sum(tf1[t] * tf2[t] for t in tf1 if t in tf2)
 
-        dot = sum(tf1.get(t, 0) * tf2.get(t, 0) for t in all_terms)
         norm1 = sum(v * v for v in tf1.values()) ** 0.5
         norm2 = sum(v * v for v in tf2.values()) ** 0.5
 
