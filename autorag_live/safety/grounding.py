@@ -33,6 +33,10 @@ from typing import Any, Callable, Dict, List, Optional, Protocol, Tuple
 
 logger = logging.getLogger(__name__)
 
+# Pre-compiled patterns used in hot paths
+_SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+")
+_WHITESPACE_COLLAPSE_RE = re.compile(r"\s+")
+
 
 # =============================================================================
 # Protocols and Interfaces
@@ -277,7 +281,7 @@ Claims:"""
         Splits text into sentences and treats each as a claim.
         """
         # Split into sentences
-        sentences = re.split(r"(?<=[.!?])\s+", text)
+        sentences = _SENTENCE_SPLIT_RE.split(text)
         claims = []
 
         for sentence in sentences:
@@ -1220,7 +1224,7 @@ Response with verification tokens:"""
         for pattern in self.TOKEN_PATTERNS.values():
             clean = pattern.sub("", clean)
         # Clean up extra whitespace
-        clean = re.sub(r"\s+", " ", clean).strip()
+        clean = _WHITESPACE_COLLAPSE_RE.sub(" ", clean).strip()
         return clean
 
     async def verify_with_critique(
