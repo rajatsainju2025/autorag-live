@@ -16,6 +16,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Protocol, runtime_checkable
 
+import numpy as np
+
 # ============================================================================
 # Protocols and Types
 # ============================================================================
@@ -367,27 +369,12 @@ class EmbeddingAggregator:
     @staticmethod
     def _mean_aggregate(embeddings: list[list[float]]) -> list[float]:
         """Mean pooling of embeddings."""
-        dim = len(embeddings[0])
-        result = [0.0] * dim
-
-        for emb in embeddings:
-            for i in range(dim):
-                result[i] += emb[i]
-
-        n = len(embeddings)
-        return [v / n for v in result]
+        return np.asarray(embeddings).mean(axis=0).tolist()
 
     @staticmethod
     def _max_aggregate(embeddings: list[list[float]]) -> list[float]:
         """Max pooling of embeddings."""
-        dim = len(embeddings[0])
-        result = [float("-inf")] * dim
-
-        for emb in embeddings:
-            for i in range(dim):
-                result[i] = max(result[i], emb[i])
-
-        return result
+        return np.asarray(embeddings).max(axis=0).tolist()
 
     @staticmethod
     def _weighted_aggregate(
@@ -396,24 +383,16 @@ class EmbeddingAggregator:
     ) -> list[float]:
         """Weighted average of embeddings."""
         if weights is None:
-            # Use uniform weights
             weights = [1.0 / len(embeddings)] * len(embeddings)
 
         if len(weights) != len(embeddings):
             raise ValueError("Weights must match number of embeddings")
 
         # Normalize weights
-        total = sum(weights)
-        weights = [w / total for w in weights]
+        w = np.asarray(weights)
+        w = w / w.sum()
 
-        dim = len(embeddings[0])
-        result = [0.0] * dim
-
-        for emb, weight in zip(embeddings, weights):
-            for i in range(dim):
-                result[i] += emb[i] * weight
-
-        return result
+        return (w[:, np.newaxis] * np.asarray(embeddings)).sum(axis=0).tolist()
 
 
 # ============================================================================
