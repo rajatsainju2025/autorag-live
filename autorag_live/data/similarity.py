@@ -30,6 +30,8 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 logger = logging.getLogger(__name__)
 
+_PUNCTUATION_RE = re.compile(r"[^\w\s]")
+
 
 class SimilarityMetric(str, Enum):
     """Available similarity metrics."""
@@ -158,7 +160,7 @@ class TextPreprocessor:
             text = text.lower()
 
         if self.remove_punctuation:
-            text = re.sub(r"[^\w\s]", " ", text)
+            text = _PUNCTUATION_RE.sub(" ", text)
 
         return text
 
