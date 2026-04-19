@@ -332,6 +332,8 @@ class SentenceBoundaryTruncator(BaseTruncator):
 class ParagraphBoundaryTruncator(BaseTruncator):
     """Truncate at paragraph boundaries."""
 
+    _PARAGRAPH_SPLIT_RE = re.compile(r"\n\s*\n")
+
     def truncate(
         self,
         content: str,
@@ -345,7 +347,7 @@ class ParagraphBoundaryTruncator(BaseTruncator):
             return content
 
         # Split into paragraphs
-        paragraphs = re.split(r"\n\s*\n", content)
+        paragraphs = self._PARAGRAPH_SPLIT_RE.split(content)
 
         result: list[str] = []
         current_length = 0
@@ -837,11 +839,11 @@ class SelectiveContextCompressor:
         self.preserve_first_n = preserve_first_n
         self.preserve_last_n = preserve_last_n
 
+    _SENTENCE_SPLIT_RE = re.compile(r"(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])$", re.MULTILINE)
+
     def _split_sentences(self, text: str) -> list[str]:
         """Split text into sentences."""
-        # Handle common sentence boundaries
-        sentence_pattern = re.compile(r"(?<=[.!?])\s+(?=[A-Z])|(?<=[.!?])$", re.MULTILINE)
-        sentences = sentence_pattern.split(text)
+        sentences = self._SENTENCE_SPLIT_RE.split(text)
         return [s.strip() for s in sentences if s.strip()]
 
     def _compute_information_score(self, sentence: str, all_sentences: list[str]) -> float:
