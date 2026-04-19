@@ -299,11 +299,14 @@ class InMemoryFeedbackStore(FeedbackStore):
     def _evict_oldest(self, count: int) -> None:
         """Evict oldest records."""
         self._records = self._records[count:]
-        # Rebuild index
-        self._query_index.clear()
-        for i, record in enumerate(self._records):
-            query_key = record.query.lower().strip()
-            self._query_index[query_key].append(i)
+        # Adjust indices by subtracting the eviction offset instead of
+        # rebuilding the entire index from scratch.
+        adjusted: Dict[str, List[int]] = defaultdict(list)
+        for qkey, indices in self._query_index.items():
+            new_indices = [i - count for i in indices if i >= count]
+            if new_indices:
+                adjusted[qkey] = new_indices
+        self._query_index = adjusted
 
 
 # =============================================================================
