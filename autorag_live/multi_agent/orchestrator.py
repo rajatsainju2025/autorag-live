@@ -298,10 +298,17 @@ class SharedMemoryWorkspace:
             Dict of key -> value
         """
         results = {}
-        for key in keys:
-            value = await self.read(key, agent_id)
-            if value is not None:
-                results[key] = value
+        async with self._lock:
+            now = time.time()
+            for key in keys:
+                entry = self._entries.get(key)
+                if entry is None or entry.is_expired:
+                    self._stats["misses"] += 1
+                    continue
+                entry.accessed_at = now
+                entry.access_count += 1
+                self._stats["hits"] += 1
+                results[key] = entry.value
         return results
 
     async def query_by_type(
