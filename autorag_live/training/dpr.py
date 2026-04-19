@@ -19,6 +19,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterator, Protocol, runtime_checkable
 
+import numpy as np
+
 # ============================================================================
 # Protocols
 # ============================================================================
@@ -348,16 +350,10 @@ class BiEncoder:
 
     def _normalize(self, embeddings: list[list[float]]) -> list[list[float]]:
         """L2 normalize embeddings."""
-        import math
-
-        normalized = []
-        for emb in embeddings:
-            norm = math.sqrt(sum(x * x for x in emb))
-            if norm > 0:
-                normalized.append([x / norm for x in emb])
-            else:
-                normalized.append(emb)
-        return normalized
+        arr = np.asarray(embeddings)
+        norms = np.linalg.norm(arr, axis=1, keepdims=True)
+        norms = np.where(norms == 0, 1.0, norms)
+        return (arr / norms).tolist()
 
     def similarity(
         self,
