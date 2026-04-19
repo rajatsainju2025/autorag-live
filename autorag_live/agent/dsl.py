@@ -91,6 +91,8 @@ class ExecutionContext:
 
     def interpolate(self, template: str) -> str:
         """Interpolate variables in template."""
+        if "${" not in template:
+            return template
         result = template
         for key, value in self.variables.items():
             pattern = f"${{{key}}}"
